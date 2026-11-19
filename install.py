@@ -6,6 +6,10 @@ Usage:
   python install.py --model large-v3
   python install.py --dry-run     show the plan without executing
   python install.py --cpu         force CPU (int8) config
+
+Without an explicit --model the installer asks: a Tk choice dialog on an
+interactive run, the configured model when config.json already exists,
+large-v3-turbo silently on an unattended run.
 """
 import argparse
 import json
@@ -21,6 +25,7 @@ DEFAULT_TARGET = os.path.join(
     os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VibeForma")
 MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
 MODEL_GB = {"large-v3": 3.1, "large-v3-turbo": 1.6, "medium": 1.5, "small": 0.5}
+DEFAULT_MODEL = "large-v3-turbo"
 LNK_NAME = "VibeForma.lnk"
 
 PROBE_SNIPPET = """import sys
@@ -85,10 +90,105 @@ def write_ps1(body):
     return path
 
 
+def model_description(name):
+    """Model blurb from the shipped locale (single source of wording)."""
+    try:
+        with open(os.path.join(APP_DIR, "locales", "en.json"),
+                  encoding="utf-8") as f:
+            return json.load(f).get("models.desc.%s" % name, "")
+    except Exception:
+        return ""
+
+
+def stdin_tty():
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def choose_model():
+    """Interactive model pick when no explicit --model was passed.
+
+    Tk dialog first (Install / Cancel — Cancel exits the installer);
+    a console menu when a tty is attached but Tk is unavailable;
+    the default model silently when no console is attached
+    (unattended runs — the updater's reinstall path).
+    """
+    if not stdin_tty():
+        say("   no console attached — using the default model %s" % DEFAULT_MODEL)
+        return DEFAULT_MODEL
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+    except Exception:
+        root = None
+    if root is not None:
+        root.title("VibeForma — choose a model")
+        root.configure(bg="#16181D")
+        root.resizable(False, False)
+        tk.Label(root, text="Choose the model to install",
+                 font=("Segoe UI", 11, "bold"), fg="#8FB8E8",
+                 bg="#16181D").pack(fill="x", padx=16, pady=(12, 2))
+        tk.Label(root, text="It downloads once and runs locally; "
+                 "you can switch models later in Settings.",
+                 font=("Segoe UI", 9), fg="#7A8290", bg="#16181D",
+                 wraplength=370, justify="left").pack(fill="x", padx=16)
+        var = tk.StringVar(value=DEFAULT_MODEL)
+        for name in MODELS:
+            row = tk.Frame(root, bg="#16181D")
+            row.pack(fill="x", padx=16, pady=(6, 0))
+            tk.Radiobutton(row, text="%s  (~%.1f GB)"
+                           % (name, MODEL_GB[name]),
+                           value=name, variable=var, font=("Segoe UI", 10),
+                           fg="#D5D9E0", bg="#16181D", selectcolor="#22262E",
+                           activebackground="#16181D",
+                           activeforeground="#D5D9E0",
+                           highlightthickness=0,
+                           anchor="w").pack(fill="x")
+            tk.Label(row, text=model_description(name), font=("Segoe UI", 8),
+                     fg="#7A8290", bg="#16181D", wraplength=370,
+                     justify="left").pack(fill="x", padx=(26, 0))
+        result = {"model": None}
+
+        def _install():
+            result["model"] = var.get()
+            root.destroy()
+
+        btns = tk.Frame(root, bg="#16181D")
+        btns.pack(fill="x", pady=(10, 12))
+        tk.Button(btns, text="Install", command=_install, width=10,
+                  bg="#2E86DE", fg="white", relief="flat",
+                  activebackground="#1B6EC2",
+                  activeforeground="white").pack(side="right", padx=(4, 16))
+        tk.Button(btns, text="Cancel", command=root.destroy, width=10,
+                  bg="#22262E", fg="#D5D9E0", relief="flat",
+                  activebackground="#2A2F38",
+                  activeforeground="#D5D9E0").pack(side="right")
+        root.update_idletasks()
+        sw_, sh_ = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.geometry("+%d+%d" % ((sw_ - root.winfo_reqwidth()) // 2,
+                                  max(60, (sh_ - root.winfo_reqheight()) // 3)))
+        root.mainloop()
+        return result["model"]   # None when the dialog is closed or cancelled
+    # console fallback (tty, no Tk)
+    say("")
+    say("Choose the model to install:")
+    for i, name in enumerate(MODELS, 1):
+        say("  %d. %-16s ~%.1f GB   %s"
+            % (i, name, MODEL_GB[name], model_description(name)))
+    raw = input("Number [1-%d] (Enter = %s): " % (len(MODELS), DEFAULT_MODEL)).strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(MODELS):
+        return MODELS[int(raw) - 1]
+    return DEFAULT_MODEL
+
+
 def main():
     ap = argparse.ArgumentParser(description="VibeForma installer")
-    ap.add_argument("--model", default="large-v3-turbo", choices=MODELS,
-                    help="model to install (default: large-v3-turbo)")
+    ap.add_argument("--model", default="",
+                    help="model to install; default: ask (dialog on an "
+                         "interactive run, the configured model on an "
+                         "existing install, %s unattended)" % DEFAULT_MODEL)
     ap.add_argument("--target", default=DEFAULT_TARGET,
                     help="service folder (default: %%LOCALAPPDATA%%\\VibeForma)")
     ap.add_argument("--dry-run", action="store_true",
@@ -108,9 +208,33 @@ def main():
     vp = os.path.join(target, ".venv", "Scripts", "python.exe")
     device, compute = detect_compute(args.cpu)
 
+    model = args.model
+    if model and model not in MODELS:
+        say("[X] Unknown model %s — available: %s" % (model, ", ".join(MODELS)))
+        return 1
+    if not model:
+        # an existing installation keeps its configured model
+        cfg_path = os.path.join(target, "config.json")
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, encoding="utf-8") as f:
+                    m = json.load(f).get("model")
+                if m in MODELS:
+                    model = m
+                    say("Existing config found — model %s" % m)
+            except (OSError, ValueError):
+                pass
+    if not model and not args.dry_run:
+        model = choose_model()
+        if model is None:
+            say("Installation cancelled — no model chosen.")
+            return 0
+    if not model:
+        model = DEFAULT_MODEL   # dry-run: plan only, no dialog
+
     say("VibeForma — installation%s" % ("  (dry-run: plan only)" if args.dry_run else ""))
     say("Target folder: %s" % target)
-    say("Model: %s (~%.1f GB)   Device: %s (%s)" % (args.model, MODEL_GB[args.model], device, compute))
+    say("Model: %s (~%.1f GB)   Device: %s (%s)" % (model, MODEL_GB[model], device, compute))
     say("-" * 62)
     failed = False
 
@@ -152,11 +276,11 @@ def main():
                         "-r", os.path.join(target, "requirements.txt")], check=True)
 
     def model_step():
-        dest = os.path.join(target, "models", args.model.replace("/", "--"))
+        dest = os.path.join(target, "models", model.replace("/", "--"))
         if os.path.exists(os.path.join(dest, "model.bin")):
             say("   model already present in %s" % dest)
             return
-        probe = subprocess.run([vp, "-c", PROBE_SNIPPET, args.model],
+        probe = subprocess.run([vp, "-c", PROBE_SNIPPET, model],
                                capture_output=True, text=True)
         if "CACHED" in probe.stdout:
             say("   model already in the shared Hugging Face cache — "
@@ -164,7 +288,7 @@ def main():
             return
         say("   downloading to %s (first-time install, the only step using the network)"
             % dest)
-        subprocess.run([vp, "-c", DOWNLOAD_SNIPPET, args.model, dest], check=True)
+        subprocess.run([vp, "-c", DOWNLOAD_SNIPPET, model, dest], check=True)
 
     def write_config():
         cfg_path = os.path.join(target, "config.json")
@@ -172,7 +296,7 @@ def main():
             say("   config.json already exists — not touching it")
             return
         with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump({"model": args.model, "device": device,
+            json.dump({"model": model, "device": device,
                        "compute_type": compute,
                        "language": "en", "locale": "auto"},
                       f, ensure_ascii=False, indent=2)
@@ -198,9 +322,9 @@ def main():
     step("Dependencies (pip)", ".venv pip install -r requirements.txt "
          "(faster-whisper, sounddevice, pynput, pystray, Pillow, pyperclip, CUDA libs)",
          pip_install)
-    step("Model %s" % args.model, "probe the Hugging Face cache; if missing, "
+    step("Model %s" % model, "probe the Hugging Face cache; if missing, "
          "download to %s\\models\\%s (~%.1f GB, the only step using the network)"
-         % (target, args.model, MODEL_GB[args.model]), model_step)
+         % (target, model, MODEL_GB[model]), model_step)
     step("config.json", "write model and device (only if no config exists yet)",
          write_config)
     step("Shortcuts", "desktop + startup: «%s» → run.cmd, icon app/assets/icon.ico"

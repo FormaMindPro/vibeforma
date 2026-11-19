@@ -5,7 +5,7 @@ import os
 import pystray
 from PIL import Image, ImageDraw
 
-from config import LANG_NAMES
+from config import LANG_NAMES, MODELS
 
 STATE_COLORS = {
     "loading": "#F39C12",
@@ -15,7 +15,6 @@ STATE_COLORS = {
     "paused": "#5D6D7E",
     "error": "#8E44AD",
 }
-MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
 LANG_QUICK = ("en", "ru", "uk", "de", "fr", "es", "it", "pl", "zh", "ja", "ko", "ar")
 _ASSET_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "assets", "icon.png")

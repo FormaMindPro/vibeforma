@@ -24,9 +24,14 @@ the model.
   near-real-time while you speak
 - Layout-independent pasting (Shift+Insert) with the old clipboard restored
   after 1 s
-- Settings window — silence pause, streaming interval, max recording length,
-  panel transparency, autogrow, sounds, hotkey, input device, autostart — all
-  applied live, no restart
+- Settings window, organized in tabs (Recording / Model & language /
+  Appearance / System): silence pause, streaming interval, max recording
+  length, panel transparency, autogrow, sounds, hotkey, input device,
+  autostart — all applied live, no restart
+- Models: pick one during install (a choice dialog with sizes and blurbs),
+  then switch anytime in settings or the tray menu — the new model downloads
+  first, the service reloads without a restart, and the previous model is
+  kept on disk or deleted, at your choice; a failed download rolls back
 - Tray menu: pause, input device, model switch without restart, recognition
   language, logs folder
 - Auto-update: the service checks GitHub releases in the background (default
@@ -49,7 +54,8 @@ irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | 
 
 The bootstrap downloads the latest release, unpacks it and runs the
 installer — everything else (venv, dependencies, model, shortcuts) happens
-automatically. With options:
+automatically. Without `-Model` the model is chosen in a small dialog during
+install. With options:
 
 ```powershell
 iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
@@ -78,7 +84,7 @@ Installer flags:
 
 | Flag | Meaning |
 | --- | --- |
-| `--model <name>` | model to install (default `large-v3-turbo`) |
+| `--model <name>` | model to install; without it a choice dialog shows (on an existing install the configured model is kept) |
 | `--target <folder>` | service folder (default `%LOCALAPPDATA%\VibeForma`) |
 | `--dry-run` | print the plan, execute nothing |
 | `--cpu` | force CPU (int8) even with CUDA present |
@@ -93,7 +99,12 @@ Installer flags:
 | medium | «medium» | 1.5 GB | ×4 vs large-v3 | medium |
 | small | «small» | 0.5 GB | ×10 vs large-v3 | lower |
 
-Switch models in the tray, no restart. Models live in
+Pick the model during install (the dialog shows size and description); switch
+later in settings (the *Model & language* tab) or the tray menu. The switch
+downloads the new model first, reloads the service without a restart and then
+— at your choice — keeps the previous model on disk for fast switching back
+or deletes it (a model in the shared Hugging Face cache is left there; a
+failed download leaves the old model untouched). Models live in
 `%LOCALAPPDATA%\VibeForma\models\<name>` or in the shared Hugging Face cache;
 the service loads offline-first and only reaches the network when the model
 is nowhere on disk.
@@ -187,7 +198,8 @@ faster-whisper). Read app/*.py, install.py and find:
 1) thread and race bugs (Tk only in its own thread, dicts shared across threads);
 2) resource leaks (model, audio stream, handles);
 3) any place the code could touch the network without the user asking
-   (privacy: the network is allowed only for the first model download);
+   (privacy: the network is allowed only for the first model download and
+   the release check when auto-update is on);
 4) Windows platform traps (layouts, window focus, non-ASCII paths);
 5) simplifications that would break a fresh clone's installation.
 Answer as a list: file:line — problem — how to fix. Do not rewrite the code.
