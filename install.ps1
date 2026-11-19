@@ -9,9 +9,10 @@
 #
 # The bootstrap downloads the latest release zip (or the main branch archive),
 # unpacks it and runs install.py, which does the real work (venv, pip, model,
-# shortcuts, launch).
+# shortcuts, launch). Without -Model the model is chosen inside install.py
+# (a choice dialog on an interactive run).
 param(
-    [string]$Model = "large-v3-turbo",
+    [string]$Model = "",
     [switch]$NoRun,
     [switch]$Cpu,
     [switch]$DryRun
@@ -70,7 +71,7 @@ $srcPath = $src.FullName
 Write-Step "Running install.py from $srcPath"
 Push-Location $srcPath
 $installArgs = @("install.py")
-if ($Model -ne "large-v3-turbo") { $installArgs += @("--model", $Model) }
+if ($Model -ne "") { $installArgs += @("--model", $Model) }
 if ($Cpu) { $installArgs += "--cpu" }
 if ($DryRun) { $installArgs += "--dry-run" }
 if ($NoRun) { $installArgs += "--no-run" }

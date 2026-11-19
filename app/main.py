@@ -411,6 +411,57 @@ class Service:
                                  else self.tr("notify.model_failed", name=name))
         threading.Thread(target=_load, daemon=True).start()
 
+    def switch_model(self, new_name, keep_old, progress):
+        """Settings-driven switch: download -> load -> (maybe) remove old.
+
+        progress is a plain dict polled by the ModelSwitchDialog on the HUD
+        thread (phase/name/detail/cache_note).
+        """
+        threading.Thread(target=self._switch_model_worker,
+                         args=(new_name, keep_old, progress), daemon=True).start()
+
+    def _switch_model_worker(self, new_name, keep_old, progress):
+        import os as os_mod
+        import shutil
+        try:
+            if self.state != STATE_IDLE:
+                progress.update(phase="busy")
+                return
+            old = self.cfg["model"]
+            if new_name == old:
+                progress.update(phase="done", name=new_name)
+                return
+            import asr as asr_mod
+            progress.update(phase="download", name=new_name)
+            try:
+                asr_mod._resolve_model(new_name, self.log)
+            except Exception as e:
+                progress.update(phase="error", detail=str(e))
+                return
+            progress.update(phase="load", name=new_name)
+            ok = self.asr.reload_model(new_name)
+            if not ok:
+                self.cfg["model"] = old   # reload_model had already set the new name
+                save(self.cfg)
+                progress.update(phase="error", detail="load failed")
+                return
+            save(self.cfg)
+            if not keep_old:
+                progress.update(phase="remove", name=old)
+                from config import MODELS_DIR
+                old_dir = os_mod.path.join(MODELS_DIR, old)
+                if os_mod.path.isdir(old_dir):
+                    shutil.rmtree(old_dir, ignore_errors=True)
+                    self.log.info("Old model removed: %s", old_dir)
+                else:
+                    progress["cache_note"] = old
+                    self.log.info("Old model %s lives in the shared HF cache — untouched", old)
+            progress.update(phase="done", name=new_name)
+            if self.tray:
+                self.tray.notify(self.tr("notify.model_ok", name=new_name))
+        except Exception as e:
+            progress.update(phase="error", detail=str(e))
+
     # -- updates -----------------------------------------------------------
     def update_if_newer(self, notify_latest: bool = False):
         """Check GitHub; if a newer release exists — download, install, restart."""

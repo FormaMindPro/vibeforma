@@ -2,7 +2,7 @@
 import json
 import os
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
@@ -19,6 +19,10 @@ LANGS = (
     "sv", "da", "fi", "no", "el", "tr", "he", "ar", "fa", "hi", "th", "vi",
     "zh", "ja", "ko",
 )
+
+# Whisper models offered in the UI (menu order); sizes in GB for hints.
+MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
+MODEL_GB = {"large-v3": 3.1, "large-v3-turbo": 1.6, "medium": 1.5, "small": 0.5}
 
 # Native names (endonyms) shown in the UI: every language is written in
 # that language itself.
@@ -57,6 +61,7 @@ DEFAULTS = {
     "http_port": 8787,
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks
+    "model_keep_old": True,             # keep the previous model on disk (fast switching)
 }
 
 

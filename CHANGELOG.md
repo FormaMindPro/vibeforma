@@ -3,6 +3,29 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.4 — 2026-11-20
+
+### Added
+- **Model choice at install**: without an explicit `--model` the installer
+  shows a Tk dialog — four models with size and description, Install/Cancel
+  (Cancel stops the installation cleanly). Fallbacks: a console menu when a
+  tty is attached but Tk is unavailable; the default `large-v3-turbo` silently
+  on an unattended run. On an existing install the configured model is kept.
+  `install.ps1` no longer pre-selects a model (`-Model` stays optional).
+- **Model switching in settings**: the *Model & language* tab has the model
+  selector (with a per-model description) and the "keep the previous model
+  on disk" switch (`model_keep_old`, default on). Switching downloads the
+  new model first, reloads the service without a restart and — only when
+  keep-old is off — deletes the previous model from the service folder; a
+  model in the shared Hugging Face cache is left there (honestly noted in
+  the dialog). A failed download reverts to the previous model.
+- **Switch progress dialog**: phases download → load → (remove) → done,
+  with a close button at the end; a dictation cycle in progress reports
+  "busy" instead of switching.
+- Settings window reorganized into tabs — Recording / Model & language /
+  Appearance / System (ttk.Notebook, dark theme) — the window no longer
+  clips at the bottom.
+
 ## 0.1.3 — 2026-11-20
 
 ### Added
