@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/
+logs/
+service.lock
+config.json
+test_ru.wav
+*.tmp
