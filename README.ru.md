@@ -28,6 +28,20 @@
 
 Windows 10/11, Python 3.10+ (лучше 3.12+). С видеокартой NVIDIA распознавание быстрое (CUDA float16); без неё установщик переключится на CPU (int8) — там лучше модель `small`.
 
+**Одна команда (PowerShell, Windows 10+):**
+
+```powershell
+irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
+```
+
+Бутстрап скачает последний релиз, распакует и запустит установщик — всё остальное (.venv, зависимости, модель, ярлыки) произойдёт само. С параметрами:
+
+```powershell
+iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
+```
+
+(из `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
+
 **Вариант A — релизный zip:** скачайте `VibeForma-<версия>.zip` в
 [Releases](../../releases), распакуйте, запустите `install.cmd`.
 
@@ -77,6 +91,7 @@ install.cmd
 ## Языки
 
 - **Распознавание**: точное закрепление — модель распознаёт ровно выбранный язык (по умолчанию `en`); переключение в трее или в настройках. Без автоопределения: что указали, то и распознаётся. Пресет-подсказка по языку улучшает пунктуацию основных языков; личные термины — в `config.json → "hotwords"`.
+- **Названия в меню**: каждый язык написан на самом себе — English, Русский, Українська, Deutsch, 日本語…
 - **Интерфейс**: английский и русский лежат в `app/locales/*.json`. Чтобы добавить свой — скопируйте `en.json`, переведите значения, сохраните как `app/locales/<код>.json`; язык сам появится в настройках.
 
 ## Использование

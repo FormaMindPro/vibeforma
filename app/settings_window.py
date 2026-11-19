@@ -9,7 +9,7 @@ import ctypes
 import tkinter as tk
 
 import i18n
-from config import LANGS
+from config import LANG_NAMES, LANGS
 
 BG = "#16181D"
 FG = "#D5D9E0"
@@ -120,12 +120,23 @@ class SettingsWindow:
 
         # -- language ----------------------------------------------------------
         head(tr("settings.g_lang"))
-        self.v_lang = tk.StringVar(value=str(c.get("language", "auto")))
-        row(tr("settings.recog_lang"), tk.OptionMenu(body, self.v_lang, *LANGS))
+        # endonym -> code; menus show every language written in itself
+        lang_pairs = [(LANG_NAMES.get(x, x), x) for x in LANGS]
+        self._lang_by_name = dict(lang_pairs)
+        cur_l = str(c.get("language", "en"))
+        cur_l_disp = next((d for d, cd in lang_pairs if cd == cur_l), cur_l)
+        self.v_lang = tk.StringVar(value=cur_l_disp)
+        row(tr("settings.recog_lang"),
+            tk.OptionMenu(body, self.v_lang, *[d for d, _ in lang_pairs]))
         note(tr("settings.note_recog"))
-        self.v_ui = tk.StringVar(value=str(c.get("locale", "auto")))
+        ui_pairs = [("auto", "auto")] + [
+            (LANG_NAMES.get(x, x), x) for x in i18n.available_locales()]
+        self._ui_by_name = dict(ui_pairs)
+        cur_ui = str(c.get("locale", "auto"))
+        cur_ui_disp = next((d for d, cd in ui_pairs if cd == cur_ui), cur_ui)
+        self.v_ui = tk.StringVar(value=cur_ui_disp)
         row(tr("settings.ui_lang"),
-            tk.OptionMenu(body, self.v_ui, "auto", *i18n.available_locales()))
+            tk.OptionMenu(body, self.v_ui, *[d for d, _ in ui_pairs]))
         note(tr("settings.note_ui"))
 
         # -- monitoring panel ---------------------------------------------------
@@ -215,8 +226,10 @@ class SettingsWindow:
         c["partial_every_s"] = float(self.v_partial.get())
         c["max_record_s"] = int(self.v_maxrec.get())
         c["auto_stop"] = bool(self.v_autostop.get())
-        c["language"] = self.v_lang.get()
-        c["locale"] = self.v_ui.get()
+        c["language"] = self._lang_by_name.get(
+            self.v_lang.get(), self.cfg.get("language", "en"))
+        c["locale"] = self._ui_by_name.get(
+            self.v_ui.get(), self.cfg.get("locale", "auto"))
         c["paste_method"] = self.v_paste.get()
         c["restore_clipboard"] = bool(self.v_restore.get())
         c["hud"] = bool(self.v_hud.get())

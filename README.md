@@ -37,6 +37,22 @@ Windows 10/11, Python 3.10+ (3.12+ recommended). With an NVIDIA GPU the
 recognition is fast (CUDA float16); without one the installer falls back to
 CPU (int8) — use the `small` model there.
 
+**One command (PowerShell, Windows 10+):**
+
+```powershell
+irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
+```
+
+The bootstrap downloads the latest release, unpacks it and runs the
+installer — everything else (venv, dependencies, model, shortcuts) happens
+automatically. With options:
+
+```powershell
+iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
+```
+
+(from `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
+
 **Option A — release zip:** grab `VibeForma-<version>.zip` from
 [Releases](../../releases), unzip, double-click `install.cmd`.
 
@@ -95,6 +111,8 @@ share of non-scaling stages); the gap widens on longer audio.
   what you set is what is recognized. A per-language prompt preset improves
   punctuation for the major languages; personal terms belong to
   `config.json → "hotwords"`.
+- **Menu naming**: every language is written in its own language —
+  English, Русский, Українська, Deutsch, 日本語…
 - **Interface**: English and Russian ship in `app/locales/*.json`. To add
   yours — copy `en.json`, translate the values, save as `app/locales/<code>.json`;
   the language then appears in settings automatically.
