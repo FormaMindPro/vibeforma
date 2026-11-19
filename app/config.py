@@ -2,7 +2,7 @@
 import json
 import os
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
@@ -19,6 +19,18 @@ LANGS = (
     "sv", "da", "fi", "no", "el", "tr", "he", "ar", "fa", "hi", "th", "vi",
     "zh", "ja", "ko",
 )
+
+# Native names (endonyms) shown in the UI: every language is written in
+# that language itself.
+LANG_NAMES = {
+    "en": "English", "ru": "Русский", "uk": "Українська", "de": "Deutsch",
+    "fr": "Français", "es": "Español", "it": "Italiano", "pt": "Português",
+    "nl": "Nederlands", "pl": "Polski", "cs": "Čeština", "sv": "Svenska",
+    "da": "Dansk", "fi": "Suomi", "no": "Norsk", "el": "Ελληνικά",
+    "tr": "Türkçe", "he": "עברית", "ar": "العربية", "fa": "فارسی",
+    "hi": "हिन्दी", "th": "ไทย", "vi": "Tiếng Việt", "zh": "中文",
+    "ja": "日本語", "ko": "한국어",
+}
 
 DEFAULTS = {
     "hotkey": "ctrl+alt+space",

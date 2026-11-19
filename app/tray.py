@@ -5,6 +5,8 @@ import os
 import pystray
 from PIL import Image, ImageDraw
 
+from config import LANG_NAMES
+
 STATE_COLORS = {
     "loading": "#F39C12",
     "idle": "#2E86DE",
@@ -77,7 +79,7 @@ class Tray:
     # -- menu --------------------------------------------------------------
     def _lang_label(self, code):
         mark = "•  " if self.service.cfg.get("language") == code else ""
-        return mark + code
+        return mark + LANG_NAMES.get(code, code)
 
     def _lang_submenu(self, icon, item):  # noqa: ARG002
         return [pystray.MenuItem(

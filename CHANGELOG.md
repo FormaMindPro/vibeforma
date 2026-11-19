@@ -3,6 +3,19 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.2 — 2026-11-20
+
+### Added
+- **One-command install**: `irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex`
+  — the bootstrap downloads the latest release (or the main branch), unpacks
+  it and runs the installer; options via
+  `iex "& { $(irm …) } -Model large-v3 -NoRun"`.
+
+### Changed
+- Languages in the tray and settings are written as endonyms — every
+  language in its own language (English, Русский, Українська, Deutsch,
+  日本語…). Codes are still stored in config.json.
+
 ## 0.1.1 — 2026-11-20
 
 ### Changed
