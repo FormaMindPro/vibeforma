@@ -2,7 +2,7 @@
 import json
 import os
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
@@ -13,9 +13,9 @@ LOCK_PATH = os.path.join(SERVICE_DIR, "service.lock")
 MODELS_DIR = os.path.join(SERVICE_DIR, "models")   # models live inside the service folder
 
 # Whisper understands ~99 languages; these are offered in the UI.
-# "auto" lets the model detect the language of every phrase.
+# The chosen code is used exactly — no per-phrase guessing.
 LANGS = (
-    "auto", "en", "ru", "uk", "de", "fr", "es", "it", "pt", "nl", "pl", "cs",
+    "en", "ru", "uk", "de", "fr", "es", "it", "pt", "nl", "pl", "cs",
     "sv", "da", "fi", "no", "el", "tr", "he", "ar", "fa", "hi", "th", "vi",
     "zh", "ja", "ko",
 )
@@ -26,7 +26,7 @@ DEFAULTS = {
     "model": "large-v3-turbo",
     "device": "cuda",
     "compute_type": "float16",
-    "language": "auto",                 # "auto" = detect per phrase, or a LANGS code
+    "language": "en",                   # pinned exactly: a LANGS code, never guessed
     "locale": "auto",                   # UI language: auto = follow Windows
     "hotwords": "",                     # terms appended to the prompt (user-local)
     "auto_stop": True,

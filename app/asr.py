@@ -112,14 +112,17 @@ class ASR:
     def transcribe(self, audio: np.ndarray, verbose: bool = True) -> str:
         """Transcribe 16 kHz float32 mono audio; returns stripped text.
 
-        language "auto" -> None: faster-whisper detects it per phrase.
+        The language is pinned exactly (config) — never guessed. A legacy
+        hand-edited "auto" value maps to "en".
         """
         with self._lock:
             t0 = time.time()
             lang = self.cfg.get("language")
+            if not lang or lang == "auto":   # legacy hand-edited config
+                lang = "en"
             segments, info = self.model.transcribe(
                 audio,
-                language=None if not lang or lang == "auto" else lang,
+                language=lang,
                 beam_size=5,
                 initial_prompt=_prompt(self.cfg),
                 condition_on_previous_text=False,

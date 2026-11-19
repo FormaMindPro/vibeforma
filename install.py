@@ -174,9 +174,9 @@ def main():
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump({"model": args.model, "device": device,
                        "compute_type": compute,
-                       "language": "auto", "locale": "auto"},
+                       "language": "en", "locale": "auto"},
                       f, ensure_ascii=False, indent=2)
-        say("   device=%s compute_type=%s language=auto locale=auto" % (device, compute))
+        say("   device=%s compute_type=%s language=en locale=auto" % (device, compute))
 
     def make_shortcuts():
         body = (SHORTCUTS_PS.replace("__TARGET__", tdir).replace("__LNK__", LNK_NAME))
