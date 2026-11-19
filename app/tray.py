@@ -13,18 +13,14 @@ STATE_COLORS = {
     "paused": "#5D6D7E",
     "error": "#8E44AD",
 }
-STATE_TITLES = {
-    "loading": "Загрузка модели…",
-    "idle": "Готов (Ctrl+Alt+Space)",
-    "recording": "Идёт запись…",
-    "processing": "Распознавание…",
-    "paused": "Пауза",
-    "error": "Ошибка модели",
-}
 MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
+LANG_QUICK = ("auto", "en", "ru", "uk", "de", "fr", "es", "it", "pl", "zh", "ja", "ko")
+_ASSET_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "assets", "icon.png")
 
 
 def _draw_icon(color_hex: str) -> Image.Image:
+    """Fallback placeholder when the branded asset is missing."""
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     rgb = tuple(int(color_hex[i:i + 2], 16) for i in (1, 3, 5))
@@ -36,32 +32,57 @@ def _draw_icon(color_hex: str) -> Image.Image:
     return img
 
 
+def _load_icon() -> Image.Image:
+    try:
+        return Image.open(_ASSET_ICON).convert("RGBA").resize(
+            (64, 64), Image.LANCZOS)
+    except Exception:
+        return _draw_icon(STATE_COLORS["idle"])
+
+
 class Tray:
-    """Menu: pause, input device, model, logs folder, exit."""
+    """Menu: pause, input device, model, recognition language, logs, exit."""
 
     def __init__(self, service, log: logging.Logger):
         self.service = service
         self.log = log
         self.icon = pystray.Icon(
-            "WhisperDictation",
-            icon=_draw_icon(STATE_COLORS["loading"]),
-            title="Whisper Диктовка: запуск…",
+            "VibeForma",
+            icon=_load_icon(),
+            title=service.tr("tray.starting"),
             menu=pystray.Menu(
-                pystray.MenuItem("Настройки…", self._on_settings),
                 pystray.MenuItem(
-                    lambda item: self._pause_text(), self._on_pause),
+                    lambda item: service.tr("tray.settings"), self._on_settings),
+                pystray.MenuItem(
+                    lambda item: (service.tr("tray.resume")
+                                  if service.state == "paused"
+                                  else service.tr("tray.pause")),
+                    self._on_pause),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Устройство ввода", self._devices_submenu),
-                pystray.MenuItem("Модель", self._models_submenu),
-                pystray.MenuItem("Папка логов", self._on_open_logs),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.input_device"),
+                    self._devices_submenu),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.model"), self._models_submenu),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.lang"), self._lang_submenu),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.logs"), self._on_open_logs),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Выход", self._on_exit),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.exit"), self._on_exit),
             ),
         )
 
     # -- menu --------------------------------------------------------------
-    def _pause_text(self):
-        return "Продолжить" if self.service.state == "paused" else "Пауза"
+    def _lang_label(self, code):
+        mark = "•  " if self.service.cfg.get("language", "auto") == code else ""
+        return mark + (self.service.tr("lang.auto") if code == "auto" else code)
+
+    def _lang_submenu(self, icon, item):  # noqa: ARG002
+        return [pystray.MenuItem(
+            self._lang_label(c), lambda *a, c=c: self.service.set_language(c))
+            for c in LANG_QUICK]
 
     def _devices_submenu(self, icon, item):  # noqa: ARG002
         items = []
@@ -74,7 +95,8 @@ class Tray:
             label = mark + (name if len(name) <= 48 else name[:45] + "…")
             items.append(pystray.MenuItem(
                 label, lambda *a, n=name: self.service.set_device_by_name(n)))
-        return items or [pystray.MenuItem("нет устройств ввода", None, enabled=False)]
+        return items or [pystray.MenuItem(
+            self.service.tr("tray.no_devices"), None, enabled=False)]
 
     def _models_submenu(self, icon, item):  # noqa: ARG002
         items = []
@@ -102,16 +124,18 @@ class Tray:
     # -- state -------------------------------------------------------------
     def set_state(self, state: str):
         try:
-            self.icon.icon = _draw_icon(STATE_COLORS.get(state, STATE_COLORS["idle"]))
-            self.icon.title = "Whisper Диктовка: " + STATE_TITLES.get(state, state)
+            label = self.service.tr("states.%s" % state)
+            if label == "states.%s" % state:  # unknown key -> raw state
+                label = state
+            self.icon.title = "VibeForma: " + label
         except Exception:
-            self.log.debug("Трей: не удалось обновить состояние %s", state)
+            self.log.debug("Tray: failed to update state %s", state)
 
-    def notify(self, msg: str, title: str = "Whisper Диктовка"):
+    def notify(self, msg: str, title: str = "VibeForma"):
         try:
             self.icon.notify(msg, title)
         except Exception:
-            self.log.debug("Трей: уведомление не прошло: %s", msg)
+            self.log.debug("Tray: notification failed: %s", msg)
 
     def run(self):
         self.icon.run()

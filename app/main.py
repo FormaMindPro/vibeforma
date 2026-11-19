@@ -1,8 +1,8 @@
-"""Whisper Диктовка — локальный сервис русской голосовой диктовки.
+"""VibeForma — local voice dictation service for Windows.
 
-Горячая клавиша -> запись с микрофона -> локальное распознавание
-(faster-whisper, CUDA) -> вставка текста в активное поле (буфер + Shift+Insert).
-Всё локально: сеть используется только при первичной загрузке модели.
+Hotkey -> mic recording -> local recognition (faster-whisper, ~99 languages)
+-> text inserted into the focused field (clipboard + Shift+Insert).
+Fully local: the network is used only for the first model download.
 """
 import sys
 import os
@@ -10,8 +10,8 @@ import subprocess
 import threading
 import time
 
-from config import (CONFIG_PATH, DEFAULTS, LOCK_PATH, LOG_DIR, LOG_PATH,
-                    SERVICE_DIR, TEST_WAV, find_input_device,
+from config import (CONFIG_PATH, LOCK_PATH, LOG_DIR, LOG_PATH,
+                    SERVICE_DIR, TEST_WAV, VERSION, find_input_device,
                     input_device_names, load, save)
 
 STATE_LOADING = "loading"
@@ -59,7 +59,7 @@ MAIN_PY = os.path.join(SERVICE_DIR, "main.py")
 AUTOSTART_LNK = os.path.join(
     os.environ.get("APPDATA", ""),
     "Microsoft", "Windows", "Start Menu", "Programs", "Startup",
-    "WhisperDictation.lnk")
+    "VibeForma.lnk")
 
 
 def ensure_autostart(create: bool):
@@ -76,12 +76,12 @@ def ensure_autostart(create: bool):
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                  "-Command", ps],
                 creationflags=0x08000000, timeout=30, check=False)
-            setup_logging(False).info("Ярлык автозапуска создан")
+            setup_logging(False).info("Autostart shortcut created")
         elif not create and os.path.exists(AUTOSTART_LNK):
             os.remove(AUTOSTART_LNK)
-            setup_logging(False).info("Ярлык автозапуска удалён")
+            setup_logging(False).info("Autostart shortcut removed")
     except Exception as e:
-        setup_logging(False).warning("Управление автозапуском: %s", e)
+        setup_logging(False).warning("Autostart management: %s", e)
 
 
 class SingleInstance:
@@ -179,6 +179,11 @@ class Service:
     def attach_hotkey(self, hotkey):
         self.hotkey = hotkey
 
+    def tr(self, key, **kw):
+        """Localized UI string for the current locale config."""
+        import i18n
+        return i18n.t(self.cfg, key, **kw)
+
     def log_path(self):
         return LOG_PATH
 
@@ -198,11 +203,11 @@ class Service:
         elif st == STATE_RECORDING:
             self.stop_recording("manual")
         elif st == STATE_PROCESSING:
-            self.log.info("Хоткей во время обработки — игнорируется")
+            self.log.info("Hotkey during recognition — ignored")
         elif st == STATE_PAUSED:
-            self.log.info("Сервис на паузе — хоткей игнорируется")
+            self.log.info("Service is paused — hotkey ignored")
         else:  # loading / error
-            self.log.info("Модель ещё не готова — хоткей игнорируется")
+            self.log.info("Model is not ready yet — hotkey ignored")
 
     # -- recording -------------------------------------------------------
     def start_recording(self):
@@ -220,16 +225,16 @@ class Service:
         self._partial_busy = False
         import insert as insert_mod
         self._target_hwnd = insert_mod.get_foreground_hwnd()
-        self.log.info("Окно-цель для вставки: %s (hwnd=%s)",
+        self.log.info("Paste target window: %s (hwnd=%s)",
                       insert_mod.foreground_window(), self._target_hwnd)
         self.recorder = self._make_recorder()
         try:
             self.recorder.start(dev_idx)
         except Exception as e:
-            self.log.exception("Микрофон недоступен: %s", e)
+            self.log.exception("Microphone unavailable: %s", e)
             self._set_state(STATE_IDLE)
             if self.tray:
-                self.tray.notify("Микрофон недоступен:\n%s" % e)
+                self.tray.notify(self.tr("notify.mic_unavailable", err=e))
             return
         self._set_state(STATE_RECORDING)
 
@@ -252,7 +257,7 @@ class Service:
                 if text and self.state == STATE_RECORDING:
                     self.live["partial"] = text
             except Exception as e:
-                self.log.debug("Частичная транскрипция: %s", e)
+                self.log.debug("Partial transcription: %s", e)
             finally:
                 self._partial_busy = False
         threading.Thread(target=_run, daemon=True).start()
@@ -276,41 +281,45 @@ class Service:
     def _transcribe_worker(self, buf, rec):
         try:
             if buf is None or not rec.had_speech():
-                self.log.info("Речь не зафиксирована — вставки нет")
-                self.live["last"] = "(речь не услышана)"
+                self.log.info("No speech captured — nothing inserted")
+                self.live["last"] = self.tr("notify.no_speech_last")
                 self.live["partial"] = ""
                 self.live["level"] = 0.0
                 if self.tray:
-                    self.tray.notify("Речь не услышана — вставки нет")
+                    self.tray.notify(self.tr("notify.no_speech"))
                 return
             t0 = time.time()
             text = self.asr.transcribe(buf)
             dt = time.time() - t0
-            self.log.info("Задержка до готовности текста: %.2f с", dt)
+            self.log.info("Latency to ready text: %.2f s", dt)
             if not text:
-                self.log.info("Пустая транскрипция — вставки нет")
-                self.live["last"] = "(не распознано — говорить ближе к микрофону)"
+                self.log.info("Empty transcription — nothing inserted")
+                self.live["last"] = self.tr("notify.not_recognized")
                 self.live["partial"] = ""
                 self.live["level"] = 0.0
                 if self.tray:
-                    self.tray.notify("Речь не распознана")
+                    self.tray.notify(self.tr("notify.not_recognized_short"))
                 return
             import insert as insert_mod
             insert_mod.insert_text(
                 text, restore_clipboard=self.cfg.get("restore_clipboard", True),
                 log=self.log, target_hwnd=getattr(self, "_target_hwnd", None),
                 paste_method=self.cfg.get("paste_method", "shift_insert"))
-            self.live["last"] = "Вставлено: %s" % (text[:90] + ("…" if len(text) > 90 else ""))
+            self.live["last"] = self.tr(
+                "notify.inserted",
+                text=text[:90] + ("…" if len(text) > 90 else ""))
             self.live["partial"] = ""
             self.live["level"] = 0.0
             if self.tray:
-                self.tray.notify("Вставлено: %s" % (text[:80] + ("…" if len(text) > 80 else "")))
+                self.tray.notify(self.tr(
+                    "notify.inserted",
+                    text=text[:80] + ("…" if len(text) > 80 else "")))
         except Exception as e:
-            self.log.exception("Ошибка распознавания: %s", e)
+            self.log.exception("Recognition error: %s", e)
             beep(400, 200)
-            self.live["last"] = "(ошибка: %s)" % e
+            self.live["last"] = self.tr("notify.error_last", err=e)
             if self.tray:
-                self.tray.notify("Ошибка распознавания:\n%s" % e)
+                self.tray.notify(self.tr("notify.error", err=e))
         finally:
             if self._running:
                 self._set_state(STATE_IDLE)
@@ -322,7 +331,7 @@ class Service:
         elif self.state in (STATE_IDLE, STATE_ERROR):
             self._set_state(STATE_PAUSED)
         elif self.tray:
-            self.tray.notify("Дождитесь завершения текущего цикла")
+            self.tray.notify(self.tr("notify.wait_cycle"))
 
     def input_device_names(self):
         return input_device_names()
@@ -333,13 +342,25 @@ class Service:
     def set_device_by_name(self, name):
         if self.state == STATE_RECORDING:
             if self.tray:
-                self.tray.notify("Остановите запись перед сменой устройства")
+                self.tray.notify(self.tr("notify.stop_before_device"))
             return
         self.cfg["input_device"] = name
         save(self.cfg)
         if self.tray:
-            self.tray.notify("Устройство: %s" % name)
-        self.log.info("Устройство ввода сменено: %s", name)
+            self.tray.notify(self.tr("notify.device_set", name=name))
+        self.log.info("Input device changed: %s", name)
+
+    def set_language(self, code):
+        """Recognition language from the tray quick menu."""
+        from config import LANGS
+        if code not in LANGS:
+            return
+        self.cfg["language"] = code
+        save(self.cfg)
+        label = self.tr("lang.auto") if code == "auto" else code
+        if self.tray:
+            self.tray.notify(self.tr("notify.lang_set", name=label))
+        self.log.info("Recognition language: %s", code)
 
     def current_model(self):
         return self.cfg["model"]
@@ -355,12 +376,13 @@ class Service:
         old_dev = self.cfg.get("input_device")
         self.cfg.update(new_cfg)   # same dict object — recorder reads it live
         save(self.cfg)
-        self.log.info("Настройки сохранены: silence=%s ms, autostop=%s, "
-                      "paste=%s, hotkey=%s, device=%s",
+        self.log.info("Settings saved: silence=%s ms, autostop=%s, "
+                      "paste=%s, hotkey=%s, device=%s, language=%s, locale=%s",
                       self.cfg["silence_ms"], self.cfg["auto_stop"],
                       self.cfg["paste_method"], self.cfg["hotkey"],
-                      self.cfg["input_device"])
-        self.live["last"] = "Настройки сохранены"
+                      self.cfg["input_device"], self.cfg.get("language"),
+                      self.cfg.get("locale"))
+        self.live["last"] = self.tr("notify.saved")
         ensure_autostart(bool(self.cfg.get("autostart", True)))
         if self.cfg["hotkey"] != old_hotkey and self.hotkey:
             try:
@@ -373,12 +395,12 @@ class Service:
             self.hotkey.start()
         if self.cfg["input_device"] != old_dev and self.state == STATE_RECORDING:
             if self.tray:
-                self.tray.notify("Устройство применится к следующей записи")
+                self.tray.notify(self.tr("notify.device_next"))
 
     def set_model(self, name):
         if self.state != STATE_IDLE:
             if self.tray:
-                self.tray.notify("Дождитесь завершения текущего цикла")
+                self.tray.notify(self.tr("notify.wait_cycle"))
             return
         def _load():
             self._set_state(STATE_LOADING)
@@ -386,7 +408,8 @@ class Service:
             save(self.cfg)
             self._set_state(STATE_IDLE if ok else STATE_ERROR)
             if self.tray:
-                self.tray.notify("Модель %s" % name if ok else "Модель %s не загрузилась" % name)
+                self.tray.notify(self.tr("notify.model_ok", name=name) if ok
+                                 else self.tr("notify.model_failed", name=name))
         threading.Thread(target=_load, daemon=True).start()
 
     # -- startup -----------------------------------------------------------
@@ -397,21 +420,22 @@ class Service:
                 from faster_whisper.vad import get_vad_model
                 self.asr = asr_mod.ASR(self.cfg, self.log)
                 self.asr.load()
-                self.log.info("Загрузка Silero VAD…")
+                self.log.info("Loading Silero VAD…")
                 self.vad = get_vad_model()
-                self.log.info("Прогрев (короткая пустая транскрипция)…")
+                self.log.info("Warm-up (short empty transcription)…")
                 import numpy as np
                 self.asr.transcribe(np.zeros((16000,), dtype=np.float32))
-                self.log.info("Прогрев завершён — сервис готов")
+                self.log.info("Warm-up done — service ready")
                 self._set_state(STATE_IDLE)
                 if self.tray:
-                    self.tray.notify("Готов к диктовке: %s" %
-                                     self.cfg["hotkey"].replace("+", "+").upper())
+                    self.tray.notify(self.tr(
+                        "notify.ready",
+                        hotkey=self.cfg["hotkey"].replace("+", "+").upper()))
             except Exception as e:
-                self.log.exception("Модель не загрузилась: %s", e)
+                self.log.exception("Model failed to load: %s", e)
                 self._set_state(STATE_ERROR)
                 if self.tray:
-                    self.tray.notify("Модель не загрузилась:\n%s" % e)
+                    self.tray.notify(self.tr("notify.model_error", err=e))
         threading.Thread(target=_load, daemon=True).start()
 
     def shutdown(self):
@@ -453,7 +477,7 @@ def start_http_api(cfg, svc, log):
                 self.end_headers()
                 self.wfile.write(body)
             except Exception as e:
-                log.exception("HTTP API ошибка: %s", e)
+                log.exception("HTTP API error: %s", e)
                 self.send_error(500)
 
         def log_message(self, fmt, *args):
@@ -465,18 +489,19 @@ def start_http_api(cfg, svc, log):
         log.info("HTTP API: http://127.0.0.1:%d/transcribe", cfg["http_port"])
         return server
     except OSError as e:
-        log.warning("HTTP API не запущен: %s", e)
+        log.warning("HTTP API not started: %s", e)
         return None
 
 
 # ---------------------------------------------------------------- selftest
 def selftest():
-    """Machine gate: imports -> model -> Russian WAV -> text; exit 0/1."""
+    """Machine gate: imports -> model -> test WAV -> text; exit 0/1."""
     log = setup_logging(console=True)
-    log.info("=== selftest начат ===")
-    print("WD service dir:", os.path.dirname(os.path.abspath(__file__)))
+    log.info("=== selftest started ===")
+    print("VibeForma", VERSION, "service dir:",
+          os.path.dirname(os.path.abspath(__file__)))
     try:
-        # (а) imports
+        # (a) imports
         import numpy as np
         import sounddevice
         import pyperclip
@@ -489,9 +514,10 @@ def selftest():
 
         cfg = load()
         print("config:", {k: cfg[k] for k in ("model", "device", "compute_type",
-                                              "language", "hotkey", "input_device")})
+                                              "language", "locale", "hotkey",
+                                              "input_device")})
 
-        # (б) model
+        # (b) model
         import asr as asr_mod
         engine = asr_mod.ASR(cfg, log)
         t0 = time.time()
@@ -499,13 +525,13 @@ def selftest():
         load_s = time.time() - t0
         print("model_load_s: %.1f" % load_s)
 
-        # (в) test WAV -> text
+        # (c) test WAV -> text (language auto = per-phrase detection)
         import audio as audio_mod
         if not os.path.exists(TEST_WAV):
-            raise RuntimeError("test_ru.wav не найден: %s" % TEST_WAV)
+            raise RuntimeError("test WAV not found: %s" % TEST_WAV)
         audio = audio_mod.load_wav_16k(TEST_WAV)
         print("test_wav_s: %.1f" % (audio.shape[0] / 16000.0))
-        engine.transcribe(np.zeros((16000,), dtype=np.float32))  # прогрев
+        engine.transcribe(np.zeros((16000,), dtype=np.float32))  # warm-up
         t0 = time.time()
         text = engine.transcribe(audio)
         dt = time.time() - t0
@@ -516,25 +542,25 @@ def selftest():
         hit = sum(1 for r in roots if r in text.lower())
         print("cyrillic:", has_cyr, "keyword_hits:", hit)
 
-        # (г) clipboard round-trip (non-destructive)
+        # (d) clipboard round-trip (non-destructive)
         prev = None
         try:
             prev = pyperclip.paste()
         except Exception:
             pass
-        pyperclip.copy("WD_SELFTEST_MARKER")
-        ok_clip = pyperclip.paste() == "WD_SELFTEST_MARKER"
+        pyperclip.copy("VF_SELFTEST_MARKER")
+        ok_clip = pyperclip.paste() == "VF_SELFTEST_MARKER"
         if prev is not None:
             pyperclip.copy(prev)
         print("clipboard_roundtrip:", ok_clip)
 
         gate = has_cyr and hit >= 1 and ok_clip
         print("SELFTEST OK" if gate else "SELFTEST FAIL: keyword/cyrillic/clipboard")
-        log.info("=== selftest завершён: %s ===", "OK" if gate else "FAIL")
+        log.info("=== selftest finished: %s ===", "OK" if gate else "FAIL")
         return 0 if gate else 1
     except Exception as e:
         print("SELFTEST FAIL: %s" % e)
-        log.exception("selftest упал: %s", e)
+        log.exception("selftest crashed: %s", e)
         return 1
 
 
@@ -547,9 +573,9 @@ def main():
     try:
         lock = SingleInstance(LOCK_PATH)
     except RuntimeError:
-        log.info("Второй экземпляр не запущен — уже работает")
+        log.info("Second instance not started — one is already running")
         return
-    log.info("=== сервис запускается (pid %d) ===", os.getpid())
+    log.info("=== service starting (pid %d) ===", os.getpid())
 
     cfg = load()
     svc = Service(cfg, log)
@@ -577,7 +603,7 @@ def main():
         svc.shutdown()
         tray.stop()
         lock.release()
-        log.info("=== сервис остановлен ===")
+        log.info("=== service stopped ===")
 
 
 if __name__ == "__main__":

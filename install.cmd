@@ -5,7 +5,7 @@ set "PYTHONIOENCODING=utf-8"
 cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 (
-    echo [X] Python не найден. Установите Python 3.10+ с python.org и запустите install.cmd снова.
+    echo [X] Python not found. Install Python 3.10+ from python.org and run install.cmd again.
     pause
     exit /b 1
 )

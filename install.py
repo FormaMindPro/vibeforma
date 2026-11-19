@@ -1,4 +1,4 @@
-"""Whisper Type RU — local installer (stdlib only; heavy deps go into the venv).
+"""VibeForma — local installer (stdlib only; heavy deps go into the venv).
 
 Usage:
   install.cmd                     one-click (double click)
@@ -18,10 +18,10 @@ import tempfile
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(REPO_DIR, "app")
 DEFAULT_TARGET = os.path.join(
-    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "WhisperDictation")
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VibeForma")
 MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
 MODEL_GB = {"large-v3": 3.1, "large-v3-turbo": 1.6, "medium": 1.5, "small": 0.5}
-LNK_NAME = "Whisper Диктовка.lnk"
+LNK_NAME = "VibeForma.lnk"
 
 PROBE_SNIPPET = """import sys
 from huggingface_hub import snapshot_download
@@ -49,15 +49,18 @@ SHORTCUTS_PS = r"""$ErrorActionPreference = "Stop"
 $ws = New-Object -ComObject WScript.Shell
 $target = "__TARGET__run.cmd"
 $work = "__TARGET__"
+$icon = "__TARGET__app\assets\icon.ico"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnk = $ws.CreateShortcut((Join-Path $desktop "__LNK__"))
 $lnk.TargetPath = $target
 $lnk.WorkingDirectory = $work
+$lnk.IconLocation = $icon
 $lnk.Save()
 $startup = [Environment]::GetFolderPath("Startup")
 $slnk = $ws.CreateShortcut((Join-Path $startup "__LNK__"))
 $slnk.TargetPath = $target
 $slnk.WorkingDirectory = $work
+$slnk.IconLocation = $icon
 $slnk.Save()
 Write-Output ("SHORTCUTS_OK desktop=" + $desktop)
 """
@@ -75,7 +78,7 @@ def detect_compute(force_cpu):
 
 
 def write_ps1(body):
-    """PS 5.1 needs a BOM to parse Cyrillic correctly."""
+    """PS 5.1 needs a BOM to parse non-ASCII correctly."""
     fd, path = tempfile.mkstemp(suffix=".ps1")
     with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
         f.write(body)
@@ -83,11 +86,11 @@ def write_ps1(body):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Whisper Type RU installer")
+    ap = argparse.ArgumentParser(description="VibeForma installer")
     ap.add_argument("--model", default="large-v3-turbo", choices=MODELS,
                     help="model to install (default: large-v3-turbo)")
     ap.add_argument("--target", default=DEFAULT_TARGET,
-                    help="service folder (default: %%LOCALAPPDATA%%\\WhisperDictation)")
+                    help="service folder (default: %%LOCALAPPDATA%%\\VibeForma)")
     ap.add_argument("--dry-run", action="store_true",
                     help="show the plan without executing")
     ap.add_argument("--no-run", action="store_true",
@@ -97,7 +100,7 @@ def main():
     args = ap.parse_args()
 
     if sys.platform != "win32":
-        say("[X] Установка рассчитана на Windows.")
+        say("[X] The installer targets Windows.")
         return 1
 
     target = os.path.abspath(os.path.expandvars(args.target))
@@ -105,9 +108,9 @@ def main():
     vp = os.path.join(target, ".venv", "Scripts", "python.exe")
     device, compute = detect_compute(args.cpu)
 
-    say("Whisper Type RU — установка%s" % ("  (dry-run: только план)" if args.dry_run else ""))
-    say("Каталог установки: %s" % target)
-    say("Модель: %s (~%.1f ГБ)   Устройство: %s (%s)" % (args.model, MODEL_GB[args.model], device, compute))
+    say("VibeForma — installation%s" % ("  (dry-run: plan only)" if args.dry_run else ""))
+    say("Target folder: %s" % target)
+    say("Model: %s (~%.1f GB)   Device: %s (%s)" % (args.model, MODEL_GB[args.model], device, compute))
     say("-" * 62)
     failed = False
 
@@ -116,14 +119,14 @@ def main():
         say("")
         say("[step] %s" % title)
         if args.dry_run:
-            say("   план: %s" % plan)
+            say("   plan: %s" % plan)
             return
         try:
             if action:
                 action()
             say("   [OK]")
         except subprocess.CalledProcessError as e:
-            say("   [X] команда завершилась с кодом %s" % e.returncode)
+            say("   [X] command exited with code %s" % e.returncode)
             failed = True
         except Exception as e:
             say("   [X] %s" % e)
@@ -131,14 +134,15 @@ def main():
 
     def check_python():
         if sys.version_info < (3, 10):
-            raise RuntimeError("нужен Python 3.10+, сейчас %s" % sys.version.split()[0])
+            raise RuntimeError("Python 3.10+ required, found %s"
+                               % sys.version.split()[0])
 
     def copy_app():
         shutil.copytree(APP_DIR, target, dirs_exist_ok=True)
 
     def make_venv():
         if os.path.exists(vp):
-            say("   .venv уже есть — использую его")
+            say("   .venv already exists — reusing it")
             return
         subprocess.run([sys.executable, "-m", "venv", os.path.join(target, ".venv")],
                        check=True)
@@ -150,25 +154,29 @@ def main():
     def model_step():
         dest = os.path.join(target, "models", args.model.replace("/", "--"))
         if os.path.exists(os.path.join(dest, "model.bin")):
-            say("   модель уже лежит в %s" % dest)
+            say("   model already present in %s" % dest)
             return
         probe = subprocess.run([vp, "-c", PROBE_SNIPPET, args.model],
                                capture_output=True, text=True)
         if "CACHED" in probe.stdout:
-            say("   модель уже в общем кэше Hugging Face — сервис загрузит её без сети")
+            say("   model already in the shared Hugging Face cache — "
+                "the service will load it offline")
             return
-        say("   скачиваю в %s (первичная загрузка, это единственный шаг с сетью)" % dest)
+        say("   downloading to %s (first-time install, the only step using the network)"
+            % dest)
         subprocess.run([vp, "-c", DOWNLOAD_SNIPPET, args.model, dest], check=True)
 
     def write_config():
         cfg_path = os.path.join(target, "config.json")
         if os.path.exists(cfg_path):
-            say("   config.json уже есть — не трогаю")
+            say("   config.json already exists — not touching it")
             return
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump({"model": args.model, "device": device,
-                       "compute_type": compute}, f, ensure_ascii=False, indent=2)
-        say("   device=%s compute_type=%s" % (device, compute))
+                       "compute_type": compute,
+                       "language": "auto", "locale": "auto"},
+                      f, ensure_ascii=False, indent=2)
+        say("   device=%s compute_type=%s language=auto locale=auto" % (device, compute))
 
     def make_shortcuts():
         body = (SHORTCUTS_PS.replace("__TARGET__", tdir).replace("__LNK__", LNK_NAME))
@@ -182,34 +190,36 @@ def main():
     def run_service():
         os.startfile(os.path.join(target, "run.cmd"))
 
-    step("Python 3.10+", "проверить версию интерпретатора", check_python)
+    step("Python 3.10+", "check the interpreter version", check_python)
     if not args.dry_run and failed:
         return 1
-    step("Копирование app/ в каталог сервиса", "copytree app/ → %s" % target, copy_app)
-    step("Виртуальное окружение .venv", "python -m venv %s\\.venv" % target, make_venv)
-    step("Зависимости (pip)", ".venv pip install -r requirements.txt "
-         "(faster-whisper, sounddevice, pynput, pystray, Pillow, pyperclip, CUDA-библиотеки)",
+    step("Copy app/ into the service folder", "copytree app/ → %s" % target, copy_app)
+    step("Virtual environment .venv", "python -m venv %s\\.venv" % target, make_venv)
+    step("Dependencies (pip)", ".venv pip install -r requirements.txt "
+         "(faster-whisper, sounddevice, pynput, pystray, Pillow, pyperclip, CUDA libs)",
          pip_install)
-    step("Модель %s" % args.model, "проверю кэш Hugging Face; при отсутствии — "
-         "скачаю в %s\\models\\%s (~%.1f ГБ, единственный шаг с сетью)"
+    step("Model %s" % args.model, "probe the Hugging Face cache; if missing, "
+         "download to %s\\models\\%s (~%.1f GB, the only step using the network)"
          % (target, args.model, MODEL_GB[args.model]), model_step)
-    step("config.json", "записать модель и устройство (если конфига ещё нет)", write_config)
-    step("Ярлыки", "рабочий стол + автозапуск: «%s» → run.cmd" % LNK_NAME, make_shortcuts)
+    step("config.json", "write model and device (only if no config exists yet)",
+         write_config)
+    step("Shortcuts", "desktop + startup: «%s» → run.cmd, icon app/assets/icon.ico"
+         % LNK_NAME, make_shortcuts)
     if args.no_run:
         say("")
-        say("[step] Запуск сервиса — пропущен (--no-run)")
+        say("[step] Launch the service — skipped (--no-run)")
     else:
-        step("Запуск сервиса", "start run.cmd (трей + панель)", run_service)
+        step("Launch the service", "start run.cmd (tray + panel)", run_service)
 
     say("")
     say("-" * 62)
     if failed:
-        say("Установка прервана на шаге выше. Исправьте причину и запустите снова.")
+        say("Installation stopped at the step above. Fix the cause and run again.")
         return 1
     if args.dry_run:
-        say("План готов (dry-run — ничего не выполнялось).")
+        say("Plan ready (dry-run — nothing was executed).")
     else:
-        say("Готово. Хоткей: Ctrl+Alt+Space (по умолчанию). Панель и иконка в трее.")
+        say("Done. Hotkey: Ctrl+Alt+Space (by default). Tray icon + panel are up.")
     return 0
 
 
