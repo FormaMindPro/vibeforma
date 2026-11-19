@@ -3,6 +3,14 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.1 — 2026-11-20
+
+### Changed
+- Recognition language is **pinned exactly** — no per-phrase guessing. The
+  model recognizes exactly the chosen code; `auto` removed from the tray and
+  settings selectors. Product default: `en` (was `auto`). A legacy `auto`
+  value in config.json maps to `en`.
+
 ## 0.1.0 — 2026-11-20
 
 First international release.

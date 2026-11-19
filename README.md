@@ -15,8 +15,9 @@ the model.
 
 - Hotkey `Ctrl+Alt+Space` (remappable): start speaking, the phrase closes on a
   pause of silence or on the second keypress
-- Recognition language: **Auto** — the model detects the language of every
-  phrase; pin a fixed language in settings or the tray menu (26 codes shipped)
+- Recognition language: **pinned exactly** — the model recognizes exactly the
+  language you set, no per-phrase guessing; switch in the tray menu or
+  settings (26 codes)
 - Interface: English and Russian out of the box; add a JSON file to
   `app/locales/` to translate it into anything else
 - Monitoring panel: mic level, VAD indicator, recognized text streaming
@@ -89,10 +90,11 @@ share of non-scaling stages); the gap widens on longer audio.
 
 ## Languages
 
-- **Recognition**: `auto` by default — Whisper detects the phrase language.
-  Pin a code (`en`, `ru`, `de`, …) in settings or the tray for reliability on
-  very short phrases. A per-language prompt preset improves punctuation for
-  the major languages; personal terms belong to `config.json → "hotwords"`.
+- **Recognition**: pinned exactly — the model recognizes exactly the chosen
+  language (default `en`); switch in the tray or settings. No auto-detection:
+  what you set is what is recognized. A per-language prompt preset improves
+  punctuation for the major languages; personal terms belong to
+  `config.json → "hotwords"`.
 - **Interface**: English and Russian ship in `app/locales/*.json`. To add
   yours — copy `en.json`, translate the values, save as `app/locales/<code>.json`;
   the language then appears in settings automatically.

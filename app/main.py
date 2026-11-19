@@ -357,9 +357,8 @@ class Service:
             return
         self.cfg["language"] = code
         save(self.cfg)
-        label = self.tr("lang.auto") if code == "auto" else code
         if self.tray:
-            self.tray.notify(self.tr("notify.lang_set", name=label))
+            self.tray.notify(self.tr("notify.lang_set", name=code))
         self.log.info("Recognition language: %s", code)
 
     def current_model(self):
@@ -516,6 +515,9 @@ def selftest():
         print("config:", {k: cfg[k] for k in ("model", "device", "compute_type",
                                               "language", "locale", "hotkey",
                                               "input_device")})
+        cfg = dict(cfg)
+        cfg["language"] = "ru"   # selftest WAV is Russian; pin it for the gate
+        print("selftest_language: ru (pinned for the Russian test WAV)")
 
         # (b) model
         import asr as asr_mod

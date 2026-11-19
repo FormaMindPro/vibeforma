@@ -14,7 +14,7 @@ STATE_COLORS = {
     "error": "#8E44AD",
 }
 MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
-LANG_QUICK = ("auto", "en", "ru", "uk", "de", "fr", "es", "it", "pl", "zh", "ja", "ko")
+LANG_QUICK = ("en", "ru", "uk", "de", "fr", "es", "it", "pl", "zh", "ja", "ko", "ar")
 _ASSET_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "assets", "icon.png")
 
@@ -76,8 +76,8 @@ class Tray:
 
     # -- menu --------------------------------------------------------------
     def _lang_label(self, code):
-        mark = "•  " if self.service.cfg.get("language", "auto") == code else ""
-        return mark + (self.service.tr("lang.auto") if code == "auto" else code)
+        mark = "•  " if self.service.cfg.get("language") == code else ""
+        return mark + code
 
     def _lang_submenu(self, icon, item):  # noqa: ARG002
         return [pystray.MenuItem(
