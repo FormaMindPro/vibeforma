@@ -1,4 +1,4 @@
-"""ASR engine: one WhisperModel per service lifetime, Russian transcription."""
+"""ASR engine: one WhisperModel per service lifetime, multilingual dictation."""
 import gc
 import logging
 import threading
@@ -8,13 +8,24 @@ import numpy as np
 
 from config import MODELS_DIR, bootstrap_cuda_dlls
 
-# Рантайм без сети: кэшированная модель грузится offline-first; сеть — только
-# для первичной закачки модели, которой ещё нет в кэше.
+# Offline-first runtime: a cached model loads with no network; the network is
+# used only for the first download of a model that is nowhere on disk.
 
-# Канонические CT2-конверсии вне Systran (у Systran turbo-репозитория нет;
-# mobiuslabsgmbh/faster-whisper-large-v3-turbo редиректит в dropbox-dash).
+# Canonical CT2 conversions that live outside Systran (Systran has no turbo
+# repo; mobiuslabsgmbh/faster-whisper-large-v3-turbo redirects to dropbox-dash).
 REPO_OVERRIDES = {
     "large-v3-turbo": "dropbox-dash/faster-whisper-large-v3-turbo",
+}
+
+# Dictation presets per pinned language: punctuation + capitalization hints.
+# User-specific terms go to config.json "hotwords", never into the repo.
+PROMPT_PRESETS = {
+    "ru": "Диктовка с пунктуацией и заглавными буквами.",
+    "en": "Dictation with punctuation and capitalization.",
+    "uk": "Диктування з пунктуацією та великими буквами.",
+    "de": "Diktat mit Zeichensetzung und Großschreibung.",
+    "fr": "Dictée avec ponctuation et majuscules.",
+    "es": "Dictado con puntuación y mayúsculas.",
 }
 
 
@@ -42,7 +53,7 @@ def _resolve_model(name, log):
     except Exception:
         pass
     os.makedirs(MODELS_DIR, exist_ok=True)
-    log.info("Модель %s скачивается в %s (первичная установка)", name, local)
+    log.info("Downloading model %s to %s (first-time install)", name, local)
     from huggingface_hub import snapshot_download
     snapshot_download(repo, local_dir=local)
     return local, False
@@ -63,6 +74,20 @@ def _make_model(name, device, compute_type, log):
                             local_files_only=False)
 
 
+def _prompt(cfg):
+    """Initial prompt: preset for a pinned language, hotwords always."""
+    parts = []
+    lang = cfg.get("language")
+    if lang and lang != "auto":
+        preset = PROMPT_PRESETS.get(lang)
+        if preset:
+            parts.append(preset)
+    hotwords = (cfg.get("hotwords") or "").strip()
+    if hotwords:
+        parts.append(hotwords)
+    return " ".join(parts) or None
+
+
 class ASR:
     def __init__(self, cfg, log: logging.Logger):
         self.cfg = cfg
@@ -77,22 +102,26 @@ class ASR:
         with self._lock:
             t0 = time.time()
             self.log.info(
-                "Загрузка модели %s: device=%s compute_type=%s",
+                "Loading model %s: device=%s compute_type=%s",
                 self.cfg["model"], self.cfg["device"], self.cfg["compute_type"],
             )
             self.model = _make_model(self.cfg["model"], self.cfg["device"],
                                      self.cfg["compute_type"], self.log)
-            self.log.info("Модель загружена за %.1f с", time.time() - t0)
+            self.log.info("Model loaded in %.1f s", time.time() - t0)
 
     def transcribe(self, audio: np.ndarray, verbose: bool = True) -> str:
-        """Transcribe 16 kHz float32 mono audio; returns stripped text."""
+        """Transcribe 16 kHz float32 mono audio; returns stripped text.
+
+        language "auto" -> None: faster-whisper detects it per phrase.
+        """
         with self._lock:
             t0 = time.time()
+            lang = self.cfg.get("language")
             segments, info = self.model.transcribe(
                 audio,
-                language=self.cfg["language"],
+                language=None if not lang or lang == "auto" else lang,
                 beam_size=5,
-                initial_prompt=(self.cfg.get("initial_prompt") or None),
+                initial_prompt=_prompt(self.cfg),
                 condition_on_previous_text=False,
                 no_speech_threshold=0.6,
                 vad_filter=True,
@@ -101,7 +130,7 @@ class ASR:
             text = "".join(s.text for s in segments).strip()
             if verbose:
                 self.log.info(
-                    "Транскрипция: аудио %.1f с, распознавание %.2f с, lang=%s",
+                    "Transcription: audio %.1f s, recognition %.2f s, lang=%s",
                     audio.shape[0] / 16000.0, time.time() - t0, info.language,
                 )
             return text
@@ -115,13 +144,13 @@ class ASR:
                 del old
                 gc.collect()
                 self.cfg["model"] = name
-                self.log.info("Переключение модели на %s", name)
+                self.log.info("Switching model to %s", name)
 
                 t0 = time.time()
                 self.model = _make_model(name, self.cfg["device"],
                                          self.cfg["compute_type"], self.log)
-                self.log.info("Модель %s загружена за %.1f с", name, time.time() - t0)
+                self.log.info("Model %s loaded in %.1f s", name, time.time() - t0)
                 return True
             except Exception as e:
-                self.log.exception("Переключение модели не удалось: %s", e)
+                self.log.exception("Model switch failed: %s", e)
                 return False

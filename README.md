@@ -1,123 +1,172 @@
-# Whisper Type RU
+# VibeForma
 
-Локальная русская голосовая диктовка для Windows: нажали хоткей → говорите → текст вставляется в то поле, где стоял курсор (Qoder, редактор, браузер — куда угодно). Распознавание — faster-whisper на вашей видеокарте, **полностью локально**: аудио и текст не покидают компьютер. Интернет нужен один раз — чтобы скачать модель.
+**from voice vibe to sharp form.**
 
-## Возможности
+Local voice dictation for Windows: press a hotkey → speak → the text lands
+where your cursor is (editor, chat, browser — anywhere). Recognition runs on
+your own machine via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+and understands **~99 languages** — the same downloaded model serves them all.
+Nothing leaves your computer; the network is used exactly once, to download
+the model.
 
-- Хоткей `Ctrl+Alt+Space` (меняется в настройках): начало записи, автостоп по тишине или повторное нажатие
-- Панель-монитор: уровень микрофона, индикатор VAD, распознанный текст стримится почти в реальном времени
-- Вставка текста независимым от раскладки способом (Shift+Insert) с возвратом прежнего буфера обмена
-- Окно настроек без правки конфигов: пауза тишины, стриминг, максимальная запись, прозрачность панели, автостоп, звук, хоткей, устройство ввода, автозапуск
-- Меню в трее: пауза, устройство ввода, модель на ходу, папка логов
-- Автозапуск с Windows, ярлык на рабочем столе
-- Один экземпляр сервиса (PID-блокировка), ротация логов
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Установка
+## Features
 
-Нужен Python 3.10+ (лучше 3.12+) и Windows 10/11. С видеокартой NVIDIA распознавание быстрое (CUDA float16); без неё установщик сам переключит на CPU int8.
+- Hotkey `Ctrl+Alt+Space` (remappable): start speaking, the phrase closes on a
+  pause of silence or on the second keypress
+- Recognition language: **Auto** — the model detects the language of every
+  phrase; pin a fixed language in settings or the tray menu (26 codes shipped)
+- Interface: English and Russian out of the box; add a JSON file to
+  `app/locales/` to translate it into anything else
+- Monitoring panel: mic level, VAD indicator, recognized text streaming
+  near-real-time while you speak
+- Layout-independent pasting (Shift+Insert) with the old clipboard restored
+  after 1 s
+- Settings window — silence pause, streaming interval, max recording length,
+  panel transparency, autogrow, sounds, hotkey, input device, autostart — all
+  applied live, no restart
+- Tray menu: pause, input device, model switch without restart, recognition
+  language, logs folder
+- Autostart with Windows, desktop shortcut, single-instance lock, rotating logs
+
+## Install
+
+Windows 10/11, Python 3.10+ (3.12+ recommended). With an NVIDIA GPU the
+recognition is fast (CUDA float16); without one the installer falls back to
+CPU (int8) — use the `small` model there.
+
+**Option A — release zip:** grab `VibeForma-<version>.zip` from
+[Releases](../../releases), unzip, double-click `install.cmd`.
+
+**Option B — git:**
 
 ```bat
-git clone https://github.com/<owner>/whisper-type-ru.git
-cd whisper-type-ru
+git clone https://github.com/FormaMindPro/vibeforma.git
+cd vibeforma
 install.cmd
 ```
 
-или вручную:
+The installer: copies `app/` to `%LOCALAPPDATA%\VibeForma` → creates a `.venv`
+→ installs dependencies → downloads the model (the only network step; skipped
+if the model is already in the shared Hugging Face cache) → writes
+`config.json` → creates shortcuts (desktop + startup, branded icon) → starts
+the service.
 
-```bat
-python install.py
-```
+Installer flags:
 
-Установщик делает: копирует `app/` в `%LOCALAPPDATA%\WhisperDictation` → создаёт `.venv` → ставит зависимости → скачивает модель (единственный шаг с сетью) → пишет config.json → создаёт ярлыки (рабочий стол + автозапуск) → запускает сервис.
-
-Флаги:
-
-| Флаг | Значение |
+| Flag | Meaning |
 | --- | --- |
-| `--model <имя>` | модель для установки (по умолчанию `large-v3-turbo`) |
-| `--target <папка>` | каталог сервиса (по умолчанию `%LOCALAPPDATA%\WhisperDictation`) |
-| `--dry-run` | показать план установки, ничего не выполняя |
-| `--cpu` | принудительно CPU (int8), даже если есть CUDA |
-| `--no-run` | не запускать сервис после установки |
+| `--model <name>` | model to install (default `large-v3-turbo`) |
+| `--target <folder>` | service folder (default `%LOCALAPPDATA%\VibeForma`) |
+| `--dry-run` | print the plan, execute nothing |
+| `--cpu` | force CPU (int8) even with CUDA present |
+| `--no-run` | don't launch the service at the end |
 
-## Модели
+## Models
 
-| Модель | Обозначение в меню | Размер | Скорость | Качество (ru) |
+| Model | Menu name | Size | Speed | Quality |
 | --- | --- | --- | --- | --- |
-| large-v3 | «large-v3» | 3,1 ГБ | базовая | максимум |
-| large-v3-turbo | «large-v3-turbo» | 1,6 ГБ | в 4–8 раз быстрее | близко к large-v3 |
-| medium | «medium» | 1,5 ГБ | ×4 к large-v3 | среднее |
-| small | «small» | 0,5 ГБ | ×10 к large-v3 | ниже среднего |
+| large-v3 | «large-v3» | 3.1 GB | baseline | best punctuation |
+| large-v3-turbo | «large-v3-turbo» | 1.6 GB | fast | near large-v3 |
+| medium | «medium» | 1.5 GB | ×4 vs large-v3 | medium |
+| small | «small» | 0.5 GB | ×10 vs large-v3 | lower |
 
-Переключение модели — в трее, без перезапуска сервиса. Модели живут в `%LOCALAPPDATA%\WhisperDictation\models\<имя>` либо в общем кэше Hugging Face; сервис грузит их offline-first и выходит в сеть только когда модели нет нигде.
+Switch models in the tray, no restart. Models live in
+`%LOCALAPPDATA%\VibeForma\models\<name>` or in the shared Hugging Face cache;
+the service loads offline-first and only reaches the network when the model
+is nowhere on disk.
 
-## Замеры
+Measured on the 12.5 s test phrase (CUDA float16, best of 3):
 
-Тестовая фраза: 12,5 с русской речи, CUDA float16, лучшее из 3 запусков (Silero VAD, beam 5):
-
-| Модель | Распознавание | Замечание |
+| Model | Recognition | Note |
 | --- | --- | --- |
-| large-v3 | 1,53 с | пунктуация и заглавные лучше |
-| large-v3-turbo | 0,64 с (~2,4× быстрее) | весь текст верен, пунктуация беднее |
+| large-v3 | 1.53 s | richer punctuation |
+| large-v3-turbo | 0.64 s (~2.4× faster) | all words correct, sparser punctuation |
 
-На коротких фразах реальный выигрыш turbo ниже «заводских» 4–8× (доля нескалируемых этапов высока); на длинных аудио разрыв растёт. Дефолт живого сервиса — large-v3; turbo стоит брать на слабых GPU или когда важна скорость. Переключение — в трее, без перезапуска.
+On short phrases the real turbo speedup is below the vendor's 4–8× (a larger
+share of non-scaling stages); the gap widens on longer audio.
 
-## Использование
+## Languages
 
-1. Запустите сервис (ярлык «Whisper Диктовка» или автозапуск) — в трее появится иконка, откроется панель-монитор.
-2. Проверьте, что панель видит ваш микрофон (полоса уровня дёргается при речи; иначе выберите устройство в трее или в настройках).
-3. `Ctrl+Alt+Space` — говорите — пауза в речи закрывает фразу — текст вставляется в активное поле.
-4. ✕ на панели прячет панель (иконка в трее остаётся), ⚙ открывает настройки.
+- **Recognition**: `auto` by default — Whisper detects the phrase language.
+  Pin a code (`en`, `ru`, `de`, …) in settings or the tray for reliability on
+  very short phrases. A per-language prompt preset improves punctuation for
+  the major languages; personal terms belong to `config.json → "hotwords"`.
+- **Interface**: English and Russian ship in `app/locales/*.json`. To add
+  yours — copy `en.json`, translate the values, save as `app/locales/<code>.json`;
+  the language then appears in settings automatically.
 
-## Приватность
+## Usage
 
-- Распознавание и запись — только локальные процессы; единственный сетевой контакт — первая загрузка модели с Hugging Face (можно заранее положить модель в `models/` и установка пройдёт без сети).
-- Логи — локальная папка `logs\` с ротацией.
-- Никаких телеметрий, аккаунтов, токенов.
+1. Start the service (desktop shortcut or autostart) — a tray icon appears,
+   the monitoring panel opens.
+2. Check the panel sees your microphone (the level bar moves when you speak;
+   otherwise pick the device in the tray).
+3. `Ctrl+Alt+Space` → speak → pause → the text is inserted into the field
+   that had focus when you pressed the hotkey.
+4. `✕` hides the panel (the tray icon stays), `⚙` opens settings.
 
-## Структура
+## Privacy
+
+- Recording and recognition are local processes. The single network contact
+  is the first model download; you can pre-place the model into `models/`
+  and the install stays fully offline.
+- Logs live in the local `logs\` folder with rotation. No telemetry, no
+  accounts, no tokens.
+
+## Repository layout
 
 ```
 app/
-  main.py              сервис: состояния, хоткей, потоки записи/распознавания, selftest
-  audio.py             захват 16 кГц, уровень, Silero VAD, частичные транскрипции
-  asr.py               faster-whisper: загрузка (offline-first), транскрипция, смена модели
-  insert.py            вставка текста (Shift+Insert/Ctrl+V), возврат буфера, фокус
-  hotkey.py            глобальный хоткей (pynput)
-  tray.py              иконка и меню трея (pystray)
-  hud.py               панель-монитор (tkinter, отдельный поток)
-  settings_window.py   окно настроек (tkinter)
-  config.py            config.json, дефолты, поиск устройства, CUDA DLL
+  main.py              service: states, hotkey, record/recognize threads, selftest
+  audio.py             16 kHz capture, level, Silero VAD, partial transcribes
+  asr.py               faster-whisper: offline-first loading, transcription, model swap
+  insert.py            text insertion (Shift+Insert/Ctrl+V), clipboard restore, focus
+  hotkey.py            global hotkey (pynput)
+  tray.py              tray icon and menu (pystray)
+  hud.py               monitoring panel (tkinter, own thread)
+  settings_window.py   settings dialog (tkinter)
+  config.py            config.json, defaults, device lookup, CUDA DLL bootstrap
+  i18n.py              UI strings loader (locales/*.json, en fallback)
+  locales/             en.json, ru.json — drop a file to add a language
+  assets/              icon.png, icon.ico
   requirements.txt
-  run.cmd              запуск: pythonw main.py | --selftest
-install.cmd            установщик в один клик
-install.py             установщик (python, stdlib)
+  run.cmd              launcher: pythonw main.py | --selftest
+install.cmd            one-click installer
+install.py             installer (python, stdlib)
 ```
 
-## Диагностика
+## Troubleshooting
 
-- **Python не найден** — установите с python.org (галочка «Add to PATH»).
-- **Нет CUDA** — установщик сам выберет CPU int8; на CPU используйте `--model small`.
-- **Микрофон не слышит** — в трее выберите устройство ввода; панель показывает «⚠ тишина», если уровень около нуля при записи.
-- **Текст вставляется не туда** — сервис возвращает фокус в окно, которое было активно при нажатии хоткея; не переключайте окна во время записи.
-- **Русская раскладка и Ctrl+V** — по умолчанию вставка идёт через Shift+Insert, это не зависит от раскладки; переключить можно в настройках.
+- **Python not found** — install from python.org (tick "Add to PATH").
+- **No CUDA** — the installer picks CPU int8 automatically; prefer
+  `--model small` on CPU.
+- **The mic hears nothing** — choose the input device in the tray; the panel
+  shows a silence warning when the level stays near zero while recording.
+- **Text lands in the wrong window** — the service restores focus to the
+  window that was active at the hotkey press; don't switch windows while
+  dictating.
+- **Russian layout and Ctrl+V** — pasting defaults to Shift+Insert, which is
+  layout-independent; switchable in settings.
 
-## Проверка кода ИИ-ассистентом
+## Reviewing the code with an AI assistant
 
-Практика, которую стоит держать в репозитории: перед пушем прогоните код через любого ИИ-ассистента с этим промптом:
+A practice worth keeping: before pushing, run the code through any AI
+assistant with this prompt:
 
 ```text
-Ты — ревьюер небольшого Python-приложения для Windows (голосовая диктовка,
-faster-whisper). Прочитай app/*.py, install.py и найди:
-1) ошибки потоков и гонок (Tk только в своём потоке, общие dict между потоками);
-2) утечки ресурсов (модель, аудио-поток, дескрипторы);
-3) места, где код может уйти в сеть без запроса пользователя (приватность:
-сеть допустима только для первой загрузки модели);
-4) платформенные ловушки Windows (раскладки, фокус окон, пути с кириллицей);
-5) упрощения, которые сломают установку свежего клона.
-Отвечай списком: файл:строка — проблема — как чинить. Не переписывай код.
+You are reviewing a small Python app for Windows (voice dictation,
+faster-whisper). Read app/*.py, install.py and find:
+1) thread and race bugs (Tk only in its own thread, dicts shared across threads);
+2) resource leaks (model, audio stream, handles);
+3) any place the code could touch the network without the user asking
+   (privacy: the network is allowed only for the first model download);
+4) Windows platform traps (layouts, window focus, non-ASCII paths);
+5) simplifications that would break a fresh clone's installation.
+Answer as a list: file:line — problem — how to fix. Do not rewrite the code.
 ```
 
-## Лицензия
+## License
 
-MIT — см. [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

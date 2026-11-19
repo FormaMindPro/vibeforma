@@ -20,7 +20,7 @@ class Hotkey:
         self._listener = keyboard.GlobalHotKeys({self._combo: self._on})
         self._listener.daemon = True
         self._listener.start()
-        self._log.info("Глобальный хоткей: %s", self._combo)
+        self._log.info("Global hotkey: %s", self._combo)
 
     def stop(self):
         if self._listener:
@@ -30,4 +30,4 @@ class Hotkey:
         try:
             self._callback()
         except Exception:
-            self._log.exception("Ошибка в обработчике хоткея")
+            self._log.exception("Hotkey handler error")

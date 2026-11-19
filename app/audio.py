@@ -31,9 +31,9 @@ def load_wav_16k(path):
         sampwidth = w.getsampwidth()
         raw = w.readframes(w.getnframes())
     if sampwidth != 2:
-        raise RuntimeError("нужен 16-бит PCM WAV, получен sampwidth=%d" % sampwidth)
+        raise RuntimeError("16-bit PCM WAV required, got sampwidth=%d" % sampwidth)
     if channels != 1:
-        raise RuntimeError("нужен моно WAV, каналов=%d" % channels)
+        raise RuntimeError("mono WAV required, channels=%d" % channels)
     a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     if rate != SAMPLE_RATE:
         x = np.arange(0, len(a), dtype=np.float32) * (SAMPLE_RATE / rate)
@@ -92,7 +92,7 @@ class Recorder:
         self._stop_evt.clear()
         self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor.start()
-        self.log.info("Запись начата: device=%s", device_index)
+        self.log.info("Recording started: device=%s", device_index)
 
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
@@ -113,7 +113,7 @@ class Recorder:
             self._frames = []
         dur = len(buf) / SAMPLE_RATE
         self.log.info(
-            "Запись остановлена: %.1f с, переполнений очереди: %d", dur, self._overruns
+            "Recording stopped: %.1f s, queue overruns: %d", dur, self._overruns
         )
         if self.live_state is not None:
             self.live_state["level"] = 0.0
@@ -185,7 +185,7 @@ class Recorder:
     def _auto_stop(self, reason):
         if self._stop_evt.is_set():
             return
-        self.log.info("Автостоп записи: %s", reason)
+        self.log.info("Auto-stop: %s", reason)
         self._stop_evt.set()
         threading.Thread(target=self.on_auto_stop, args=(reason,), daemon=True).start()
 
@@ -194,5 +194,5 @@ class Recorder:
             probs = self.vad(window, num_samples=FRAME)
             return float(probs[-1])
         except Exception as e:
-            self.log.debug("VAD пропущен: %s", e)
+            self.log.debug("VAD skipped: %s", e)
             return 0.0

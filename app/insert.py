@@ -1,4 +1,4 @@
-"""Insert text into the focused field: clipboard + Ctrl+V, optional restore."""
+"""Insert text into the focused field: clipboard + paste, optional restore."""
 import logging
 import threading
 import time
@@ -6,13 +6,13 @@ import time
 import pyperclip
 from pynput.keyboard import Controller, Key
 
-PASTE_DELAY_S = 0.03   # before Ctrl+V, let the clipboard settle
-AFTER_DELAY_S = 0.06   # after Ctrl+V so slow apps register the paste
+PASTE_DELAY_S = 0.03   # before the paste, let the clipboard settle
+AFTER_DELAY_S = 0.06   # after the paste so slow apps register it
 RESTORE_DELAY_S = 1.0  # give the target app time to read the clipboard
 
 
 def foreground_window() -> str:
-    """Title of the window that will receive Ctrl+V (for the log)."""
+    """Title of the window that will receive the paste (for the log)."""
     try:
         import ctypes
         user32 = ctypes.windll.user32
@@ -20,9 +20,9 @@ def foreground_window() -> str:
         buf = ctypes.create_unicode_buffer(256)
         user32.GetWindowTextW(hwnd, buf, 256)
         title = buf.value.strip()
-        return title[:80] if title else "(без заголовка)"
+        return title[:80] if title else "(untitled)"
     except Exception:
-        return "(неизвестно)"
+        return "(unknown)"
 
 
 def get_foreground_hwnd():
@@ -60,7 +60,7 @@ def insert_text(text: str, restore_clipboard: bool = True,
         prev = pyperclip.paste()
     except Exception as e:
         if log:
-            log.warning("Не удалось прочитать буфер обмена: %s", e)
+            log.warning("Failed to read the clipboard: %s", e)
     pyperclip.copy(text)
 
     restore_foreground(target_hwnd)
@@ -68,8 +68,9 @@ def insert_text(text: str, restore_clipboard: bool = True,
     kb = Controller()
     time.sleep(PASTE_DELAY_S)
     if paste_method == "shift_insert":
-        # Работает при любой раскладке: Ctrl+V под русской раскладкой
-        # распознаётся как Ctrl+«м» и не вставляет (замер 2026-11-19).
+        # Layout-independent: Ctrl+V under a Russian layout resolves to
+        # Ctrl+"м" and never pastes (measured 2026-11-19); Shift+Insert works
+        # on every layout.
         with kb.pressed(Key.shift):
             kb.press(Key.insert)
             kb.release(Key.insert)
@@ -79,7 +80,7 @@ def insert_text(text: str, restore_clipboard: bool = True,
             kb.release("v")
     time.sleep(AFTER_DELAY_S)
     if log:
-        log.info("Вставка выполнена: %d символов — окно: %s", len(text), target)
+        log.info("Pasted %d chars — window: %s", len(text), target)
 
     if restore_clipboard and prev:
         threading.Thread(target=_restore, args=(prev,), daemon=True).start()

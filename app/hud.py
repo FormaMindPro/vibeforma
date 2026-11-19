@@ -13,14 +13,6 @@ STATE_COLORS = {
     "paused": "#5D6D7E",
     "error": "#8E44AD",
 }
-STATE_LABELS = {
-    "loading": "Загрузка модели…",
-    "idle": "Готов — Ctrl+Alt+Space",
-    "recording": "● ЗАПИСЬ — говорите",
-    "processing": "Распознавание…",
-    "paused": "Пауза",
-    "error": "Ошибка модели",
-}
 BG = "#16181D"
 FG = "#D5D9E0"
 DIM = "#7A8290"
@@ -42,14 +34,14 @@ class Hud:
         self._root_h = BASE_H
 
         self.root = tk.Tk()
-        self.root.title("Whisper Диктовка")
+        self.root.title("VibeForma")
         self.root.geometry("%dx%d+%d+%d" % self._place())
         self.root.attributes("-topmost", True)
         self.root.overrideredirect(True)   # borderless
         self.root.configure(bg=BG)
         self.root.attributes("-alpha", float(self.cfg.get("hud_alpha", 0.94)))
 
-        # -- header: [⚙]  статус …  |  [✕] ---------------------------------
+        # -- header: [⚙]  status …  |  [✕] ---------------------------------
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x", padx=12, pady=(10, 2))
         gear = tk.Label(top, text="⚙", font=("Segoe UI", 12), fg=FG, bg=BG,
@@ -58,7 +50,7 @@ class Hud:
         gear.bind("<Button-1>", lambda e: self._open_settings())
         self.dot = tk.Canvas(top, width=14, height=14, bg=BG, highlightthickness=0)
         self.dot.pack(side="left", padx=(10, 4))
-        self.lbl = tk.Label(top, text="Запуск…", font=("Segoe UI", 11, "bold"),
+        self.lbl = tk.Label(top, text="…", font=("Segoe UI", 11, "bold"),
                             fg=FG, bg=BG, anchor="w")
         self.lbl.pack(side="left")
         sep = tk.Frame(top, width=1, height=16, bg="#3A4048")
@@ -126,6 +118,10 @@ class Hud:
         except Exception:
             pass
 
+    def _state_label(self, key):
+        label = self.svc.tr("states.%s" % key)
+        return key if label == "states.%s" % key else label
+
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
         try:
@@ -134,15 +130,15 @@ class Hud:
                 self._open_settings_window()
             self._apply_alpha()
             st = dict(self.state)
-            color = STATE_COLORS.get(st.get("state", "idle"), "#2E86DE")
-            self.lbl.configure(text=STATE_LABELS.get(st.get("state", "idle"),
-                                                     st.get("state", "")), fg=color)
+            key = st.get("state", "idle")
+            color = STATE_COLORS.get(key, "#2E86DE")
+            self.lbl.configure(text=self._state_label(key), fg=color)
             self._paint_dot(color)
             level = min(1.0, float(st.get("level", 0.0)) * 12.0)  # rms ~0..0.08
             self._paint_bar(level)
-            hint = "микрофон: %s" % (st.get("device") or "")
-            if st.get("state") == "recording" and float(st.get("level", 0)) < 0.003:
-                hint += "   ⚠ тишина — микрофон не слышит (проверь устройство в трее)"
+            hint = self.svc.tr("hud.mic_hint", device=st.get("device") or "")
+            if (key == "recording" and float(st.get("level", 0)) < 0.003):
+                hint += self.svc.tr("hud.silence_warn")
             self.hint.configure(text=hint)
 
             partial = st.get("partial") or "…"
@@ -222,4 +218,4 @@ def run_hud(svc, log):
     try:
         Hud(svc, log).run()
     except Exception as e:
-        log.warning("HUD остановлен: %s", e)
+        log.warning("HUD stopped: %s", e)

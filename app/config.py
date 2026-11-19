@@ -2,28 +2,35 @@
 import json
 import os
 
+VERSION = "0.1.0"
+
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
 LOG_DIR = os.path.join(SERVICE_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "service.log")
 TEST_WAV = os.path.join(SERVICE_DIR, "test_ru.wav")
-MODELS_DIR = os.path.join(SERVICE_DIR, "models")   # models live inside the service folder
 LOCK_PATH = os.path.join(SERVICE_DIR, "service.lock")
+MODELS_DIR = os.path.join(SERVICE_DIR, "models")   # models live inside the service folder
+
+# Whisper understands ~99 languages; these are offered in the UI.
+# "auto" lets the model detect the language of every phrase.
+LANGS = (
+    "auto", "en", "ru", "uk", "de", "fr", "es", "it", "pt", "nl", "pl", "cs",
+    "sv", "da", "fi", "no", "el", "tr", "he", "ar", "fa", "hi", "th", "vi",
+    "zh", "ja", "ko",
+)
 
 DEFAULTS = {
     "hotkey": "ctrl+alt+space",
-    "input_device": "Realtek",          # substring of the device name
-    "model": "large-v3",
+    "input_device": "",                 # substring of the device name
+    "model": "large-v3-turbo",
     "device": "cuda",
     "compute_type": "float16",
-    "language": "ru",
-    "initial_prompt": (
-        "Диктовка на русском языке с пунктуацией и заглавными буквами. "
-        "Термины: Формастек, Зод, Qoder, Intent, Spec, Kit, Run, Core, "
-        "канбан, карточка, гейт, протокол."
-    ),
+    "language": "auto",                 # "auto" = detect per phrase, or a LANGS code
+    "locale": "auto",                   # UI language: auto = follow Windows
+    "hotwords": "",                     # terms appended to the prompt (user-local)
     "auto_stop": True,
-    "silence_ms": 2000,                 # phrase-closing pause; tune in Настройки
+    "silence_ms": 2000,                 # phrase-closing pause
     "max_record_s": 120,
     "partial_every_s": 1.5,             # live partial transcribe period (HUD)
     "hud": True,                        # live monitoring panel
