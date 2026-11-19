@@ -178,6 +178,19 @@ class SettingsWindow:
         self.v_autostart = tk.BooleanVar(value=bool(c.get("autostart", True)))
         full(check(self.v_autostart, tr("settings.autostart_w")))
 
+        # -- updates ------------------------------------------------------------
+        head(tr("updates.g"))
+        self.v_upd = tk.BooleanVar(value=bool(c.get("update_check", True)))
+        full(check(self.v_upd, tr("updates.auto")))
+        self.v_upd_h = tk.IntVar(value=int(c.get("update_interval_h", 2)))
+        row(tr("updates.interval"), scale(1, 24, 1, self.v_upd_h))
+        btn_upd = tk.Button(body, text=tr("updates.check_now"),
+                            command=self.svc.check_updates_now, width=16,
+                            bg="#22262E", fg=FG, relief="flat",
+                            activebackground="#2A2F38", activeforeground=FG,
+                            cursor="hand2")
+        full(btn_upd)
+
         # -- memory ------------------------------------------------------------
         self.ram_lbl = tk.Label(body, text="", font=("Segoe UI", 9),
                                 fg="#9FE0A8", bg=BG, anchor="w")
@@ -240,6 +253,8 @@ class SettingsWindow:
         c["hotkey"] = self.v_hotkey.get().strip() or c.get("hotkey", "ctrl+alt+space")
         c["input_device"] = self.v_device.get().strip() or c.get("input_device", "")
         c["autostart"] = bool(self.v_autostart.get())
+        c["update_check"] = bool(self.v_upd.get())
+        c["update_interval_h"] = int(self.v_upd_h.get())
         try:
             self.svc.apply_settings(c)
         except Exception as e:

@@ -3,6 +3,17 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.3 — 2026-11-20
+
+### Added
+- Auto-update: a background check for a newer GitHub release every 2 h by
+  default (first pass ~90 s after startup, only while idle). A newer release
+  is downloaded and installed into the same folder, then the service
+  restarts itself.
+- Settings section "Updates": auto-check on/off, interval (1–24 h), and a
+  "Check now" button with a visible result.
+- The startup log line includes the service version.
+
 ## 0.1.2 — 2026-11-20
 
 ### Added
