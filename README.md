@@ -29,6 +29,10 @@ the model.
   applied live, no restart
 - Tray menu: pause, input device, model switch without restart, recognition
   language, logs folder
+- Auto-update: the service checks GitHub releases in the background (default
+  every 2 h; the interval and the on/off switch live in settings, plus a
+  "Check now" button) — a newer release is downloaded, installed into the
+  same folder and the service restarts itself
 - Autostart with Windows, desktop shortcut, single-instance lock, rotating logs
 
 ## Install
@@ -129,9 +133,11 @@ share of non-scaling stages); the gap widens on longer audio.
 
 ## Privacy
 
-- Recording and recognition are local processes. The single network contact
-  is the first model download; you can pre-place the model into `models/`
-  and the install stays fully offline.
+- Recording and recognition are local processes. Network contacts: the first
+  model download at install; and if auto-update is on (the default), a small
+  check of `api.github.com` every 2 h — the interval is configurable and the
+  check can be switched off in settings. The release zip downloads only when
+  a newer version exists. Nothing else leaves the machine.
 - Logs live in the local `logs\` folder with rotation. No telemetry, no
   accounts, no tokens.
 

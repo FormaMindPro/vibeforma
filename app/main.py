@@ -411,6 +411,58 @@ class Service:
                                  else self.tr("notify.model_failed", name=name))
         threading.Thread(target=_load, daemon=True).start()
 
+    # -- updates -----------------------------------------------------------
+    def update_if_newer(self, notify_latest: bool = False):
+        """Check GitHub; if a newer release exists — download, install, restart."""
+        import updater
+        try:
+            rel = updater.latest_release()
+        except Exception as e:
+            self.log.debug("Update check failed: %s", e)
+            if notify_latest and self.tray:
+                self.tray.notify(self.tr("notify.update_fail"))
+            return
+        if rel is None:
+            if notify_latest and self.tray:
+                self.tray.notify(self.tr("notify.update_fail"))
+            return
+        current = updater.version_tuple(VERSION)
+        if not updater.is_newer(rel["version"], current):
+            if notify_latest and self.tray:
+                self.tray.notify(self.tr("notify.update_latest", ver=VERSION))
+            return
+        if self.state != STATE_IDLE:
+            if self.tray:
+                self.tray.notify(self.tr("notify.update_later", ver=rel["tag"]))
+            return
+        self.log.info("New release %s found (current %s)", rel["tag"], VERSION)
+        if self.tray:
+            self.tray.notify(self.tr("notify.update_found", ver=rel["tag"]))
+        if updater.apply(rel, SERVICE_DIR, self.log):
+            self._restart_after_update(rel["tag"])
+        elif self.tray:
+            self.tray.notify(self.tr("notify.update_fail"))
+
+    def check_updates_now(self):
+        """Settings button: manual check with a visible result."""
+        threading.Thread(target=self.update_if_newer, args=(True,),
+                         daemon=True).start()
+
+    def _restart_after_update(self, tag):
+        if self.tray:
+            self.tray.notify(self.tr("notify.updated_restart", ver=tag))
+
+        def _spawn():
+            time.sleep(2.0)
+            try:
+                os.startfile(os.path.join(SERVICE_DIR, "run.cmd"))
+            except Exception:
+                self.log.exception("Restart after update failed")
+
+        threading.Thread(target=_spawn, daemon=True).start()
+        time.sleep(0.5)
+        self.shutdown()
+
     # -- startup -----------------------------------------------------------
     def load_model_async(self):
         def _load():
@@ -490,6 +542,22 @@ def start_http_api(cfg, svc, log):
     except OSError as e:
         log.warning("HTTP API not started: %s", e)
         return None
+
+
+# ---------------------------------------------------------------- updates
+def start_update_checker(cfg, svc, log):
+    """Background release check: first pass shortly after startup, then
+    every update_interval_h hours (the settings checkbox turns it off)."""
+    def _loop():
+        time.sleep(90)
+        while True:
+            try:
+                if cfg.get("update_check", True) and svc.state == STATE_IDLE:
+                    svc.update_if_newer()
+            except Exception as e:
+                log.debug("Update check: %s", e)
+            time.sleep(max(1, float(cfg.get("update_interval_h", 2))) * 3600)
+    threading.Thread(target=_loop, daemon=True).start()
 
 
 # ---------------------------------------------------------------- selftest
@@ -577,7 +645,7 @@ def main():
     except RuntimeError:
         log.info("Second instance not started — one is already running")
         return
-    log.info("=== service starting (pid %d) ===", os.getpid())
+    log.info("=== service starting (pid %d, version %s) ===", os.getpid(), VERSION)
 
     cfg = load()
     svc = Service(cfg, log)
@@ -592,6 +660,8 @@ def main():
 
     if cfg.get("http_api"):
         start_http_api(cfg, svc, log)
+
+    start_update_checker(cfg, svc, log)
 
     svc.load_model_async()
     if cfg.get("hud", True):

@@ -2,7 +2,7 @@
 import json
 import os
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
@@ -55,6 +55,8 @@ DEFAULTS = {
     "autostart": True,
     "http_api": False,                  # optional: POST 127.0.0.1:8787/transcribe
     "http_port": 8787,
+    "update_check": True,               # background check for newer releases
+    "update_interval_h": 2,             # hours between checks
 }
 
 
