@@ -30,6 +30,36 @@ def _enable_dpi_awareness() -> None:
             user32.SetProcessDPIAware()
 
 
+_SHOW_EVENT = "Local\\VibeForma.ShowPanel"
+_EVENT_MODIFY_STATE = 0x0002
+_WAIT_OBJECT_0 = 0
+_INFINITE = 0xFFFFFFFF
+
+
+def _signal_show_panel() -> bool:
+    """A second launch asks the running instance to show its panel."""
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenEventW(_EVENT_MODIFY_STATE, False, _SHOW_EVENT)
+    if not handle:
+        return False
+    try:
+        kernel32.SetEvent(handle)
+    finally:
+        kernel32.CloseHandle(handle)
+    return True
+
+
+def _create_show_event() -> int:
+    return int(ctypes.windll.kernel32.CreateEventW(
+        None, False, False, _SHOW_EVENT))
+
+
+def _watch_show_event(handle: int, svc: Service) -> None:
+    kernel32 = ctypes.windll.kernel32
+    while kernel32.WaitForSingleObject(handle, _INFINITE) == _WAIT_OBJECT_0:
+        svc.request_panel()
+
+
 def main() -> None:
     if sys.platform == "win32":
         _enable_dpi_awareness()
@@ -43,13 +73,20 @@ def main() -> None:
     try:
         lock = SingleInstance(LOCK_PATH)
     except RuntimeError:
-        log.info("Second instance not started — one is already running")
+        if _signal_show_panel():
+            log.info("Second instance — asked the running one to show the panel")
+        else:
+            log.info("Second instance not started — one is already running")
         return
+    show_event = _create_show_event()
     log.info("=== service starting (pid %d, version %s) ===",
              os.getpid(), VERSION)
 
     cfg = load()
     svc = Service(cfg, log)
+    if show_event:
+        threading.Thread(target=_watch_show_event, args=(show_event, svc),
+                         daemon=True).start()
 
     import hotkey as hotkey_mod
     import tray as tray_mod
@@ -79,4 +116,6 @@ def main() -> None:
         svc.shutdown()
         tray.stop()
         lock.release()
+        if show_event:
+            ctypes.windll.kernel32.CloseHandle(show_event)
         log.info("=== service stopped ===")

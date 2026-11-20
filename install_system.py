@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import shutil
+import subprocess
 
 from install_core import (
     LEGACY_DIR_NAME,
@@ -162,6 +163,12 @@ def make_shortcuts(target, log):
         os.remove(path)
 
 
+def service_command(target):
+    """The launch command: pythonw runs main.py, no .cmd association."""
+    return [os.path.join(target, ".venv", "Scripts", "pythonw.exe"),
+            os.path.join(target, "main.py")]
+
+
 def run_service(target):
-    os.startfile(  # noqa: S606 - the installer launches its own run.cmd
-        os.path.join(target, "run.cmd"))
+    subprocess.Popen(  # noqa: S603 - fixed paths, no user input
+        service_command(target), cwd=target, close_fds=True)

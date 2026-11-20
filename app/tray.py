@@ -57,6 +57,9 @@ class Tray:
                 pystray.MenuItem(
                     lambda item: service.tr("tray.settings"), self._on_settings),
                 pystray.MenuItem(
+                    lambda item: service.tr("tray.show_panel"),
+                    lambda *a: service.request_panel()),
+                pystray.MenuItem(
                     lambda item: service.tr("tray.onboarding"),
                     lambda *a: service.open_onboarding()),
                 pystray.MenuItem(

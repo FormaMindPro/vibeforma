@@ -572,10 +572,13 @@ class SettingsWindow:
 
 
     def _build_footer(self):
-        # -- buttons under the notebook ------------------------------------------
-        btns = tk.Frame(self._body, bg=BG)
+        # Packed before the expanding notebook: on a short window (150%
+        # scaling) the notebook shrinks and the buttons stay visible.
+        foot = tk.Frame(self._body, bg=BG)
+        foot.pack(side="bottom", fill="x", before=self.nb)
+        btns = tk.Frame(foot, bg=BG)
         btns.pack(fill="x", pady=(self._px(6), self._px(12)))
-        sep = tk.Frame(self._body, bg="#2A2F38", height=self._px(1))
+        sep = tk.Frame(foot, bg="#2A2F38", height=self._px(1))
         sep.pack(fill="x", padx=self._px(16), pady=(self._px(4), 0),
                  before=btns)
         tk.Button(btns, text=self.tr("settings.save"), command=self._save, width=12,

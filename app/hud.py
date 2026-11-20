@@ -167,6 +167,11 @@ class Hud:
             self.root.geometry(f"+{e.x_root - self._drag[0]}"
                                f"+{e.y_root - self._drag[1]}")
 
+    def _show_panel(self):
+        with contextlib.suppress(Exception):
+            self.root.deiconify()
+            self.root.lift()
+
     def _open_settings(self):
         self.state["open_settings"] = True
         with contextlib.suppress(Exception):
@@ -193,6 +198,9 @@ class Hud:
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
         try:
+            if self.svc.panel_request.is_set():
+                self.svc.panel_request.clear()
+                self._show_panel()
             if self.state.get("open_settings"):
                 self.state["open_settings"] = False
                 self._open_settings_window()
