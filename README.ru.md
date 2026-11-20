@@ -27,6 +27,9 @@ irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | 
 распознавания, ярлыки и запись в «Параметры → Приложения») и запускает
 сервис. Нажмите `Ctrl+Alt+Space` в любом приложении и говорите.
 
+Запустить позже: **«Пуск» → VibeForma**, ярлык на рабочем столе или
+`%LOCALAPPDATA%\VibeForma\run.cmd`. Значок сервиса живёт в трее.
+
 Параметры передаются после блока скрипта:
 
 ```powershell
