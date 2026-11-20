@@ -4,6 +4,7 @@ Hotkey -> mic recording -> local recognition (faster-whisper, ~99 languages)
 -> text inserted into the focused field (clipboard + Shift+Insert).
 Fully local: the network is used only for the first model download.
 """
+import contextlib
 import ctypes
 import sys
 import os
@@ -173,8 +174,10 @@ class Service:
             "vad": 0.0,
             "partial": "",
             "last": "",
+            "last_ts": 0.0,
             "device": "",
             "exit": False,
+            "privacy": bool(self.cfg.get("hud_privacy", False)),
         }
 
     # -- wiring --------------------------------------------------------
@@ -204,6 +207,11 @@ class Service:
                 and not self._update_busy):
             threading.Thread(target=self.apply_pending_update,
                              daemon=True).start()
+
+    def set_last(self, message):
+        """Panel status line; the HUD hides it after its own time-to-live."""
+        self.live["last"] = message
+        self.live["last_ts"] = time.time()
 
     # -- hotkey ---------------------------------------------------------
     def on_hotkey(self):
@@ -237,8 +245,11 @@ class Service:
         self._partial_busy = False
         import insert as insert_mod
         self._target_hwnd = insert_mod.get_foreground_hwnd()
-        self.log.info("Paste target window: %s (hwnd=%s)",
-                      insert_mod.foreground_window(), self._target_hwnd)
+        if self.cfg.get("log_window_titles", False):
+            self.log.info("Paste target window: %s (hwnd=%s)",
+                          insert_mod.foreground_window(), self._target_hwnd)
+        else:
+            self.log.info("Paste target window: hwnd=%s", self._target_hwnd)
         self.recorder = self._make_recorder()
         try:
             self.recorder.start(dev_idx)
@@ -294,7 +305,7 @@ class Service:
         try:
             if buf is None or not rec.had_speech():
                 self.log.info("No speech captured — nothing inserted")
-                self.live["last"] = self.tr("notify.no_speech_last")
+                self.set_last(self.tr("notify.no_speech_last"))
                 self.live["partial"] = ""
                 self.live["level"] = 0.0
                 if self.tray:
@@ -306,7 +317,7 @@ class Service:
             self.log.info("Latency to ready text: %.2f s", dt)
             if not text:
                 self.log.info("Empty transcription — nothing inserted")
-                self.live["last"] = self.tr("notify.not_recognized")
+                self.set_last(self.tr("notify.not_recognized"))
                 self.live["partial"] = ""
                 self.live["level"] = 0.0
                 if self.tray:
@@ -320,24 +331,25 @@ class Service:
                 confirm_focus=(lambda: insert_mod.ask_focus_change(self.cfg))
                 if self.cfg.get("confirm_focus_change", True) else None,
                 exclude_history=self.cfg.get("clipboard_exclude_history",
-                                             True))
+                                             True),
+                log_title=self.cfg.get("log_window_titles", False))
             self.live["partial"] = ""
             self.live["level"] = 0.0
             if result == insert_mod.RESULT_COPIED:
-                self.live["last"] = self.tr("notify.copied")
+                self.set_last(self.tr("notify.copied"))
                 if self.tray:
                     self.tray.notify(self.tr("notify.copied"))
             elif result == insert_mod.RESULT_CANCELLED:
-                self.live["last"] = self.tr("notify.cancelled")
+                self.set_last(self.tr("notify.cancelled"))
             else:
                 message = self.inserted_message(text)
-                self.live["last"] = message
+                self.set_last(message)
                 if self.tray:
                     self.tray.notify(message)
         except Exception as e:
             self.log.exception("Recognition error: %s", e)
             beep(400, 200)
-            self.live["last"] = self.tr("notify.error_last", err=e)
+            self.set_last(self.tr("notify.error_last", err=e))
             if self.tray:
                 self.tray.notify(self.tr("notify.error", err=e))
         finally:
@@ -408,7 +420,7 @@ class Service:
                       self.cfg["paste_method"], self.cfg["hotkey"],
                       self.cfg["input_device"], self.cfg.get("language"),
                       self.cfg.get("locale"))
-        self.live["last"] = self.tr("notify.saved")
+        self.set_last(self.tr("notify.saved"))
         ensure_autostart(bool(self.cfg.get("autostart", True)))
         if self.cfg["hotkey"] != old_hotkey and self.hotkey:
             try:
@@ -637,34 +649,114 @@ class Service:
 
 
 # ---------------------------------------------------------------- http api
+HTTP_MAX_BODY = 10 * 1000 * 1000   # bytes accepted for one request
+HTTP_MIN_INTERVAL_S = 1.0          # one request per second
+HTTP_TOKEN_HEADER = "X-VibeForma-Token"  # noqa: S105 - a header name
+
+
 def start_http_api(cfg, svc, log):
-    """Optional local API: POST http://127.0.0.1:8787/transcribe (WAV body)."""
+    """Optional local API: POST http://127.0.0.1:8787/transcribe (WAV body).
+
+    Off by default. Needs http_token (fail-closed without it), takes only
+    audio/wav up to 10 MB, one request per second, works only while the
+    service is idle, and always deletes the temporary WAV.
+    """
+    import hmac as hmac_mod
     import json as json_mod
+    import tempfile
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+    token = str(cfg.get("http_token") or "").strip()
+    if not token:
+        log.warning("HTTP API is enabled but http_token is empty — refusing "
+                    "to start (set http_token in config.json)")
+        return None
+    last_call = [0.0]
+
+    def set_state(state):
+        setter = getattr(svc, "_set_state", None)
+        if setter:
+            setter(state)
+        else:
+            svc.state = state
+
     class Handler(BaseHTTPRequestHandler):
+        timeout = 15
+
+        def _reject(self, code, message=None):
+            """Answer without the unread body: drain a small one first, so the
+            client reads the response instead of a connection reset."""
+            try:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+            except ValueError:
+                length = 0
+            if 0 < length <= 1024 * 1024:
+                with contextlib.suppress(Exception):
+                    remaining = length
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+            self.send_error(code, message)
+
         def do_POST(self):
-            if self.path != "/transcribe" or svc.state != STATE_IDLE:
-                self.send_error(409 if svc.state != STATE_IDLE else 404)
+            if self.path != "/transcribe":
+                self._reject(404)
+                return
+            given = self.headers.get(HTTP_TOKEN_HEADER, "")
+            if not hmac_mod.compare_digest(given, token):
+                self._reject(401, "missing or wrong X-VibeForma-Token")
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0]
+            if ctype.strip().lower() != "audio/wav":
+                self._reject(415, "Content-Type must be audio/wav")
                 return
             try:
-                length = int(self.headers.get("Content-Length", 0))
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                length = -1
+            if length <= 0:
+                self._reject(411)
+                return
+            if length > HTTP_MAX_BODY:
+                self._reject(413, "body is larger than 10 MB")
+                return
+            now = time.monotonic()
+            if now - last_call[0] < HTTP_MIN_INTERVAL_S:
+                self._reject(429, "one request per second")
+                return
+            last_call[0] = now
+            if svc.state != STATE_IDLE:
+                self._reject(409)
+                return
+            tmp = ""
+            try:
                 data = self.rfile.read(length)
-                tmp = os.path.join(LOG_DIR, "_http_in.wav")
-                with open(tmp, "wb") as f:
+                fd, tmp = tempfile.mkstemp(prefix="_http_in_", suffix=".wav",
+                                           dir=LOG_DIR)
+                with os.fdopen(fd, "wb") as f:
                     f.write(data)
+                set_state(STATE_PROCESSING)
                 import audio as audio_mod
                 audio = audio_mod.load_wav_16k(tmp)
                 text = svc.asr.transcribe(audio)
-                body = json_mod.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
+                body = json_mod.dumps({"text": text},
+                                      ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Type",
+                                 "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - report, never crash the server
                 log.exception("HTTP API error: %s", e)
                 self.send_error(500)
+            finally:
+                if tmp:
+                    with contextlib.suppress(OSError):
+                        os.remove(tmp)
+                set_state(STATE_IDLE)
 
         def log_message(self, fmt, *args):
             log.debug("HTTP: " + fmt % args)
@@ -672,7 +764,8 @@ def start_http_api(cfg, svc, log):
     try:
         server = ThreadingHTTPServer(("127.0.0.1", int(cfg["http_port"])), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        log.info("HTTP API: http://127.0.0.1:%d/transcribe", cfg["http_port"])
+        log.info("HTTP API: http://127.0.0.1:%d/transcribe (token required)",
+                 cfg["http_port"])
         return server
     except OSError as e:
         log.warning("HTTP API not started: %s", e)

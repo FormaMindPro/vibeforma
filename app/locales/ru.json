@@ -21,6 +21,7 @@
   "tray.starting": "VibeForma — запуск…",
   "hud.mic_hint": "микрофон: {device}",
   "hud.silence_warn": "   ⚠ тишина — микрофон не слышит (проверь устройство в трее)",
+  "hud.privacy_hint": "приватный режим — текст скрыт, уровень виден",
   "notify.mic_unavailable": "Микрофон недоступен:\n{err}",
   "notify.no_speech": "Речь не зафиксирована — вставки нет",
   "notify.no_speech_last": "(речь не услышана)",

@@ -269,3 +269,35 @@ def test_history_exclusion_can_be_disabled(monkeypatch):
     insert.insert_text("hello", restore_clipboard=False, exclude_history=False)
 
     assert calls == []
+
+
+class RecordingLog:
+    def __init__(self):
+        self.lines = []
+
+    def info(self, fmt, *args):
+        self.lines.append(fmt % args if args else fmt)
+
+    def warning(self, fmt, *args):
+        self.lines.append(fmt % args if args else fmt)
+
+
+def test_window_title_is_not_logged_by_default(monkeypatch):
+    def forbidden():
+        raise AssertionError("the window title must not be read")
+
+    monkeypatch.setattr(insert, "foreground_window", forbidden)
+    log = RecordingLog()
+
+    insert.insert_text("hello", restore_clipboard=False, log=log)
+
+    assert log.lines == ["Pasted 5 chars"]
+
+
+def test_window_title_is_logged_on_opt_in():
+    log = RecordingLog()
+
+    insert.insert_text("hello", restore_clipboard=False, log=log,
+                       log_title=True)
+
+    assert log.lines == ["Pasted 5 chars — window: editor"]

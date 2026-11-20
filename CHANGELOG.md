@@ -72,6 +72,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   clipboard history, show the dictated text in notifications. Defaults keep
   the private behavior: ask, exclude, hide.
 
+### Security
+- **The log no longer names windows or quotes dictation.** The service used
+  to write the paste target's window title at recording start and after each
+  paste; it now records only the character count and the window handle.
+  `log_window_titles: true` brings the title back for a diagnosis. The
+  dictated text was never logged and still is not.
+- **The local HTTP API needs a token and is bounded.** With `http_api` on,
+  `http_token` is mandatory — the server refuses to start without it; every
+  request needs `X-VibeForma-Token` (constant-time compare),
+  `Content-Type: audio/wav`, a body up to 10 MB and at most one request per
+  second. The request moves the service to `processing`, and the temporary
+  WAV (`_http_in_*.wav`) is deleted in `finally`, success or failure.
+- **The panel has a privacy mode** (the eye button): the streaming and last
+  text are hidden, the mic level stays, and the status line disappears 30 s
+  after it was set. `hud_privacy: true` starts the panel in this mode.
+- README (en/ru) gained "What stays on disk" and the HTTP API contract.
+
 ## 0.1.9 — 2026-11-20
 
 ### Fixed
