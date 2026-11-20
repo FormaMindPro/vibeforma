@@ -6,12 +6,17 @@ import ctypes
 import logging
 import os
 import subprocess
+import sys
 import threading
 
 from config import LOG_DIR, LOG_PATH, SERVICE_DIR
 
 PYTHONW = os.path.join(SERVICE_DIR, ".venv", "Scripts", "pythonw.exe")
 MAIN_PY = os.path.join(SERVICE_DIR, "main.py")
+# A packed build has no interpreter: the exe starts itself at logon.
+FROZEN = bool(getattr(sys, "frozen", False))
+AUTOSTART_TARGET = sys.executable if FROZEN else PYTHONW
+AUTOSTART_ARGS = "" if FROZEN else f'"{MAIN_PY}"'
 AUTOSTART_LNK = os.path.join(
     os.environ.get("APPDATA", ""),
     "Microsoft", "Windows", "Start Menu", "Programs", "Startup",
@@ -55,8 +60,8 @@ def ensure_autostart(create: bool) -> None:
         if create and not os.path.exists(AUTOSTART_LNK):
             ps = (f"$ws=New-Object -ComObject WScript.Shell;"
                   f"$l=$ws.CreateShortcut('{AUTOSTART_LNK}');"
-                  f"$l.TargetPath='{PYTHONW}';"
-                  f"$l.Arguments='\"{MAIN_PY}\"';"
+                  f"$l.TargetPath='{AUTOSTART_TARGET}';"
+                  f"$l.Arguments='{AUTOSTART_ARGS}';"
                   f"$l.WorkingDirectory='{SERVICE_DIR}';"
                   f"$l.Save()")
             # The command is built here from fixed paths, not from input.

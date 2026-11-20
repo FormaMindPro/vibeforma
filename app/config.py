@@ -6,12 +6,16 @@ import os
 VERSION = "0.1.9"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")
-LOG_DIR = os.path.join(SERVICE_DIR, "logs")
+# Where the user's data lives. A source install keeps it beside the code; the
+# packed build sets VIBEFORMA_DATA_DIR (LOCALAPPDATA\VibeForma) so config,
+# models, logs and history survive an in-place upgrade and a reinstall.
+DATA_DIR = os.environ.get("VIBEFORMA_DATA_DIR") or SERVICE_DIR
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+LOG_DIR = os.path.join(DATA_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "service.log")
 TEST_WAV = os.path.join(SERVICE_DIR, "test_ru.wav")
-LOCK_PATH = os.path.join(SERVICE_DIR, "service.lock")
-MODELS_DIR = os.path.join(SERVICE_DIR, "models")   # models live inside the service folder
+LOCK_PATH = os.path.join(DATA_DIR, "service.lock")
+MODELS_DIR = os.path.join(DATA_DIR, "models")   # models live in the data folder
 
 # Whisper understands ~99 languages; these are offered in the UI.
 # The chosen code is used exactly — no per-phrase guessing.
@@ -88,6 +92,7 @@ def load():
 
 
 def save(cfg):
+    os.makedirs(DATA_DIR, exist_ok=True)
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)

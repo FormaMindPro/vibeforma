@@ -157,6 +157,10 @@ def apply(release, service_dir, log: logging.Logger, installer=None,
     UI shows a localized message and never raw network details.
     """
     installer = installer or _run_installer
+    if getattr(sys, "frozen", False):
+        # A packed build has no install.py: it upgrades through the next
+        # signed installer (or the winget package), never in place from a zip.
+        return False, "packaged build: update through the installer"
     if not release.get("zip"):
         return False, "release has no zip asset"
     if not release.get("manifest") or not release.get("signature"):

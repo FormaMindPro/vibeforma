@@ -8,7 +8,7 @@ from typing import Any
 import dictionary
 import errors
 import history
-from config import SERVICE_DIR, find_input_device
+from config import DATA_DIR, find_input_device
 
 from . import (
     STATE_ERROR,
@@ -42,7 +42,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._test_mode = False
         self.pending_update = None
         self.restart_pending = None
-        self.history = history.History(history.history_path(SERVICE_DIR))
+        self.history = history.History(history.history_path(DATA_DIR))
         self._last_insert = None
         self._target_title = ""
         self._target_hwnd = None
