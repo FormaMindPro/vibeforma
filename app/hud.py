@@ -44,6 +44,7 @@ class Hud:
         self.log = log
         self._drag = None
         self._settings = None
+        self._onboarding = None
         self._root_h = BASE_H
 
         self.root = tk.Tk()
@@ -177,6 +178,9 @@ class Hud:
             if self.state.get("open_settings"):
                 self.state["open_settings"] = False
                 self._open_settings_window()
+            if self.state.get("open_onboarding"):
+                self.state["open_onboarding"] = False
+                self._open_onboarding_window()
             self._apply_alpha()
             st = dict(self.state)
             key = st.get("state", "idle")
@@ -228,6 +232,19 @@ class Hud:
             return
         import settings_window
         self._settings = settings_window.SettingsWindow(
+            self.root, self.svc, self.log)
+
+    def _open_onboarding_window(self):
+        try:
+            alive = (self._onboarding is not None
+                     and self._onboarding.win.winfo_exists())
+        except Exception:  # noqa: BLE001 - a closed window raises TclError
+            alive = False
+        if alive:
+            self._onboarding.win.deiconify()
+            return
+        import onboarding
+        self._onboarding = onboarding.OnboardingWindow(
             self.root, self.svc, self.log)
 
     def _apply_alpha(self):

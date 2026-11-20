@@ -63,6 +63,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   files; models and `config.json` are kept unless `--remove-data`, so a
   reinstall starts offline. `Settings > Apps` and the Start menu now list
   VibeForma; the version is shown in the settings window.
+- **A three-step first-run wizard.** Language (interface and recognition),
+  microphone (live level and a test phrase whose recognized text is shown,
+  never inserted), and the hotkey recorded by pressing it. The hotkey is
+  checked with `pynput.keyboard.HotKey.parse`; modifiers alone are refused,
+  a Windows-reserved combination is a warning. "Skip" writes safe defaults;
+  the wizard reopens from the tray and from Settings > System, and the new
+  `onboarding_done` flag (default `false`) remembers that it ran.
 
 ### Note
 - The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
@@ -93,6 +100,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The service window and launcher are titled VibeForma instead of
   WhisperDictation; shortcuts are created on the desktop, in the Start menu
   and in startup.
+- Settings refuse an invalid hotkey instead of saving it; a changed hotkey
+  starts the new listener before the old one stops, and a failed start keeps
+  the previous combination with a visible notification.
 
 ### Security
 - **The log no longer names windows or quotes dictation.** The service used

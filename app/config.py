@@ -70,6 +70,7 @@ DEFAULTS = {
     "update_interval_h": 2,             # hours between checks
     "auto_update": "notify",            # notify (ask) | auto (explicit opt-in)
     "model_keep_old": True,             # keep the previous model on disk (fast switching)
+    "onboarding_done": False,           # the first-run wizard has run
 }
 
 

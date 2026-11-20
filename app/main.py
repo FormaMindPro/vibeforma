@@ -165,6 +165,7 @@ class Service:
         self._running = True
         self._partial_busy = False
         self._update_busy = False
+        self._test_mode = False
         self.pending_update = None
         self.restart_pending = None
         # shared live view for the HUD (written by worker threads, read by GUI)
@@ -178,6 +179,9 @@ class Service:
             "device": "",
             "exit": False,
             "privacy": bool(self.cfg.get("hud_privacy", False)),
+            "open_onboarding": False,
+            "test_text": "",
+            "test_state": "",
         }
 
     # -- wiring --------------------------------------------------------
@@ -255,6 +259,8 @@ class Service:
             self.recorder.start(dev_idx)
         except Exception as e:
             self.log.exception("Microphone unavailable: %s", e)
+            if self._test_mode:
+                self._finish_mic_test("", "error")
             self._set_state(STATE_IDLE)
             if self.tray:
                 self.tray.notify(self.tr("notify.mic_unavailable", err=e))
@@ -304,6 +310,9 @@ class Service:
     def _transcribe_worker(self, buf, rec):
         try:
             if buf is None or not rec.had_speech():
+                if self._test_mode:
+                    self._finish_mic_test("", "empty")
+                    return
                 self.log.info("No speech captured — nothing inserted")
                 self.set_last(self.tr("notify.no_speech_last"))
                 self.live["partial"] = ""
@@ -315,6 +324,12 @@ class Service:
             text = self.asr.transcribe(buf)
             dt = time.time() - t0
             self.log.info("Latency to ready text: %.2f s", dt)
+            if self._test_mode:
+                # Onboarding check: show the text, never insert it.
+                self.log.info("Microphone test: %d chars (not inserted)",
+                              len(text or ""))
+                self._finish_mic_test(text)
+                return
             if not text:
                 self.log.info("Empty transcription — nothing inserted")
                 self.set_last(self.tr("notify.not_recognized"))
@@ -403,6 +418,62 @@ class Service:
     def current_model(self):
         return self.cfg["model"]
 
+    # -- onboarding ---------------------------------------------------------
+    def open_onboarding(self):
+        """Tray/HUD request: the HUD (main thread) opens the wizard."""
+        self.live["open_onboarding"] = True
+
+    def finish_onboarding(self, choices):
+        """Apply the wizard's answers (an empty dict means Skip: keep safe)."""
+        import onboarding
+        merged = onboarding.apply_choices(
+            self.cfg,
+            language=choices.get("language"),
+            locale=choices.get("locale"),
+            hotkey=choices.get("hotkey"),
+            input_device=choices.get("input_device"))
+        new_cfg = dict(self.cfg)
+        for key in ("language", "locale", "hotkey", "input_device",
+                    "onboarding_done"):
+            new_cfg[key] = merged[key]
+        self.apply_settings(new_cfg)
+        self.log.info("Onboarding finished: language=%s hotkey=%s device=%s",
+                      merged["language"], merged["hotkey"],
+                      merged["input_device"])
+
+    def start_mic_test(self):
+        """Short recording for the wizard: transcribe, show, never insert."""
+        if self.state != STATE_IDLE:
+            return False
+        self.live["test_text"] = ""
+        self.live["test_state"] = "recording"
+        self._test_mode = True
+        self.start_recording()
+        if self._test_mode and self.state == STATE_RECORDING:
+            import onboarding
+            timer = threading.Timer(onboarding.TEST_SECONDS,
+                                    self._mic_test_timeout)
+            timer.daemon = True
+            timer.start()
+            return True
+        self._finish_mic_test("", "error")
+        return False
+
+    def _mic_test_timeout(self):
+        if self._test_mode and self.state == STATE_RECORDING:
+            self.stop_recording("test")
+
+    def stop_mic_test(self):
+        if self._test_mode and self.state == STATE_RECORDING:
+            self.stop_recording("test")
+
+    def _finish_mic_test(self, text, state=None):
+        self.live["test_text"] = text or ""
+        self.live["test_state"] = state or ("done" if text else "empty")
+        self.live["partial"] = ""
+        self.live["level"] = 0.0
+        self._test_mode = False
+
     # -- settings ----------------------------------------------------------
     def open_settings(self):
         """Tray/HUD request: the HUD (main thread) opens the dialog."""
@@ -423,14 +494,27 @@ class Service:
         self.set_last(self.tr("notify.saved"))
         ensure_autostart(bool(self.cfg.get("autostart", True)))
         if self.cfg["hotkey"] != old_hotkey and self.hotkey:
-            try:
-                self.hotkey.stop()
-            except Exception:
-                pass
             import hotkey as hotkey_mod
-            self.hotkey = hotkey_mod.Hotkey(self.cfg["hotkey"],
-                                            self.on_hotkey, self.log)
-            self.hotkey.start()
+            new_hotkey = hotkey_mod.Hotkey(self.cfg["hotkey"],
+                                           self.on_hotkey, self.log)
+            try:
+                # The new listener starts first: a failed start leaves the
+                # old hotkey alive instead of leaving none.
+                new_hotkey.start()
+            except Exception:
+                self.log.exception("Hotkey %s did not start - keeping %s",
+                                   self.cfg["hotkey"], old_hotkey)
+                self.cfg["hotkey"] = old_hotkey
+                save(self.cfg)
+                if self.tray:
+                    self.tray.notify(self.tr("notify.hotkey_failed",
+                                             combo=self.cfg["hotkey"]))
+            else:
+                old_listener, self.hotkey = self.hotkey, new_hotkey
+                try:
+                    old_listener.stop()
+                except Exception:
+                    pass
         if self.cfg["input_device"] != old_dev and self.state == STATE_RECORDING:
             if self.tray:
                 self.tray.notify(self.tr("notify.device_next"))
@@ -914,6 +998,9 @@ def main():
         # Tk lives in its own daemon thread; every widget call stays there.
         threading.Thread(target=hud_mod.run_hud, args=(svc, log),
                          daemon=True).start()
+        import onboarding as onboarding_mod
+        if onboarding_mod.needed(cfg):
+            svc.open_onboarding()
     try:
         tray.run()  # main thread owns the icon loop (stable on win32)
     finally:
