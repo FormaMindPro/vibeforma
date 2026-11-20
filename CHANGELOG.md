@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## Unreleased
 
 ### Added
+- **An error catalog, a Russian installer, calmer settings.** Every UI
+  error — microphone, model download or load, recognition, a bad dictionary
+  file — now comes from `app/errors.py`: a plain message plus a next action,
+  localized; the raw exception text goes only to the log. The installer
+  speaks Russian on a Russian Windows (English fallback) in the setup
+  dialog, the console menu and the final line. Settings gained a search
+  field, a Reset button (the model, dictionary and history are kept), Save
+  no longer closes the window and confirms in place, and a model switch
+  shows its progress inside the settings window. The Russian docs use one
+  term for the panel.
 - **Dictionary and history.** A Dictionary tab keeps term -> replacement
   pairs: terms go into the recognition prompt, replacements are applied
   after recognition (case-insensitive, longest term wins), and JSON import /
