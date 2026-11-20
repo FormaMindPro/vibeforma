@@ -61,24 +61,28 @@ print("DOWNLOADED model.bin %.0f MB" % mb)
 
 SHORTCUTS_PS = r"""$ErrorActionPreference = "Stop"
 $ws = New-Object -ComObject WScript.Shell
-$target = "__TARGET__run.cmd"
+$target = "__TARGET__.venv\Scripts\pythonw.exe"
+$pyargs = '"__TARGET__main.py"'
 $work = "__TARGET__"
-$icon = "__TARGET__app\assets\icon.ico"
+$icon = "__TARGET__assets\icon.ico"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnk = $ws.CreateShortcut((Join-Path $desktop "__LNK__"))
 $lnk.TargetPath = $target
+$lnk.Arguments = $pyargs
 $lnk.WorkingDirectory = $work
 $lnk.IconLocation = $icon
 $lnk.Save()
 $startup = [Environment]::GetFolderPath("Startup")
 $slnk = $ws.CreateShortcut((Join-Path $startup "__LNK__"))
 $slnk.TargetPath = $target
+$slnk.Arguments = $pyargs
 $slnk.WorkingDirectory = $work
 $slnk.IconLocation = $icon
 $slnk.Save()
 $programs = [Environment]::GetFolderPath("Programs")
 $mlnk = $ws.CreateShortcut((Join-Path $programs "__LNK__"))
 $mlnk.TargetPath = $target
+$mlnk.Arguments = $pyargs
 $mlnk.WorkingDirectory = $work
 $mlnk.IconLocation = $icon
 $mlnk.Save()

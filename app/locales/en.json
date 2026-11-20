@@ -7,6 +7,7 @@
   "states.error": "Model error",
   "states.updating": "Updating…",
   "tray.settings": "Settings…",
+  "tray.show_panel": "Show panel",
   "tray.onboarding": "Setup wizard…",
   "tray.diagnostics": "Diagnostics…",
   "tray.release_notes": "What's new in {ver}…",

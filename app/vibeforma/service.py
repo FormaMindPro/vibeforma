@@ -42,6 +42,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._test_mode = False
         self.pending_update = None
         self.restart_pending = None
+        self.panel_request = threading.Event()
         self.history = history.History(history.history_path(DATA_DIR))
         self._last_insert = None
         self._target_title = ""
@@ -70,6 +71,10 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
 
     def attach_hotkey(self, hotkey: Any) -> None:
         self.hotkey = hotkey
+
+    def request_panel(self) -> None:
+        """Ask the HUD to show itself; safe from any thread."""
+        self.panel_request.set()
 
     # -- state ---------------------------------------------------------
     def _set_state(self, state: str) -> None:
