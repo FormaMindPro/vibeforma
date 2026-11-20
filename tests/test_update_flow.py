@@ -62,3 +62,42 @@ def test_hotkey_is_ignored_while_updating(monkeypatch):
 
 def test_default_update_mode_is_notify():
     assert config.DEFAULTS["auto_update"] == "notify"
+
+
+class _Tray:
+    def __init__(self):
+        self.messages = []
+
+    def notify(self, msg, title="VibeForma"):
+        self.messages.append(msg)
+
+    def set_state(self, state):
+        pass
+
+
+def test_update_notification_carries_the_changelog(monkeypatch):
+    release = dict(RELEASE, body="## Added\n- **Doctor** report",
+                   html="https://example.invalid/release")
+    monkeypatch.setattr(updater, "latest_release", lambda: release)
+    svc = service("notify")
+    svc.state = main.STATE_IDLE
+    tray = _Tray()
+    svc.attach_tray(tray)
+
+    svc.check_updates()
+
+    assert tray.messages
+    assert "Doctor" in tray.messages[0]
+
+
+def test_release_notes_open_only_an_https_page(monkeypatch):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+    svc = service("notify")
+    svc.pending_update = dict(RELEASE, html="http://example.invalid/r")
+    assert not svc.open_release_notes()
+    assert opened == []
+
+    svc.pending_update = dict(RELEASE, html="https://example.invalid/r")
+    assert svc.open_release_notes()
+    assert opened == ["https://example.invalid/r"]

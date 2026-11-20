@@ -12,6 +12,7 @@ The network is used only for the release metadata and assets, as before.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,34 @@ def latest_release():
         "manifest": assets.get("release-manifest.json"),
         "signature": assets.get("release-manifest.json.minisig"),
         "html": data.get("html_url", ""),
+        "body": data.get("body", ""),
     }
+
+
+def release_notes_url(release):
+    """The https release page URL, or '' when the release carries none."""
+    url = str((release or {}).get("html") or "").strip()
+    return url if url.startswith("https://") else ""
+
+
+def changelog_excerpt(body, limit=240):
+    """Plain one-line excerpt of the release notes (the CHANGELOG body)."""
+    lines = []
+    for raw in str(body or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("<!--"):
+            continue
+        while line.startswith("#"):
+            line = line[1:].strip()
+        line = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", line)
+        line = line.replace("**", "").replace("`", "")
+        line = line.lstrip("-*+ ").strip()
+        if line and not line.lower().startswith("full changelog"):
+            lines.append(line)
+    text = " / ".join(lines)
+    if limit and len(text) > limit:
+        text = text[: max(0, limit - 3)].rstrip() + "..."
+    return text
 
 
 def download_asset(url, path, timeout):

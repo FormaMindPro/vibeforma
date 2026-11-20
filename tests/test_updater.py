@@ -50,6 +50,7 @@ def test_latest_release_picks_the_zip_asset(monkeypatch):
     monkeypatch.setattr(updater.urllib.request, "urlopen", _fake_urlopen({
         "tag_name": "v0.2.0",
         "html_url": "https://example.invalid/release",
+        "body": "## Added\n- Doctor",
         "assets": [
             {"name": "SHA256SUMS", "browser_download_url": "https://x/sums"},
             {"name": "VibeForma-0.2.0.zip", "browser_download_url": "https://x/z"},
@@ -61,6 +62,33 @@ def test_latest_release_picks_the_zip_asset(monkeypatch):
     assert release["tag"] == "v0.2.0"
     assert release["version"] == (0, 2, 0)
     assert release["zip"] == "https://x/z"
+    assert release["body"] == "## Added\n- Doctor"
+
+
+def test_release_notes_url_needs_https():
+    assert updater.release_notes_url(
+        {"html": "https://example.invalid/r"}) == "https://example.invalid/r"
+    assert updater.release_notes_url({"html": "http://example.invalid/r"}) == ""
+    assert updater.release_notes_url({"html": ""}) == ""
+    assert updater.release_notes_url(None) == ""
+
+
+def test_changelog_excerpt_is_plain_and_bounded():
+    body = ("## Added\n\n- **Doctor** report with `--doctor`\n"
+            "- [Link](https://x)\n\nFull Changelog: https://x/compare")
+    excerpt = updater.changelog_excerpt(body, limit=30)
+    assert "**" not in excerpt and "`" not in excerpt
+    assert "##" not in excerpt
+    assert "Full Changelog" not in excerpt
+    assert "Doctor" in excerpt
+    assert "](" not in excerpt
+    assert len(excerpt) <= 30
+    assert excerpt.endswith("...")
+
+
+def test_changelog_excerpt_of_nothing_is_empty():
+    assert updater.changelog_excerpt(None) == ""
+    assert updater.changelog_excerpt("") == ""
 
 
 def test_latest_release_without_zip_asset(monkeypatch):

@@ -4,6 +4,7 @@ import logging
 import os
 
 import pystray
+import updater
 from config import LANG_NAMES, MODELS
 from PIL import Image, ImageDraw
 
@@ -58,6 +59,16 @@ class Tray:
                 pystray.MenuItem(
                     lambda item: service.tr("tray.onboarding"),
                     lambda *a: service.open_onboarding()),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.diagnostics"),
+                    lambda *a: service.open_doctor()),
+                pystray.MenuItem(
+                    lambda item: service.tr(
+                        "tray.release_notes",
+                        ver=(service.pending_update or {}).get("tag", "")),
+                    lambda *a: service.open_release_notes(),
+                    visible=lambda item: bool(
+                        updater.release_notes_url(service.pending_update))),
                 pystray.MenuItem(
                     lambda item: service.tr(
                         "tray.update_to", ver=service.pending_update["tag"]),
