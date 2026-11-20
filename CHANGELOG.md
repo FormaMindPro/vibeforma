@@ -98,6 +98,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no unsigned update is applied.
 
 ### Changed
+- **Code hygiene: the service package, typed modules, blocked lint, pinned
+  dependencies.** `app/main.py` is a 46-line entry shim over the new
+  `vibeforma` package (`service`, `actions`, `settings_ops`, `update_ops`,
+  `http_api`, `updates`, `selftest`, `app`, `util`, `base`); the installer
+  is a flow plus `install_core`, `install_env`, `install_steps` and
+  `install_system`; `SettingsWindow.__init__` builds the window through
+  named step methods; the model catalog lives in one module. Strict mypy
+  covers the package in CI. Ruff is blocking with the whole recorded set
+  fixed (blind catches in UI, ctypes and PortAudio boundaries are narrowed
+  or suppressed with a reason; `%` formatting is gone). The service venv
+  installs from hashed locks (`app/requirements.txt` and
+  `requirements-cuda.txt`, generated from `requirements.in` /
+  `requirements-cuda.in` with `uv pip compile --generate-hashes`), split
+  base / CUDA as before.
 - **Insertion knows its target and leaves your clipboard alone.** When the
   window that was active at the hotkey press is no longer in front,
   VibeForma no longer steals the focus: it asks "Paste into the current

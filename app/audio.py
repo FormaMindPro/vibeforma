@@ -4,6 +4,7 @@
 The monitor thread buffers frames, tracks speech, and closes the phrase
 after silence_ms of quiet (or max_record_s hard limit).
 """
+import contextlib
 import queue
 import threading
 import time
@@ -31,9 +32,10 @@ def load_wav_16k(path):
         sampwidth = w.getsampwidth()
         raw = w.readframes(w.getnframes())
     if sampwidth != 2:
-        raise RuntimeError("16-bit PCM WAV required, got sampwidth=%d" % sampwidth)
+        raise RuntimeError(
+            f"16-bit PCM WAV required, got sampwidth={sampwidth}")
     if channels != 1:
-        raise RuntimeError("mono WAV required, channels=%d" % channels)
+        raise RuntimeError(f"mono WAV required, channels={channels}")
     a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     if rate != SAMPLE_RATE:
         x = np.arange(0, len(a), dtype=np.float32) * (SAMPLE_RATE / rate)
@@ -100,11 +102,10 @@ class Recorder:
         if self._monitor:
             self._monitor.join(timeout=2.0)
         if self._stream:
-            try:
+            # PortAudio raises a mix of errors on a dead stream
+            with contextlib.suppress(Exception):
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                pass
             self._stream = None
         with self._lock:
             if not self._frames:
@@ -123,7 +124,7 @@ class Recorder:
         return self._has_speech
 
     # -- internals ---------------------------------------------------------
-    def _callback(self, indata, frames, time_info, status):  # noqa: ARG002
+    def _callback(self, indata, frames, time_info, status):
         if status:
             self._overruns += 1
         try:
@@ -193,6 +194,6 @@ class Recorder:
         try:
             probs = self.vad(window, num_samples=FRAME)
             return float(probs[-1])
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - optional VAD: any failure falls back to no speech
             self.log.debug("VAD skipped: %s", e)
             return 0.0

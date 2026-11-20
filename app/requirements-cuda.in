@@ -1,0 +1,8 @@
+# Runtime dependencies, CUDA profile: the base set plus cuBLAS/cuDNN wheels.
+# The lock with hashes is app/requirements-cuda.txt; regenerate it with:
+#   uv pip compile app/requirements-cuda.in --generate-hashes --universal \
+#       --python-version 3.10 --no-header -o app/requirements-cuda.txt
+-r requirements.in
+# 12.9.3.13 and newer ship manylinux wheels only; Windows needs <= 12.9.2.10.
+nvidia-cublas-cu12<=12.9.2.10
+nvidia-cudnn-cu12

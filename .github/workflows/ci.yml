@@ -37,6 +37,9 @@ jobs:
       - name: Ruff baseline gate
         run: python tools/ruff_gate.py
 
+      - name: Type check (strict, service package)
+        run: python -m mypy
+
       - name: Tests (Windows)
         if: runner.os == 'Windows'
         run: python -m pytest -q

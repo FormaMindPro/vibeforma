@@ -17,6 +17,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "app")
 TOP_FILES = (
     "install.py",
+    "install_core.py",
+    "install_env.py",
+    "install_steps.py",
+    "install_system.py",
     "install.cmd",
     "README.md",
     "README.ru.md",

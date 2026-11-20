@@ -4,7 +4,7 @@ line-length = 100
 extend-exclude = [".venv", "models", "logs", "docs"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "B", "SIM", "UP", "I", "S", "BLE"]
+select = ["E4", "E7", "E9", "F", "B", "SIM", "UP", "I", "S", "BLE", "RUF100"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
@@ -12,6 +12,14 @@ select = ["E4", "E7", "E9", "F", "B", "SIM", "UP", "I", "S", "BLE"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["install", "uninstall"]
+
+[tool.mypy]
+python_version = "3.12"
+platform = "win32"
+files = ["app/vibeforma"]
+strict = true
+follow_imports = "skip"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

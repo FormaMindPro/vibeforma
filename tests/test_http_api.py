@@ -52,6 +52,8 @@ def server(tmp_path, monkeypatch, service):
     fake_audio.load_wav_16k = lambda _path: object()
     monkeypatch.setitem(sys.modules, "audio", fake_audio)
     monkeypatch.setattr(main, "LOG_DIR", str(tmp_path))
+    import vibeforma.http_api as http_api
+    monkeypatch.setattr(http_api, "LOG_DIR", str(tmp_path))
 
     httpd = main.start_http_api(
         {"http_port": 0, "http_token": TOKEN}, service, FakeLog())
@@ -61,7 +63,7 @@ def server(tmp_path, monkeypatch, service):
     httpd.server_close()
 
 
-def _post(httpd, path="/transcribe", body=b"RIFF", token=TOKEN,  # noqa: S106
+def _post(httpd, path="/transcribe", body=b"RIFF", token=TOKEN,
           content_type="audio/wav", length=None):
     port = httpd.server_address[1]
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)

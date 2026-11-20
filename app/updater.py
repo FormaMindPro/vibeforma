@@ -65,8 +65,11 @@ def latest_release():
 
 
 def download_asset(url, path, timeout):
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:  # noqa: S310
+    req = urllib.request.Request(  # noqa: S310 - https release assets
+        url, headers=_UA)
+    response = urllib.request.urlopen(  # noqa: S310 - https release assets
+        req, timeout=timeout)
+    with response as r, open(path, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -140,7 +143,7 @@ def restore_service(service_dir, backup_dir, names):
 
 
 def _run_installer(src, service_dir):
-    r = subprocess.run(
+    r = subprocess.run(  # noqa: S603 - a fixed interpreter and argument list
         [sys.executable, "install.py", "--target", service_dir, "--no-run"],
         cwd=src, capture_output=True, text=True, timeout=1800)
     return r.returncode, (r.stdout or r.stderr or "")[-500:]

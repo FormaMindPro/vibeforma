@@ -58,7 +58,7 @@ def foreground_window() -> str:
         user32.GetWindowTextW(hwnd, buf, 256)
         title = buf.value.strip()
         return title[:80] if title else "(untitled)"
-    except Exception:
+    except Exception:  # noqa: BLE001 - the title lookup fails on unusual windows
         return "(unknown)"
 
 
@@ -69,7 +69,7 @@ def get_foreground_hwnd():
         user32 = ctypes.windll.user32
         user32.GetForegroundWindow.restype = ctypes.c_void_p
         return user32.GetForegroundWindow()
-    except Exception:
+    except Exception:  # noqa: BLE001 - no ctypes means no foreground window
         return None
 
 
@@ -111,7 +111,7 @@ def exclude_from_clipboard_history() -> bool:
             return marked
         finally:
             user32.CloseClipboard()
-    except Exception:  # noqa: BLE001 - any ctypes failure means "unsupported"
+    except Exception:  # noqa: BLE001 - a clipboard without these formats is unsupported
         return False
 
 
@@ -169,7 +169,7 @@ def insert_text(text: str, restore_clipboard: bool = True,
     try:
         prev = pyperclip.paste()
         prev_known = True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a failed dialog must not abort
         if log:
             log.warning("Failed to read the clipboard: %s", e)
     if undo_state is not None:
@@ -225,7 +225,7 @@ def _ask_focus_change(confirm_focus, log) -> str:
         return RESULT_COPIED
     try:
         answer = confirm_focus()
-    except Exception as e:  # noqa: BLE001 - a failed dialog must not abort
+    except Exception as e:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         if log:
             log.warning("Focus dialog failed: %s", e)
         return RESULT_COPIED
@@ -241,7 +241,7 @@ def _clipboard_unchanged(own_seq: int, pasted: str) -> bool:
         return current == own_seq
     try:
         return pyperclip.paste() == pasted
-    except Exception:
+    except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         return False
 
 
@@ -267,7 +267,7 @@ def ask_focus_change(cfg=None) -> str:
         import tkinter as tk
 
         import i18n
-    except Exception:  # noqa: BLE001 - no Tk means no dialog
+    except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         return RESULT_COPIED
 
     def tr(key):
@@ -305,7 +305,7 @@ def ask_focus_change(cfg=None) -> str:
                    lambda: choose(RESULT_COPIED))
         root.mainloop()
         return answer["value"]
-    except Exception:  # noqa: BLE001 - a broken dialog falls back to "copy"
+    except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         return RESULT_COPIED
     finally:
         if root is not None:
