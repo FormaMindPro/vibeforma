@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import i18n
-from config import LANG_NAMES, LANGS, MODELS, MODEL_GB
+from config import LANG_NAMES, LANGS, MODELS, MODEL_GB, VERSION
 
 BG = "#16181D"
 FG = "#D5D9E0"
@@ -349,6 +349,9 @@ class SettingsWindow:
                   width=10, bg="#22262E", fg=FG, relief="flat",
                   activebackground="#2A2F38",
                   activeforeground=FG).pack(side="right")
+        tk.Label(btns, text=tr("settings.version", ver=VERSION),
+                 font=("Segoe UI", 9), fg=DIM,
+                 bg=BG).pack(side="left", padx=(16, 0))
 
         body.columnconfigure(0, weight=1)
 

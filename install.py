@@ -4,12 +4,15 @@ Usage:
   install.cmd                     one-click (double click)
   python install.py               same as install.cmd
   python install.py --model large-v3
+  python install.py --language ru
   python install.py --dry-run     show the plan without executing
-  python install.py --cpu         force CPU (int8) config
+  python install.py --cpu         force CPU (int8): no CUDA wheels, small model
 
-Without an explicit --model the installer asks: a Tk choice dialog on an
-interactive run, the configured model when config.json already exists,
-large-v3-turbo silently on an unattended run.
+Without an explicit --model the installer asks: a Tk choice dialog (model
+and recognition language) on an interactive run, the configured model when
+config.json already exists, small on CPU / large-v3-turbo on CUDA silently
+on an unattended run. The recognition language defaults to the Windows
+locale, en when it has no matching code.
 
 The install is a transaction. The environment is checked before anything is
 written; the first failed step stops the chain (no shortcuts, no config, no
@@ -19,6 +22,7 @@ install.log in %LOCALAPPDATA%\\VibeForma\\logs (override with --log); the
 console prints that path.
 """
 import argparse
+import ast
 import contextlib
 import ctypes
 import datetime
@@ -38,7 +42,11 @@ DEFAULT_TARGET = os.path.join(
 MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
 MODEL_GB = {"large-v3": 3.1, "large-v3-turbo": 1.6, "medium": 1.5, "small": 0.5}
 DEFAULT_MODEL = "large-v3-turbo"
-LNK_NAME = "VibeForma.lnk"
+DEFAULT_MODEL_CPU = "small"
+LNKS = ("VibeForma.lnk",)
+LEGACY_DIR_NAME = "WhisperDictation"
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\VibeForma"
+UNINSTALL_VALUE_NAME = "VibeForma"
 
 INSTALL_MARKER = ".vibeforma-install.json"
 INSTALL_LOG_NAME = "install.log"
@@ -49,7 +57,8 @@ PYTHON_MIN = (3, 10)
 PYTHON_MAX_EXCLUSIVE = (3, 15)
 SUPPORTED_ARCH = {"amd64", "x86_64", "arm64", "aarch64"}
 FREE_SPACE_HEADROOM_GB = 4
-PRODUCT_FILES = ("run.cmd", "requirements.txt", "test_ru.wav", "config.json")
+PRODUCT_FILES = ("run.cmd", "requirements.txt", "requirements-cuda.txt",
+                 "uninstall.cmd", "uninstall.py", "test_ru.wav", "config.json")
 PRODUCT_DIRS = ("assets", "locales")
 OWN_DIRS = (".venv", "models", "logs")
 LOG_TAIL_LINES = 12
@@ -93,7 +102,33 @@ $slnk.TargetPath = $target
 $slnk.WorkingDirectory = $work
 $slnk.IconLocation = $icon
 $slnk.Save()
-Write-Output ("SHORTCUTS_OK desktop=" + $desktop)
+$programs = [Environment]::GetFolderPath("Programs")
+$mlnk = $ws.CreateShortcut((Join-Path $programs "__LNK__"))
+$mlnk.TargetPath = $target
+$mlnk.WorkingDirectory = $work
+$mlnk.IconLocation = $icon
+$mlnk.Save()
+Write-Output ("SHORTCUTS_OK desktop=" + $desktop + " startmenu=" + $programs)
+"""
+
+LEGACY_LINKS_PS = r"""$ErrorActionPreference = "Continue"
+$ws = New-Object -ComObject WScript.Shell
+$removed = 0
+foreach ($folder in @([Environment]::GetFolderPath("Desktop"),
+                      [Environment]::GetFolderPath("Startup"),
+                      [Environment]::GetFolderPath("Programs"))) {
+    Get-ChildItem -Path $folder -Filter *.lnk -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            try {
+                $shortcut = $ws.CreateShortcut($_.FullName)
+                if ($shortcut.TargetPath -like "*__LEGACY__*") {
+                    Remove-Item -LiteralPath $_.FullName -Force
+                    $removed += 1
+                }
+            } catch { }
+        }
+}
+Write-Output ("LEGACY_LINKS_REMOVED " + $removed)
 """
 
 
@@ -168,6 +203,190 @@ def app_version():
     except OSError:
         return "unknown"
     return "unknown"
+
+
+def supported_languages():
+    """The LANGS tuple from app/config.py, read without importing the app."""
+    try:
+        with open(os.path.join(APP_DIR, "config.py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return ()
+    for node in tree.body:
+        if (isinstance(node, ast.Assign)
+                and any(getattr(t, "id", "") == "LANGS" for t in node.targets)
+                and isinstance(node.value, (ast.Tuple, ast.List))):
+            values = []
+            for item in node.value.elts:
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                    values.append(item.value)
+            return tuple(values)
+    return ()
+
+
+def language_from_locale(locale):
+    """Recognition code from a Windows locale name; en when unsure."""
+    if not locale:
+        return "en"
+    code = locale.replace("_", "-").split("-")[0].strip().lower()
+    supported = supported_languages()
+    if code in supported:
+        return code
+    return "en"
+
+
+def windows_language():
+    """The user's Windows locale, e.g. 'ru-RU'; 'en' off Windows or on error."""
+    if sys.platform != "win32":
+        return "en"
+    try:
+        kernel32 = ctypes.windll.kernel32
+        size = 85
+        buffer = ctypes.create_unicode_buffer(size)
+        if kernel32.GetUserDefaultLocaleName(buffer, size):
+            return language_from_locale(buffer.value)
+    except (AttributeError, OSError):
+        pass
+    return "en"
+
+
+def default_model(device):
+    """CPU machines get the small model; CUDA keeps the product default."""
+    return DEFAULT_MODEL_CPU if device == "cpu" else DEFAULT_MODEL
+
+
+def legacy_dir():
+    base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    return os.path.join(base, LEGACY_DIR_NAME)
+
+
+def legacy_detected(path=None):
+    """The old WhisperDictation folder with a config or models worth moving."""
+    path = str(path or legacy_dir())
+    if not os.path.isdir(path):
+        return None
+    if os.path.isfile(os.path.join(path, "config.json")):
+        return path
+    if os.path.isdir(os.path.join(path, "models")):
+        return path
+    return None
+
+
+def migrate_legacy(target, legacy, log, model=None):
+    """Copy the old config, hotwords and models into the new install."""
+    moved = {"config": False, "models": 0, "hotwords": False}
+    old_config = {}
+    try:
+        with open(os.path.join(legacy, "config.json"), encoding="utf-8") as f:
+            old_config = json.load(f)
+    except (OSError, ValueError):
+        old_config = {}
+    new_path = os.path.join(target, "config.json")
+    if old_config and not os.path.exists(new_path):
+        if model:
+            old_config["model"] = model
+            with open(new_path, "w", encoding="utf-8") as f:
+                json.dump(old_config, f, ensure_ascii=False, indent=2)
+        else:
+            shutil.copy2(os.path.join(legacy, "config.json"), new_path)
+        moved["config"] = True
+    elif old_config and os.path.exists(new_path):
+        # keep the new file, but do not lose the user's terms
+        with contextlib.suppress(OSError, ValueError):
+            with open(new_path, encoding="utf-8") as f:
+                new_config = json.load(f)
+            old_words = str(old_config.get("hotwords") or "").strip()
+            if old_words and not str(new_config.get("hotwords") or "").strip():
+                new_config["hotwords"] = old_words
+                with open(new_path, "w", encoding="utf-8") as f:
+                    json.dump(new_config, f, ensure_ascii=False, indent=2)
+                moved["hotwords"] = True
+    old_models = os.path.join(legacy, "models")
+    if os.path.isdir(old_models):
+        dest_root = os.path.join(target, "models")
+        os.makedirs(dest_root, exist_ok=True)
+        for name in sorted(os.listdir(old_models)):
+            source = os.path.join(old_models, name)
+            destination = os.path.join(dest_root, name)
+            if not os.path.isdir(source) or os.path.exists(destination):
+                continue
+            try:
+                shutil.copytree(source, destination)
+                moved["models"] += 1
+            except OSError as error:
+                log.write(f"   [X] model {name} was not copied: {error}")
+    if moved["config"]:
+        log.write("   config.json moved from the old folder")
+    if moved["hotwords"]:
+        log.write("   hotwords merged into the existing config.json")
+    if moved["models"]:
+        log.write(f"   {moved['models']} model folder(s) copied from the old folder")
+    log.write("   the old folder was copied, not deleted - remove it after a "
+              "successful start")
+    return moved
+
+
+def remove_legacy_shortcuts(log, legacy=None):
+    """Drop desktop/startup/start-menu shortcuts that point at the old folder."""
+    legacy = legacy or legacy_dir()
+    body = LEGACY_LINKS_PS.replace("__LEGACY__", legacy.replace("\\", "\\\\"))
+    path = write_ps1(body)
+    try:
+        result = run_logged(["powershell", "-NoProfile", "-ExecutionPolicy",
+                             "Bypass", "-File", path], log)
+    finally:
+        os.remove(path)
+    return "LEGACY_LINKS_REMOVED" in (result.stdout or "")
+
+
+def uninstall_entry_values(target, version):
+    """Per-user Add/Remove Programs values (no admin rights needed)."""
+    script = os.path.join(target, "uninstall.cmd")
+    return {
+        "DisplayName": UNINSTALL_VALUE_NAME,
+        "DisplayVersion": version,
+        "Publisher": "FormaMindPro",
+        "InstallLocation": target,
+        "UninstallString": f'"{script}"',
+        "QuietUninstallString": f'"{script}" --yes --keep-data',
+        "NoModify": 1,
+        "NoRepair": 1,
+        "EstimatedSize": 1,
+    }
+
+
+def write_uninstall_entry(target, log, version=None, winreg_mod=None):
+    """Register the product in Settings > Apps (current user)."""
+    if winreg_mod is None:
+        import winreg as winreg_mod  # noqa: PLC0415 - Windows-only module
+    values = uninstall_entry_values(target, version or app_version())
+    try:
+        key = winreg_mod.CreateKey(winreg_mod.HKEY_CURRENT_USER, UNINSTALL_KEY)
+        try:
+            for name, value in values.items():
+                winreg_mod.SetValueEx(key, name, 0, winreg_mod.REG_SZ
+                                      if isinstance(value, str)
+                                      else winreg_mod.REG_DWORD, value)
+        finally:
+            winreg_mod.CloseKey(key)
+    except OSError as error:
+        log.write(f"   [X] the uninstall entry was not written: {error}")
+        return False
+    log.write("   Settings > Apps now lists VibeForma")
+    return True
+
+
+def remove_uninstall_entry(winreg_mod=None):
+    if winreg_mod is None:
+        import winreg as winreg_mod  # noqa: PLC0415 - Windows-only module
+    try:
+        key = winreg_mod.OpenKey(winreg_mod.HKEY_CURRENT_USER, UNINSTALL_KEY, 0,
+                                 winreg_mod.KEY_ALL_ACCESS)
+    except OSError:
+        return False
+    winreg_mod.CloseKey(key)
+    winreg_mod.DeleteKey(winreg_mod.HKEY_CURRENT_USER, UNINSTALL_KEY)
+    return True
 
 
 def detect_compute(force_cpu):
@@ -478,18 +697,19 @@ def stdin_tty():
         return False
 
 
-def choose_model(log=None):
-    """Interactive model pick when no explicit --model was passed.
+def choose_setup(log=None, device="cuda", language="en"):
+    """Interactive model and language pick when no flags were passed.
 
     Tk dialog first (Install / Cancel - Cancel exits the installer);
     a console menu when a tty is attached but Tk is unavailable;
-    the default model silently when no console is attached
+    the defaults silently when no console is attached
     (unattended runs - the updater's reinstall path).
     """
     write = log.write if log is not None else say
+    default = default_model(device)
     if not stdin_tty():
-        write(f"   no console attached - using the default model {DEFAULT_MODEL}")
-        return DEFAULT_MODEL
+        write(f"   no console attached - using {default} / {language}")
+        return {"model": default, "language": language}
     # crisp dialog at Windows scaling >100% (the app does the same in main.py)
     with contextlib.suppress(Exception):
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -499,17 +719,20 @@ def choose_model(log=None):
     except Exception:  # noqa: BLE001 - fall back to the console menu
         root = None
     if root is not None:
-        root.title("VibeForma - choose a model")
+        root.title("VibeForma - setup")
         root.configure(bg="#16181D")
         root.resizable(False, False)
         tk.Label(root, text="Choose the model to install",
                  font=("Segoe UI", 11, "bold"), fg="#8FB8E8",
                  bg="#16181D").pack(fill="x", padx=16, pady=(12, 2))
-        tk.Label(root, text="It downloads once and runs locally; "
-                 "you can switch models later in Settings.",
+        hint = ("It downloads once and runs locally; "
+                "you can switch models later in Settings.")
+        if device == "cpu":
+            hint += " No CUDA found - the small model is preselected for CPU."
+        tk.Label(root, text=hint,
                  font=("Segoe UI", 9), fg="#7A8290", bg="#16181D",
                  wraplength=370, justify="left").pack(fill="x", padx=16)
-        var = tk.StringVar(value=DEFAULT_MODEL)
+        var = tk.StringVar(value=default)
         for name in MODELS:
             row = tk.Frame(root, bg="#16181D")
             row.pack(fill="x", padx=16, pady=(6, 0))
@@ -523,10 +746,25 @@ def choose_model(log=None):
             tk.Label(row, text=model_description(name), font=("Segoe UI", 8),
                      fg="#7A8290", bg="#16181D", wraplength=370,
                      justify="left").pack(fill="x", padx=(26, 0))
-        result = {"model": None}
+        codes = supported_languages() or (language,)
+        lang_var = tk.StringVar(value=language)
+        lang_row = tk.Frame(root, bg="#16181D")
+        lang_row.pack(fill="x", padx=16, pady=(10, 0))
+        tk.Label(lang_row, text="Recognition language:",
+                 font=("Segoe UI", 10), fg="#D5D9E0",
+                 bg="#16181D").pack(side="left")
+        tk.OptionMenu(lang_row, lang_var, *codes).configure(
+            font=("Segoe UI", 10), bg="#22262E", fg="#D5D9E0",
+            activebackground="#2A2F38", highlightthickness=0)
+        tk.Label(root, text="The model recognizes exactly this language; "
+                 "you can switch it later in the tray or Settings.",
+                 font=("Segoe UI", 8), fg="#7A8290", bg="#16181D",
+                 wraplength=370, justify="left").pack(fill="x", padx=16)
+        result = {"model": None, "language": None}
 
         def _install():
             result["model"] = var.get()
+            result["language"] = lang_var.get()
             root.destroy()
 
         btns = tk.Frame(root, bg="#16181D")
@@ -543,17 +781,19 @@ def choose_model(log=None):
         sw_, sh_ = root.winfo_screenwidth(), root.winfo_screenheight()
         root.geometry(f"+{(sw_ - root.winfo_reqwidth()) // 2}+{max(60, (sh_ - root.winfo_reqheight()) // 3)}")
         root.mainloop()
-        return result["model"]   # None when the dialog is closed or cancelled
+        return result["model"] and result  # None when cancelled
     # console fallback (tty, no Tk)
     write("")
     write("Choose the model to install:")
     for i, name in enumerate(MODELS, 1):
         write(f"  {i}. {name:<16} ~{MODEL_GB[name]:.1f} GB   {model_description(name)}")
     raw = input(
-        f"Number [1-{len(MODELS)}] (Enter = {DEFAULT_MODEL}): ").strip()
-    if raw.isdigit() and 1 <= int(raw) <= len(MODELS):
-        return MODELS[int(raw) - 1]
-    return DEFAULT_MODEL
+        f"Number [1-{len(MODELS)}] (Enter = {default}): ").strip()
+    model = MODELS[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(MODELS) else default
+    chosen = input(f"Recognition language [en, ru, ...] (Enter = {language}): ").strip().lower()
+    if chosen not in supported_languages():
+        chosen = language
+    return {"model": model, "language": chosen}
 
 
 def copy_app(target):
@@ -577,9 +817,16 @@ def make_venv(target, vp, log):
                 os.path.join(target, ".venv")], log)
 
 
-def pip_install(target, vp, log):
+def requirements_file(device):
+    """Base dependencies, plus the CUDA wheels only on a CUDA machine."""
+    return "requirements-cuda.txt" if device == "cuda" else "requirements.txt"
+
+
+def pip_install(target, vp, device, log):
+    name = requirements_file(device)
+    log.write(f"   dependencies: {name}")
     run_logged([vp, "-m", "pip", "install", "--disable-pip-version-check",
-                "-r", os.path.join(target, "requirements.txt")], log)
+                "-r", os.path.join(target, name)], log)
 
 
 def model_step(target, model, vp, log):
@@ -601,25 +848,70 @@ def model_step(target, model, vp, log):
         label=f"python -c <download {model} to {dest}>")
 
 
-def write_config(target, model, device, compute, log):
+def write_config(target, model, device, compute, language, log, ask=None):
+    """Write a fresh config, or fix the device of an existing one.
+
+    A config left with device=cuda on a machine without CUDA is the exact
+    trap the audit found: the service would fail to start. On an interactive
+    run the change is confirmed; an unattended run (the updater's reinstall)
+    applies it and writes the reason to the log.
+    """
     path = os.path.join(target, "config.json")
     if os.path.exists(path):
-        log.write("   config.json already exists - not touching it")
-        return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                cfg = json.load(handle)
+        except (OSError, ValueError):
+            cfg = {}
+        changed = {}
+        if cfg.get("device") != device:
+            changed["device"] = (cfg.get("device"), device)
+        if cfg.get("compute_type") != compute:
+            changed["compute_type"] = (cfg.get("compute_type"), compute)
+        if changed:
+            question = ", ".join(f"{k}: {old} -> {new}"
+                                 for k, (old, new) in changed.items())
+            if ask is not None and not ask(question):
+                log.write(f"   config.json kept as is (detected: {question})")
+                return False
+            cfg.update({"device": device, "compute_type": compute})
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(cfg, handle, ensure_ascii=False, indent=2)
+            log.write(f"   config.json updated ({question})")
+        if not cfg.get("language"):
+            cfg["language"] = language
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(cfg, handle, ensure_ascii=False, indent=2)
+            log.write(f"   config.json: language={language} (it was missing)")
+        else:
+            log.write("   config.json already exists - model and language kept")
+        return True
     try:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump({"model": model, "device": device,
                        "compute_type": compute,
-                       "language": "en", "locale": "auto"},
+                       "language": language, "locale": "auto"},
                       handle, ensure_ascii=False, indent=2)
     except OSError as error:
         raise InstallError(f"cannot write config.json: {error}") from None
-    log.write(f"   device={device} compute_type={compute} language=en locale=auto")
+    log.write(f"   device={device} compute_type={compute} "
+              f"language={language} locale=auto")
+    return True
+
+
+def ask_console(question):
+    """Yes/no on a console; a closed console means 'yes' (unattended)."""
+    if not stdin_tty():
+        return True
+    try:
+        return input(f"   {question} [Y/n]: ").strip().lower() not in ("n", "no")
+    except EOFError:
+        return True
 
 
 def make_shortcuts(target, log):
     tdir = target.rstrip("\\") + "\\"
-    body = SHORTCUTS_PS.replace("__TARGET__", tdir).replace("__LNK__", LNK_NAME)
+    body = SHORTCUTS_PS.replace("__TARGET__", tdir).replace("__LNK__", LNKS[0])
     path = write_ps1(body)
     try:
         run_logged(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -638,26 +930,36 @@ def run_selftest(target, vp, log):
     return result.returncode
 
 
-def plan(target, model, dry_run, log):
+def plan(target, model, device, language, dry_run, log):
     """Print the step list; in dry-run nothing is executed."""
     step(log, "Copy app/ into the service folder",
          f"copytree app/ -> {target}", dry_run=dry_run)
     step(log, "Test WAV",
          f"copy test_ru.wav -> {target}\\test_ru.wav (needed by --selftest)", dry_run=dry_run)
+    legacy = legacy_detected()
+    step(log, "Old install",
+         f"copy config, hotwords and models from {legacy} if present; "
+         "drop the old shortcuts" if legacy else "no WhisperDictation folder found",
+         dry_run=dry_run)
     step(log, "Virtual environment .venv",
          f"python -m venv {target}\\.venv", dry_run=dry_run)
     step(log, "Dependencies (pip)",
-         ".venv pip install -r requirements.txt (faster-whisper, "
-         "sounddevice, pynput, pystray, Pillow, pyperclip, CUDA libs)",
-         dry_run=dry_run)
+         f".venv pip install -r {requirements_file(device)} ("
+         + ("base + CUDA wheels" if device == "cuda" else "base only; no CUDA wheels")
+         + ")", dry_run=dry_run)
     step(log, f"Model {model}",
          "probe the Hugging Face cache; if missing, download to "
          f"{target}\\models\\{model} (~{MODEL_GB[model]:.1f} GB, the only step using the network)", dry_run=dry_run)
     step(log, "config.json",
-         "write model and device (only if no config exists yet)",
+         f"write model, device={device}, compute_type for {device}, "
+         f"language={language} (fix the device of an existing config)",
          dry_run=dry_run)
     step(log, "Shortcuts",
-         f"desktop + startup: {LNK_NAME} -> run.cmd, icon app/assets/icon.ico", dry_run=dry_run)
+         f"desktop + startup + Start menu: {LNKS[0]} -> run.cmd, "
+         "icon app/assets/icon.ico", dry_run=dry_run)
+    step(log, "Settings > Apps",
+         "per-user uninstall entry: uninstall.cmd",
+         dry_run=dry_run)
 
 
 def run(args, log):
@@ -670,6 +972,11 @@ def run(args, log):
 
     target = os.path.abspath(os.path.expandvars(args.target))
     device, compute = detect_compute(args.cpu)
+    language = (args.language or "").strip().lower() or windows_language()
+    if language not in supported_languages():
+        log.write("[X] Unknown language {} - available: {}".format(
+            language, ", ".join(supported_languages())))
+        return 1
 
     model = args.model
     if model and model not in MODELS:
@@ -688,15 +995,18 @@ def run(args, log):
             except (OSError, ValueError):
                 pass
     if not model and not args.dry_run:
-        model = choose_model(log)
-        if model is None:
+        choice = choose_setup(log, device, language)
+        if choice is None:
             log.write("Installation cancelled - no model chosen.")
             return 0
+        model = choice["model"]
+        language = choice["language"]
     if not model:
-        model = DEFAULT_MODEL   # dry-run: plan only, no dialog
+        model = default_model(device)   # dry-run: plan only, no dialog
 
     log.write(f"Target folder: {target}")
-    log.write(f"Model: {model} (~{MODEL_GB[model]:.1f} GB)   Device: {device} ({compute})")
+    log.write(f"Model: {model} (~{MODEL_GB[model]:.1f} GB)   "
+              f"Device: {device} ({compute})   Language: {language}")
     log.write("-" * 62)
 
     created = not os.path.exists(target)
@@ -723,7 +1033,7 @@ def run(args, log):
               f"and disk: OK ({state} install)")
 
     if args.dry_run:
-        plan(target, model, True, log)
+        plan(target, model, device, language, True, log)
         log.write("")
         log.write("-" * 62)
         log.write("Plan ready (dry-run - nothing was executed).")
@@ -740,18 +1050,33 @@ def run(args, log):
              f"copytree app/ -> {target}", lambda: copy_app(target))
         step(log, "Test WAV", "copy test_ru.wav",
              lambda: copy_test_wav(target))
+        legacy = legacy_detected()
+        if legacy:
+            step(log, "Old install",
+                 f"copy config, hotwords and models from {legacy}",
+                 lambda: migrate_legacy(target, legacy, log, model=model))
+        else:
+            log.write("")
+            log.write("[step] Old install - no WhisperDictation folder found")
         step(log, "Virtual environment .venv", "python -m venv",
              lambda: make_venv(target, os.path.join(
                  target, ".venv", "Scripts", "python.exe"), log))
         vp = os.path.join(target, ".venv", "Scripts", "python.exe")
-        step(log, "Dependencies (pip)", "pip install -r requirements.txt",
-             lambda: pip_install(target, vp, log))
+        step(log, "Dependencies (pip)",
+             f"pip install -r {requirements_file(device)}",
+             lambda: pip_install(target, vp, device, log))
         step(log, f"Model {model}", "probe cache, otherwise download",
              lambda: model_step(target, model, vp, log))
-        step(log, "config.json", "write model and device if absent",
-             lambda: write_config(target, model, device, compute, log))
-        step(log, "Shortcuts", "desktop + startup shortcut",
+        step(log, "config.json", "write or fix model, device and language",
+             lambda: write_config(target, model, device, compute, language,
+                                  log, ask=ask_console))
+        step(log, "Shortcuts", "desktop + startup + Start menu",
              lambda: make_shortcuts(target, log))
+        if legacy:
+            step(log, "Old shortcuts", "drop the WhisperDictation shortcuts",
+                 lambda: remove_legacy_shortcuts(log, legacy))
+        step(log, "Settings > Apps", "per-user uninstall entry",
+             lambda: write_uninstall_entry(target, log, version=version))
         if args.selftest:
             step(log, "Selftest", "main.py --selftest (model, WAV, clipboard)",
                  lambda: run_selftest(target, vp, log))
@@ -804,7 +1129,11 @@ def main():
     ap.add_argument("--model", default="",
                     help="model to install; default: ask (dialog on an "
                          "interactive run, the configured model on an "
-                         f"existing install, {DEFAULT_MODEL} unattended)")
+                         f"existing install, {DEFAULT_MODEL} on CUDA and "
+                         f"{DEFAULT_MODEL_CPU} on CPU unattended)")
+    ap.add_argument("--language", default="",
+                    help="recognition language code (default: the Windows "
+                         "locale; en when it has no matching code)")
     ap.add_argument("--target", default=DEFAULT_TARGET,
                     help="service folder (default: %%LOCALAPPDATA%%\\VibeForma)")
     ap.add_argument("--dry-run", action="store_true",

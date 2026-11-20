@@ -11,6 +11,13 @@ import install
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def isolate_installer(monkeypatch):
+    """Never touch the real old folder or the real Settings > Apps key."""
+    monkeypatch.setattr(install, "legacy_detected", lambda path=None: None)
+    monkeypatch.setattr(install, "write_uninstall_entry", lambda *a, **k: True)
+
+
 class FakeRun:
     """Stand-in for subprocess.run: green unless a marker matches a failure."""
 
@@ -164,8 +171,9 @@ def test_rerun_after_a_model_failure_resumes_and_finishes(
 
     assert not any("-m venv" in line for line in flat_calls(second))
     assert shortcuts_called(second)
-    assert (target / "config.json").read_text(encoding="utf-8") == (
-        '{"model": "large-v3"}')
+    config = json.loads(
+        (target / "config.json").read_text(encoding="utf-8"))
+    assert config["model"] == "large-v3"
     marker = json.loads(
         (target / install.INSTALL_MARKER).read_text(encoding="utf-8"))
     assert marker["complete"] is True

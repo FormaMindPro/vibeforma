@@ -1,5 +1,5 @@
 @echo off
-rem Whisper Dictation launcher: run.cmd [--selftest]
+rem VibeForma launcher: run.cmd [--selftest]
 setlocal
 set "DIR=%~dp0"
 set "PY=%DIR%.venv\Scripts\"
@@ -12,5 +12,5 @@ if /i "%~1"=="--selftest" (
     exit /b %RC%
 )
 
-start "WhisperDictation" "%PY%pythonw.exe" "%DIR%main.py"
+start "VibeForma" "%PY%pythonw.exe" "%DIR%main.py"
 endlocal
