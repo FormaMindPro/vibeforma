@@ -17,6 +17,7 @@ import dictionary
 import history
 import i18n
 import onboarding
+import window_layout
 from config import DEFAULTS, LANG_NAMES, LANGS, MODEL_GB, MODELS, VERSION
 
 BG = "#16181D"
@@ -135,6 +136,57 @@ class ModelSwitchDialog:
         self.win.after(200, self._poll)
 
 
+class _ScrollPane:
+    """A tab body that scrolls instead of clipping when the window is short."""
+
+    def __init__(self, parent, px):
+        self.px = px
+        self._bar_shown = False
+        self.host = tk.Frame(parent, bg=BG)
+        self.canvas = tk.Canvas(self.host, bg=BG, highlightthickness=0, bd=0)
+        self.bar = ttk.Scrollbar(self.host, orient="vertical",
+                                 style="Vibe.Vertical.TScrollbar",
+                                 command=self.canvas.yview)
+        self.inner = tk.Frame(self.canvas, bg=BG)
+        self._item = self.canvas.create_window((0, 0), window=self.inner,
+                                               anchor="nw")
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner.bind("<Configure>", self._grow)
+        self.canvas.bind("<Configure>", self._wide)
+        self.host.bind("<Enter>", self._grab_wheel)
+        self.host.bind("<Leave>", self._drop_wheel)
+
+    def _grow(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._sync_bar()
+
+    def _wide(self, event):
+        self.canvas.itemconfigure(self._item, width=event.width)
+        self._sync_bar()
+
+    def _sync_bar(self):
+        need = self.inner.winfo_reqheight() > self.canvas.winfo_height() + 1
+        if need and not self._bar_shown:
+            self.bar.pack(side="right", fill="y")
+            self._bar_shown = True
+        elif not need and self._bar_shown:
+            self.bar.pack_forget()
+            self._bar_shown = False
+
+    def _grab_wheel(self, _event):
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+
+    def _drop_wheel(self, _event):
+        self.canvas.unbind_all("<MouseWheel>")
+
+    def _wheel(self, event):
+        # the list boxes and text fields keep their own wheel behaviour
+        if isinstance(event.widget, (tk.Listbox, tk.Text)):
+            return
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+
 class SettingsWindow:
     def __init__(self, master, svc, log, tab=None):
         self.svc = svc
@@ -149,6 +201,8 @@ class SettingsWindow:
         self.win.title(self.tr("settings.title"))
         self.win.configure(bg=BG)
         self.win.resizable(True, True)
+        self.win.minsize(self._px(window_layout.MIN_W),
+                         self._px(window_layout.MIN_H))
 
         self._body = tk.Frame(self.win, bg=BG)
         self._body.pack(fill="both", expand=True)
@@ -178,39 +232,54 @@ class SettingsWindow:
         with contextlib.suppress(tk.TclError):
             style.theme_use("clam")
         style.configure("Vibe.TNotebook", background=BG, borderwidth=0,
-                        tabmargins=(8, 4, 8, 0))
+                        tabmargins=(self._px(8), self._px(4), self._px(8), 0))
         # clam ignores a static foreground on tabs - drive ALL text colors
         # through the state map (static fg renders as near-invisible dark)
         style.configure("Vibe.TNotebook.Tab", background=FIELD_BG,
-                        padding=(10, 4), font=("Segoe UI", 10))
+                        padding=(self._px(10), self._px(4)),
+                        font=("Segoe UI", 10))
         style.map("Vibe.TNotebook.Tab",
                   background=[("selected", "#2E86DE")],
                   foreground=[("selected", "white"), ("!selected", FG)])
+        # clam draws the scrollbar from these elements; without the dark
+        # border/light colors it falls back to a light native-looking track
+        style.configure("Vibe.Vertical.TScrollbar", troughcolor=BG,
+                        background="#3A4048", bordercolor=BG,
+                        darkcolor=BG, lightcolor=BG, arrowcolor=DIM,
+                        relief="flat", arrowsize=self._px(10))
+        style.map("Vibe.Vertical.TScrollbar",
+                  background=[("active", "#4A515C")])
 
     def _build_search(self):
         search_row = tk.Frame(self._body, bg=BG)
-        search_row.pack(fill="x", padx=16, pady=(6, 0), before=self.nb)
+        search_row.pack(fill="x", padx=self._px(16), pady=(self._px(6), 0),
+                        before=self.nb)
         tk.Label(search_row, text=self.tr("settings.search"),
                  font=("Segoe UI", 9), fg=DIM, bg=BG).pack(side="left")
         self.v_search = tk.StringVar(value="")
         search_entry = tk.Entry(search_row, textvariable=self.v_search,
                                 width=24, bg=FIELD_BG, fg=FG,
-                                insertbackground=FG, relief="flat")
-        search_entry.pack(side="left", padx=(8, 0))
+                                insertbackground=FG, relief="flat",
+                                highlightthickness=1,
+                                highlightbackground="#3A4048",
+                                highlightcolor="#2E86DE")
+        search_entry.pack(side="left", padx=(self._px(8), 0))
         search_entry.bind("<Return>", lambda _e: self._search())
 
     def _create_tab_frames(self):
         self._search_index = []   # (label text, tab key, label widget)
         frames = {}
+        self._scrolls = {}
         for key, title_key in (
                 ("record", "tabs.record"), ("model", "tabs.model"),
                 ("dictionary", "tabs.dictionary"), ("history", "tabs.history"),
                 ("look", "tabs.look"), ("system", "tabs.system")):
-            frame = tk.Frame(self.nb, bg=BG)
-            self.nb.add(frame, text=self.tr(title_key))
-            frames[key] = frame
-        self._tab_frames = frames
-        self._frame_key = {frame: key for key, frame in frames.items()}
+            pane = _ScrollPane(self.nb, self._px)
+            self.nb.add(pane.host, text=self.tr(title_key))
+            self._scrolls[key] = pane
+            frames[key] = pane.inner
+        self._tab_frames = {key: p.host for key, p in self._scrolls.items()}
+        self._frame_key = {p.inner: key for key, p in self._scrolls.items()}
         return frames
 
     # -- row helpers -------------------------------------------------------
@@ -219,7 +288,7 @@ class SettingsWindow:
         label = tk.Label(f, text=text, font=("Segoe UI", 10, "bold"),
                          fg="#8FB8E8", bg=BG)
         label.grid(row=self.rows[f], column=0, columnspan=2, sticky="w",
-                   padx=16, pady=(12, 2))
+                   padx=self._px(16), pady=(self._px(12), self._px(2)))
         self.rows[f] += 1
         self._search_index.append((text, self._frame_key[f], label))
 
@@ -228,8 +297,9 @@ class SettingsWindow:
         label = tk.Label(f, text=label_text, font=("Segoe UI", 10),
                          fg=FG, bg=BG)
         label.grid(row=self.rows[f], column=0, sticky="w",
-                   padx=16, pady=2)
-        widget.grid(row=self.rows[f], column=1, sticky="e", padx=16, pady=2)
+                   padx=self._px(16), pady=self._px(2))
+        widget.grid(row=self.rows[f], column=1, sticky="e",
+                    padx=self._px(16), pady=self._px(2))
         self.rows[f] += 1
         self._search_index.append(
             (label_text, self._frame_key[f], label))
@@ -237,14 +307,15 @@ class SettingsWindow:
     def _full(self, f, widget):
         self.rows[f] = self.rows.get(f, 0)
         widget.grid(row=self.rows[f], column=0, columnspan=2, sticky="w",
-                    padx=16, pady=2)
+                    padx=self._px(16), pady=self._px(2))
         self.rows[f] += 1
 
     def _note(self, f, text):
         self.rows[f] = self.rows.get(f, 0)
         tk.Label(f, text=text, font=("Segoe UI", 9), fg=DIM,
                  bg=BG, wraplength=self._px(400), justify="left").grid(
-            row=self.rows[f], column=0, columnspan=2, sticky="w", padx=16)
+            row=self.rows[f], column=0, columnspan=2, sticky="w",
+            padx=self._px(16))
         self.rows[f] += 1
 
     def _scale(self, f, from_, to, resolution, var, command=None):
@@ -300,7 +371,7 @@ class SettingsWindow:
                                    fg=DIM, bg=BG, wraplength=self._px(400),
                                    justify="left")
         self.model_desc.grid(row=self.rows.get(f, 0), column=0, columnspan=2,
-                             sticky="w", padx=16)
+                             sticky="w", padx=self._px(16))
         self.rows[f] = self.rows.get(f, 0) + 1
         self._update_model_desc()
         self.v_model.trace_add("write", lambda *a: self._update_model_desc())
@@ -495,7 +566,7 @@ class SettingsWindow:
         self.ram_lbl = tk.Label(f, text="", font=("Segoe UI", 9),
                                 fg="#9FE0A8", bg=BG, anchor="w")
         self.ram_lbl.grid(row=self.rows[f], column=0, columnspan=2,
-                          sticky="w", padx=16)
+                          sticky="w", padx=self._px(16))
         self.rows[f] += 1
         self._refresh_ram()
 
@@ -503,11 +574,15 @@ class SettingsWindow:
     def _build_footer(self):
         # -- buttons under the notebook ------------------------------------------
         btns = tk.Frame(self._body, bg=BG)
-        btns.pack(fill="x", pady=(6, 12))
+        btns.pack(fill="x", pady=(self._px(6), self._px(12)))
+        sep = tk.Frame(self._body, bg="#2A2F38", height=self._px(1))
+        sep.pack(fill="x", padx=self._px(16), pady=(self._px(4), 0),
+                 before=btns)
         tk.Button(btns, text=self.tr("settings.save"), command=self._save, width=12,
                   bg="#2E86DE", fg="white", relief="flat",
                   activebackground="#1B6EC2",
-                  activeforeground="white").pack(side="right", padx=(4, 16))
+                  activeforeground="white").pack(
+                      side="right", padx=(self._px(4), self._px(16)))
         tk.Button(btns, text=self.tr("settings.cancel"), command=self.win.destroy,
                   width=10, bg="#22262E", fg=FG, relief="flat",
                   activebackground="#2A2F38",
@@ -515,26 +590,29 @@ class SettingsWindow:
         tk.Button(btns, text=self.tr("settings.reset"), command=self._reset,
                   width=10, bg="#22262E", fg=FG, relief="flat",
                   activebackground="#2A2F38",
-                  activeforeground=FG).pack(side="left", padx=(16, 0))
+                  activeforeground=FG).pack(
+                      side="left", padx=(self._px(16), 0))
         tk.Label(btns, text=self.tr("settings.version", ver=VERSION),
                  font=("Segoe UI", 9), fg=DIM,
-                 bg=BG).pack(side="left", padx=(12, 0))
+                 bg=BG).pack(side="left", padx=(self._px(12), 0))
         self.save_status = tk.Label(btns, text="", font=("Segoe UI", 9),
                                     fg="#9FE0A8", bg=BG)
-        self.save_status.pack(side="left", padx=(12, 0))
+        self.save_status.pack(side="left", padx=(self._px(12), 0))
 
 
     def _fit_to_content(self, frames):
-        """Size to the tallest tab, nothing clipped."""
+        """Size to the tallest tab once, centred and clamped to the screen."""
         self.win.update_idletasks()
         values = tuple(frames[key] for key in
                        ("record", "model", "dictionary", "history",
                         "look", "system"))
-        w = max(f.winfo_reqwidth() for f in values) + 16
-        h = max(f.winfo_reqheight() for f in values) + 40 + 50 + 10
+        w = max(f.winfo_reqwidth() for f in values) + self._px(40)
+        h = max(f.winfo_reqheight() for f in values) + self._px(100)
         sw = self.win.winfo_screenwidth()
         sh = self.win.winfo_screenheight()
-        self.win.geometry(f"{min(w, sw - 40)}x{min(h, sh - 80)}+140+60")
+        w, h = window_layout.fit_size(w, h, sw, sh, dpi_factor(self.win))
+        x, y = window_layout.place_xy(w, h, sw, sh)
+        self.win.geometry(f"{w}x{h}+{x}+{y}")
 
     def _bind(self, f, var, text):
         """Checkbox bound to var, placed in frame f."""
@@ -545,7 +623,8 @@ class SettingsWindow:
                        selectcolor=FIELD_BG, activebackground=BG,
                        activeforeground=FG, highlightthickness=0,
                        anchor="w").grid(row=rows[f], column=0, columnspan=2,
-                                        sticky="w", padx=16, pady=2)
+                                        sticky="w", padx=self._px(16),
+                                        pady=self._px(2))
         rows[f] += 1
         return var
 

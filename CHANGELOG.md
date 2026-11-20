@@ -170,6 +170,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the previous combination with a visible notification.
 
 ### Fixed
+- The settings window opens at one stable size and place. Its geometry is
+  computed once from the tallest tab, clamped to the screen (short screens
+  scroll instead of cutting fields off), centred on the monitor and given a
+  minimum size; every tab body scrolls with a dark scrollbar that appears
+  only when needed, and the Save/Cancel footer stays visible. Spacing scales
+  with the display DPI, and the footer is separated from the content.
 - The monitoring panel no longer stretches during dictation. Its height is
   computed from the base on every change (it used to be recomputed from the
   previous, already grown height, so the panel ratcheted taller and crawled
