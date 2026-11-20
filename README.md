@@ -122,7 +122,7 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 (from `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
 
 **Option A — Windows setup (no Python, optional):** the one-command install
-above is the main path, but it needs Python. If Python is not an option,
+above is the main path, but it needs Python. When a signed setup is published,
 `VibeForma-Setup-<version>.exe` from [Releases](../../releases) installs the
 packed app for the current user: no administrator rights, no Python.
 SmartScreen, signature verification, the data folder and upgrades —
