@@ -173,7 +173,34 @@ share of non-scaling stages); the gap widens on longer audio.
   check can be switched off in settings. The release zip downloads only when
   a newer version exists. Nothing else leaves the machine.
 - Logs live in the local `logs\` folder with rotation. No telemetry, no
-  accounts, no tokens.
+  accounts, no tokens. The log holds no dictated text and no window titles;
+  `log_window_titles: true` in `config.json` adds the title of the paste
+  target if you need it for a diagnosis.
+- On Windows 10+ the dictated text is marked as excluded from the clipboard
+  history and cloud sync. The monitoring panel has a privacy mode (the eye
+  button): the text is hidden, the mic level stays, and the status line
+  disappears 30 s after it was set.
+
+## What stays on disk
+
+- `config.json` — your settings and `hotwords` (the terms you typed there);
+- `models\` — downloaded Whisper models;
+- `logs\` — the service log (five rotated files, 1 MB each), no dictated
+  text and no window titles by default;
+- `_http_in_*.wav` — only while the local HTTP API handles a request; deleted
+  in any case, success or failure;
+- `install.log` — the installer's own log;
+- no audio recordings are kept.
+
+## Local HTTP API (off by default)
+
+Set `"http_api": true` and a random `"http_token": "<secret>"` in
+`config.json`. The API listens on `127.0.0.1` only, refuses to start without
+a token, and accepts `POST /transcribe` with the header
+`X-VibeForma-Token: <secret>`, `Content-Type: audio/wav` and a WAV body up to
+10 MB; one request per second; the service must be idle. The answer is
+`{"text": "..."}`; the uploaded audio is written to a temporary file and
+deleted in any case.
 
 ## Repository layout
 

@@ -59,9 +59,13 @@ DEFAULTS = {
     "confirm_focus_change": True,       # ask where to paste if the window changed
     "clipboard_exclude_history": True,  # keep the text out of history and cloud
     "notify_text": False,               # show the phrase in notifications (opt-in)
+    "log_window_titles": False,         # write the target window title to the log
+    "hud_privacy": False,               # the panel hides the text from the start
     "autostart": True,
     "http_api": False,                  # optional: POST 127.0.0.1:8787/transcribe
     "http_port": 8787,
+    "http_token": "",                   # required when http_api is on
+
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks
     "auto_update": "notify",            # notify (ask) | auto (explicit opt-in)

@@ -2,7 +2,10 @@
 
 Tk runs in its own daemon thread; only that thread touches the widgets.
 The state dict is written by service threads — single reads are GIL-safe.
+The eye button switches the privacy mode: the text is hidden, the level
+stays. The status line disappears LAST_TTL_S seconds after it was set.
 """
+import time
 import tkinter as tk
 
 STATE_COLORS = {
@@ -22,6 +25,7 @@ W = 380
 BASE_TEXT_LINES = 4
 LINE_H = 20
 BASE_H = 190
+LAST_TTL_S = 30
 
 
 def dpi_factor(win):
@@ -63,6 +67,10 @@ class Hud:
                         cursor="hand2")
         gear.pack(side="left")
         gear.bind("<Button-1>", lambda e: self._open_settings())
+        self.eye = tk.Label(top, text="👁", font=("Segoe UI", 11), fg=FG,
+                            bg=BG, cursor="hand2")
+        self.eye.pack(side="left", padx=(px(8), 0))
+        self.eye.bind("<Button-1>", lambda e: self._toggle_privacy())
         self.dot = tk.Canvas(top, width=px(14), height=px(14), bg=BG,
                              highlightthickness=0)
         self.dot.pack(side="left", padx=(px(10), px(4)))
@@ -157,6 +165,12 @@ class Hud:
         except Exception as e:
             self.log.warning("HUD mic button: %s", e)
 
+    def _toggle_privacy(self):
+        """Hide or show the text; the level bar stays either way."""
+        self.state["privacy"] = not bool(self.state.get("privacy"))
+        self.log.info("HUD privacy: %s",
+                      "on" if self.state["privacy"] else "off")
+
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
         try:
@@ -180,14 +194,20 @@ class Hud:
                 hint += self.svc.tr("hud.silence_warn")
             self.hint.configure(text=hint)
 
-            partial = st.get("partial") or "…"
+            privacy = bool(st.get("privacy"))
+            self.eye.configure(text="🙈" if privacy else "👁")
+            partial = (self.svc.tr("hud.privacy_hint") if privacy
+                       else (st.get("partial") or "…"))
             self.text.configure(state="normal")
             self.text.delete("1.0", "end")
             self.text.insert("1.0", partial)
             self.text.configure(state="disabled")
             self._autogrow(partial)
 
-            self.last.configure(text=st.get("last") or "")
+            last = st.get("last") or ""
+            age = time.time() - float(st.get("last_ts") or 0)
+            self.last.configure(text="" if privacy or age > LAST_TTL_S
+                                else last)
         except Exception as e:
             self.log.warning("HUD tick: %s", e)
         if self.state.get("exit"):

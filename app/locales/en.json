@@ -21,6 +21,7 @@
   "tray.starting": "VibeForma — starting…",
   "hud.mic_hint": "mic: {device}",
   "hud.silence_warn": "   ⚠ silence — the mic does not hear you (pick the device in the tray)",
+  "hud.privacy_hint": "privacy mode — the text is hidden, the level stays",
   "notify.mic_unavailable": "Microphone unavailable:\n{err}",
   "notify.no_speech": "No speech captured — nothing inserted",
   "notify.no_speech_last": "(no speech heard)",

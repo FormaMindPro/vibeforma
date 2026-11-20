@@ -133,7 +133,7 @@ def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
 def insert_text(text: str, restore_clipboard: bool = True,
                 log: logging.Logger | None = None, target_hwnd=None,
                 paste_method: str = "shift_insert", confirm_focus=None,
-                exclude_history: bool = True) -> str:
+                exclude_history: bool = True, log_title: bool = False) -> str:
     """Paste text into the target window; returns one of the RESULT_* values.
 
     confirm_focus is called only when the foreground window differs from
@@ -155,7 +155,7 @@ def insert_text(text: str, restore_clipboard: bool = True,
     if exclude_history and not exclude_from_clipboard_history() and log:
         log.info("Clipboard history exclusion is not available here")
 
-    target = foreground_window()
+    target = foreground_window() if log_title else None
     if target_hwnd and get_foreground_hwnd() != target_hwnd:
         choice = _ask_focus_change(confirm_focus, log)
         if choice == RESULT_COPIED:
@@ -184,7 +184,10 @@ def insert_text(text: str, restore_clipboard: bool = True,
             kb.release("v")
     time.sleep(AFTER_DELAY_S)
     if log:
-        log.info("Pasted %d chars — window: %s", len(text), target)
+        if log_title:
+            log.info("Pasted %d chars — window: %s", len(text), target)
+        else:
+            log.info("Pasted %d chars", len(text))
 
     if restore_clipboard and prev_known:
         threading.Thread(target=_restore, args=(prev, own_seq, text, log),
