@@ -6,7 +6,7 @@ from pynput import keyboard
 
 def combo_to_pynput(combo: str) -> str:
     """'ctrl+alt+space' -> '<ctrl>+<alt>+<space>'."""
-    return "+".join("<%s>" % t.strip().lower() for t in combo.split("+") if t.strip())
+    return "+".join(f"<{t.strip().lower()}>" for t in combo.split("+") if t.strip())
 
 
 class Hotkey:
@@ -29,5 +29,5 @@ class Hotkey:
     def _on(self):
         try:
             self._callback()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a handler error is logged and must not kill the listener
             self._log.exception("Hotkey handler error")

@@ -26,12 +26,12 @@ def system_locale():
     try:
         lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0xFFFF
         return _LCID.get(lcid, "en")
-    except Exception:
+    except Exception:  # noqa: BLE001 - ctypes locale lookup has no stable base exception
         return "en"
 
 
 def _load_file(locale):
-    path = os.path.join(LOCALES_DIR, "%s.json" % locale)
+    path = os.path.join(LOCALES_DIR, f"{locale}.json")
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)

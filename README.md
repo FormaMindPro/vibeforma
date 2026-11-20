@@ -301,9 +301,8 @@ python -m venv .venv
 .venv\Scripts\python tools\ruff_gate.py
 ```
 
-`tools/ruff_gate.py` compares `ruff` output with `tools/ruff-baseline.json`:
-the 164 findings recorded in 0.1.9 are a ceiling, and any new finding fails
-the gate. Fixing the recorded ones is a separate cleanup task.
+`tools/ruff_gate.py` runs the same selection as CI and fails on any finding:
+the 164 findings recorded in 0.1.9 were cleaned up, so `ruff` is blocking.
 
 ## Reviewing the code with an AI assistant
 

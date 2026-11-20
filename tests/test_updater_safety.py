@@ -66,7 +66,7 @@ def service_dir(tmp_path):
 
 
 def fake_download(sources):
-    def download(url, path, timeout):  # noqa: ARG001
+    def download(url, path, timeout):
         shutil.copy2(sources[url], path)
     return download
 

@@ -36,7 +36,7 @@ class FakeASR:
     def __init__(self, text):
         self.text = text
 
-    def transcribe(self, buf, verbose=True):  # noqa: ARG002
+    def transcribe(self, buf, verbose=True):
         return self.text
 
 
@@ -129,7 +129,7 @@ def test_skip_keeps_current_values():
 def test_mic_test_does_not_insert(monkeypatch):
     bomb = types.ModuleType("insert")
 
-    def _forbidden(*args, **kwargs):  # noqa: ARG001
+    def _forbidden(*args, **kwargs):
         raise AssertionError("the microphone test must not insert text")
 
     bomb.insert_text = _forbidden

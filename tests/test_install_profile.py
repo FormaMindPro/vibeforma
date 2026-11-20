@@ -100,7 +100,8 @@ def test_requirements_split():
     base = (ROOT / "app" / "requirements.txt").read_text(encoding="utf-8")
     cuda = (ROOT / "app" / "requirements-cuda.txt").read_text(encoding="utf-8")
     assert "nvidia-" not in base
-    assert "-r requirements.txt" in cuda
+    # the CUDA lock is standalone: it carries the base pins and the wheels
+    assert "faster-whisper==" in cuda
     assert "nvidia-cublas-cu12" in cuda
     assert "nvidia-cudnn-cu12" in cuda
 

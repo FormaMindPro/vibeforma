@@ -1,11 +1,11 @@
 """ASR engine: one WhisperModel per service lifetime, multilingual dictation."""
+import contextlib
 import gc
 import logging
 import threading
 import time
 
 import numpy as np
-
 from config import MODELS_DIR, bootstrap_cuda_dlls
 
 # Offline-first runtime: a cached model loads with no network; the network is
@@ -33,7 +33,7 @@ def _repo_id(name):
     """Hugging Face repo id for a short model name."""
     if "/" in name:
         return name
-    return REPO_OVERRIDES.get(name, "Systran/faster-whisper-%s" % name)
+    return REPO_OVERRIDES.get(name, f"Systran/faster-whisper-{name}")
 
 
 def _resolve_model(name, log):
@@ -46,12 +46,10 @@ def _resolve_model(name, log):
     if os.path.exists(os.path.join(local, "model.bin")):
         return local, True  # local dir: no hub access at all
     repo = _repo_id(name)
-    try:
+    with contextlib.suppress(Exception):
         from huggingface_hub import snapshot_download
         snapshot_download(repo, local_files_only=True)
         return name, True   # already in the shared HF cache
-    except Exception:
-        pass
     os.makedirs(MODELS_DIR, exist_ok=True)
     log.info("Downloading model %s to %s (first-time install)", name, local)
     from huggingface_hub import snapshot_download
@@ -69,7 +67,7 @@ def _make_model(name, device, compute_type, log):
     try:
         return WhisperModel(source, device=device, compute_type=compute_type,
                             local_files_only=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the offline model load can fail in third-party code; retry online
         return WhisperModel(source, device=device, compute_type=compute_type,
                             local_files_only=False)
 

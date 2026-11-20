@@ -1,4 +1,5 @@
 """Configuration: config.json load/save, defaults, device lookup, DLL bootstrap."""
+import contextlib
 import json
 import os
 
@@ -20,9 +21,8 @@ LANGS = (
     "zh", "ja", "ko",
 )
 
-# Whisper models offered in the UI (menu order); sizes in GB for hints.
-MODELS = ("large-v3", "large-v3-turbo", "medium", "small")
-MODEL_GB = {"large-v3": 3.1, "large-v3-turbo": 1.6, "medium": 1.5, "small": 0.5}
+# Whisper models offered in the UI (menu order) come from the catalog.
+from model_catalog import MODEL_GB, MODELS  # noqa: E402,F401 - re-exported
 
 # Native names (endonyms) shown in the UI: every language is written in
 # that language itself.
@@ -104,10 +104,8 @@ def bootstrap_cuda_dlls():
     site = os.path.join(sys.prefix, "Lib", "site-packages")
     dirs = glob.glob(os.path.join(site, "nvidia", "*", "bin"))
     for d in dirs:
-        try:
+        with contextlib.suppress(OSError):
             os.add_dll_directory(d)
-        except OSError:
-            pass
     if dirs:
         os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
 
@@ -118,7 +116,7 @@ def find_input_device(substring):
 
     try:
         default_in = sd.default.device[0]
-    except Exception:
+    except Exception:  # noqa: BLE001 - sounddevice has no stable base exception for the default device
         default_in = None
     needle = (substring or "").strip().lower()
     if not needle:

@@ -5,6 +5,7 @@ The state dict is written by service threads — single reads are GIL-safe.
 The eye button switches the privacy mode: the text is hidden, the level
 stays. The status line disappears LAST_TTL_S seconds after it was set.
 """
+import contextlib
 import time
 import tkinter as tk
 
@@ -32,7 +33,7 @@ def dpi_factor(win):
     """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
     try:
         return max(1.0, win.winfo_fpixels("1i") / 96.0)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
         return 1.0
 
 
@@ -48,14 +49,14 @@ class Hud:
         self._root_h = BASE_H
 
         self.root = tk.Tk()
-        px = self._px = lambda n: int(round(n * dpi_factor(self.root)))  # noqa: E731
+        px = self._px = lambda n: int(round(n * dpi_factor(self.root)))
         self._W = px(W)
         self._line_h = px(LINE_H)
         base_h = px(BASE_H)
         self._root_h = base_h
 
         self.root.title("VibeForma")
-        self.root.geometry("%dx%d+%d+%d" % self._place(base_h))
+        self.root.geometry("{}x{}+{}+{}".format(*self._place(base_h)))
         self.root.attributes("-topmost", True)
         self.root.overrideredirect(True)   # borderless
         self.root.configure(bg=BG)
@@ -110,12 +111,11 @@ class Hud:
         self.text.pack(fill="both", expand=True, padx=px(12), pady=(px(6), px(4)))
         self.text.insert("1.0", "…")
         self.text.configure(state="disabled")
-        try:
+        # a closed window raises TclError while measuring the font
+        with contextlib.suppress(tk.TclError):
             import tkinter.font as tkfont
             f = tkfont.Font(font=self.text.cget("font"))
             self._line_h = max(px(LINE_H), int(f.metrics("linespace")))
-        except Exception:
-            pass
 
         self.last = tk.Label(self.root, text="", font=("Segoe UI", 8),
                              fg=DIM, bg=BG, anchor="w")
@@ -132,7 +132,7 @@ class Hud:
             sh = self.root.winfo_screenheight()
             return self._W, base_h, sw - self._W - self._px(28), \
                 sh - base_h - self._px(72)
-        except Exception:
+        except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             return self._W, base_h, 100, 100
 
     def _bind_drag(self, widget):
@@ -144,26 +144,24 @@ class Hud:
 
     def _drag_move(self, e):
         if self._drag:
-            self.root.geometry("+%d+%d" % (e.x_root - self._drag[0],
-                                           e.y_root - self._drag[1]))
+            self.root.geometry(f"+{e.x_root - self._drag[0]}"
+                               f"+{e.y_root - self._drag[1]}")
 
     def _open_settings(self):
         self.state["open_settings"] = True
-        try:
+        with contextlib.suppress(Exception):
             if not self.root.winfo_viewable():
                 self.root.deiconify()
-        except Exception:
-            pass
 
     def _state_label(self, key):
-        label = self.svc.tr("states.%s" % key, hotkey=self.cfg.get("hotkey", ""))
-        return key if label == "states.%s" % key else label
+        label = self.svc.tr(f"states.{key}", hotkey=self.cfg.get("hotkey", ""))
+        return key if label == f"states.{key}" else label
 
     def _on_mic(self):
         """Record button: the same state-guarded toggle as the hotkey."""
         try:
             self.svc.on_hotkey()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             self.log.warning("HUD mic button: %s", e)
 
     def _toggle_privacy(self):
@@ -212,13 +210,11 @@ class Hud:
             age = time.time() - float(st.get("last_ts") or 0)
             self.last.configure(text="" if privacy or age > LAST_TTL_S
                                 else last)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             self.log.warning("HUD tick: %s", e)
         if self.state.get("exit"):
-            try:
+            with contextlib.suppress(Exception):
                 self.root.quit()
-            except Exception:
-                pass
             return
         self.root.after(120, self._tick)
 
@@ -227,7 +223,7 @@ class Hud:
         self.state["settings_tab"] = None
         try:
             alive = self._settings is not None and self._settings.win.winfo_exists()
-        except Exception:
+        except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             alive = False
         if alive:
             self._settings.win.deiconify()
@@ -242,7 +238,7 @@ class Hud:
         try:
             alive = (self._onboarding is not None
                      and self._onboarding.win.winfo_exists())
-        except Exception:  # noqa: BLE001 - a closed window raises TclError
+        except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             alive = False
         if alive:
             self._onboarding.win.deiconify()
@@ -254,19 +250,18 @@ class Hud:
     def _apply_alpha(self):
         a = self.state.get("alpha")
         if a is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.root.attributes("-alpha", max(0.3, min(1.0, float(a))))
-            except Exception:
-                pass
 
     def _autogrow(self, partial: str):
         """Grow the panel with the text when hud_autogrow is on."""
-        try:
+        with contextlib.suppress(Exception):
             if not self.cfg.get("hud_autogrow", True):
                 want = BASE_TEXT_LINES
             else:
                 cpl = 46  # chars per line at this width/font
-                lines = sum(max(1, -(-len(l) // cpl)) for l in partial.split("\n"))
+                lines = sum(max(1, -(-len(line) // cpl))
+                            for line in partial.split("\n"))
                 want = max(BASE_TEXT_LINES, min(12, lines + 1))
             if want != int(self.text.cget("height")):
                 self.text.configure(height=want)
@@ -276,9 +271,7 @@ class Hud:
                     self._root_h = h
                     x = self.root.winfo_x()
                     y = self.root.winfo_y()
-                    self.root.geometry("%dx%d+%d+%d" % (self._W, h, x, y))
-        except Exception:
-            pass
+                    self.root.geometry(f"{self._W}x{h}+{x}+{y}")
 
     def _paint_dot(self, color):
         self.dot.delete("all")
@@ -301,5 +294,5 @@ def run_hud(svc, log):
     """Entry for the HUD thread: Tk must be created and used in one thread."""
     try:
         Hud(svc, log).run()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the HUD thread must survive any Tk failure
         log.warning("HUD stopped: %s", e)

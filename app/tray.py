@@ -1,11 +1,11 @@
 """Tray icon and menu (pystray + Pillow)."""
+import contextlib
 import logging
 import os
 
 import pystray
-from PIL import Image, ImageDraw
-
 from config import LANG_NAMES, MODELS
+from PIL import Image, ImageDraw
 
 STATE_COLORS = {
     "loading": "#F39C12",
@@ -38,7 +38,7 @@ def _load_icon() -> Image.Image:
     try:
         return Image.open(_ASSET_ICON).convert("RGBA").resize(
             (64, 64), Image.LANCZOS)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the tray must survive a failing backend
         return _draw_icon(STATE_COLORS["idle"])
 
 
@@ -103,16 +103,16 @@ class Tray:
         mark = "•  " if self.service.cfg.get("language") == code else ""
         return mark + LANG_NAMES.get(code, code)
 
-    def _lang_submenu(self, icon, item):  # noqa: ARG002
+    def _lang_submenu(self, icon, item):
         return [pystray.MenuItem(
             self._lang_label(c), lambda *a, c=c: self.service.set_language(c))
             for c in LANG_QUICK]
 
-    def _devices_submenu(self, icon, item):  # noqa: ARG002
+    def _devices_submenu(self, icon, item):
         items = []
         try:
             names = self.service.input_device_names()
-        except Exception:
+        except Exception:  # noqa: BLE001 - the tray must survive a failing backend
             names = []
         for name in names:
             mark = "•  " if self.service.is_current_device(name) else ""
@@ -122,7 +122,7 @@ class Tray:
         return items or [pystray.MenuItem(
             self.service.tr("tray.no_devices"), None, enabled=False)]
 
-    def _models_submenu(self, icon, item):  # noqa: ARG002
+    def _models_submenu(self, icon, item):
         items = []
         for m in MODELS:
             mark = "•  " if self.service.current_model() == m else ""
@@ -130,36 +130,35 @@ class Tray:
                 mark + m, lambda *a, n=m: self.service.set_model(n)))
         return items
 
-    def _on_settings(self, icon, item):  # noqa: ARG002
+    def _on_settings(self, icon, item):
         self.service.open_settings()
 
-    def _on_pause(self, icon, item):  # noqa: ARG002
+    def _on_pause(self, icon, item):
         self.service.toggle_pause()
 
-    def _on_open_logs(self, icon, item):  # noqa: ARG002
-        try:
-            os.startfile(os.path.dirname(self.service.log_path()))
-        except Exception:
-            pass
+    def _on_open_logs(self, icon, item):
+        with contextlib.suppress(Exception):
+            os.startfile(  # noqa: S606 - the user asked for the log folder
+                os.path.dirname(self.service.log_path()))
 
-    def _on_exit(self, icon, item):  # noqa: ARG002
+    def _on_exit(self, icon, item):
         self.service.shutdown()
 
     # -- state -------------------------------------------------------------
     def set_state(self, state: str):
         try:
-            label = self.service.tr("states.%s" % state,
+            label = self.service.tr(f"states.{state}",
                                     hotkey=self.service.cfg.get("hotkey", ""))
-            if label == "states.%s" % state:  # unknown key -> raw state
+            if label == f"states.{state}":  # unknown key -> raw state
                 label = state
             self.icon.title = "VibeForma: " + label
-        except Exception:
+        except Exception:  # noqa: BLE001 - the tray must survive a failing backend
             self.log.debug("Tray: failed to update state %s", state)
 
     def notify(self, msg: str, title: str = "VibeForma"):
         try:
             self.icon.notify(msg, title)
-        except Exception:
+        except Exception:  # noqa: BLE001 - the tray must survive a failing backend
             self.log.debug("Tray: notification failed: %s", msg)
 
     def run(self):
@@ -169,7 +168,5 @@ class Tray:
         self.icon.run_detached()
 
     def stop(self):
-        try:
+        with contextlib.suppress(Exception):
             self.icon.stop()
-        except Exception:
-            pass
