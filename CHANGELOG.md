@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## 0.2.0 — 2026-11-20
 
 ### Added
+- **A Quick start at the top of the README.** README (en/ru) now opens with
+  the one-command PowerShell install (`irm .../install.ps1 | iex`), what it
+  does, where it installs, and the bootstrap options `-Model`, `-Cpu`,
+  `-DryRun`, `-NoRun`, plus an honest note that only released builds are
+  installed. `docs/INSTALL-WINDOWS.md` links that section and lists the
+  source installer flags from `install.py --help`.
 - **A support report and a troubleshooting guide.** `--doctor`
   (`run.cmd --doctor`, `VibeForma.exe --doctor`, tray → **Diagnostics…**,
   Settings → **System** → **Diagnostics…**) checks Python and the service
