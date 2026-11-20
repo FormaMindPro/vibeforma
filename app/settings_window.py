@@ -473,6 +473,11 @@ class SettingsWindow:
                               bg="#22262E", fg=FG, relief="flat",
                               activebackground="#2A2F38", cursor="hand2")
         self._full(f, btn_setup)
+        btn_diag = tk.Button(f, text=self.tr("doctor.button"),
+                             command=self._open_doctor, width=22,
+                             bg="#22262E", fg=FG, relief="flat",
+                             activebackground="#2A2F38", cursor="hand2")
+        self._full(f, btn_diag)
         self._head(f, self.tr("updates.g"))
         self.v_upd = tk.BooleanVar(value=bool(c.get("update_check", True)))
         self._bind(f, self.v_upd, self.tr("updates.auto"))
@@ -774,6 +779,10 @@ class SettingsWindow:
         with contextlib.suppress(Exception):
             self.model_desc.configure(
                 text=self.tr(f"models.desc.{self.v_model.get()}"))
+
+    def _open_doctor(self):
+        import doctor
+        doctor.show_report(self.win, self.tr, self.log)
 
     def _refresh_ram(self):
         try:

@@ -8,6 +8,8 @@
   "states.updating": "Updating…",
   "tray.settings": "Settings…",
   "tray.onboarding": "Setup wizard…",
+  "tray.diagnostics": "Diagnostics…",
+  "tray.release_notes": "What's new in {ver}…",
   "tray.update_to": "Update to {ver}",
   "tray.update_later": "Later",
   "tray.restart_update": "Restart to finish update",
@@ -208,5 +210,11 @@
   "errors.recognition.failed.action": "Dictate again; if it repeats, open the logs folder from the tray.",
   "errors.file.read.text": "The file could not be read.",
   "errors.file.read.action": "Check that the file exists and is a JSON list of terms.",
-  "settings.save_failed": "Could not save settings - see the log"
+  "settings.save_failed": "Could not save settings - see the log",
+  "doctor.button": "Diagnostics…",
+  "doctor.title": "VibeForma diagnostics",
+  "doctor.copy": "Copy report",
+  "doctor.close": "Close",
+  "doctor.copied": "Report copied to the clipboard",
+  "doctor.note": "No dictated text or window titles in this report."
 }

@@ -7,7 +7,8 @@ config.json, models, logs or history.
 Build diagnostics: VibeForma.exe --bundle-check imports every runtime
 dependency, checks the bundled data and writes the result to
 %TEMP%\\vibeforma-bundle-check.txt (a windowed exe has no console), then
-exits 0 on success.
+exits 0 on success. VibeForma.exe --doctor prints the support report and
+also writes it to the temp file vibeforma-doctor.txt.
 """
 import os
 import sys
@@ -66,6 +67,10 @@ def main() -> None:
         os.makedirs(base, exist_ok=True)
     if "--bundle-check" in sys.argv:
         sys.exit(bundle_check())
+    if "--doctor" in sys.argv:
+        import doctor
+        sys.exit(doctor.main(os.path.join(tempfile.gettempdir(),
+                                          "vibeforma-doctor.txt")))
     from vibeforma.app import main as run
 
     run()

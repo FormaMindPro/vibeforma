@@ -46,6 +46,7 @@ class Hud:
         self._drag = None
         self._settings = None
         self._onboarding = None
+        self._doctor = None
         self._root_h = BASE_H
 
         self.root = tk.Tk()
@@ -176,6 +177,9 @@ class Hud:
             if self.state.get("open_settings"):
                 self.state["open_settings"] = False
                 self._open_settings_window()
+            if self.state.get("open_doctor"):
+                self.state["open_doctor"] = False
+                self._open_doctor_window()
             if self.state.get("open_onboarding"):
                 self.state["open_onboarding"] = False
                 self._open_onboarding_window()
@@ -233,6 +237,18 @@ class Hud:
         import settings_window
         self._settings = settings_window.SettingsWindow(
             self.root, self.svc, self.log, tab=tab)
+
+    def _open_doctor_window(self):
+        try:
+            alive = (self._doctor is not None
+                     and self._doctor.winfo_exists())
+        except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
+            alive = False
+        if alive:
+            self._doctor.deiconify()
+            return
+        import doctor
+        self._doctor = doctor.show_report(self.root, self.svc.tr, self.log)
 
     def _open_onboarding_window(self):
         try:

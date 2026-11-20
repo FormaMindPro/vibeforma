@@ -33,6 +33,9 @@ def _enable_dpi_awareness() -> None:
 def main() -> None:
     if sys.platform == "win32":
         _enable_dpi_awareness()
+    if "--doctor" in sys.argv:
+        import doctor
+        sys.exit(doctor.main())
     if "--selftest" in sys.argv:
         sys.exit(selftest())
 
