@@ -170,6 +170,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the previous combination with a visible notification.
 
 ### Fixed
+- A fresh default install no longer refuses itself: the installer wrote
+  `install.log` into `%LOCALAPPDATA%\VibeForma\logs` before the target
+  preflight, so the empty-folder check saw a non-empty target. The log
+  opens after the preflight and buffers its first lines.
 - `--selftest` and `--doctor` find `test_ru.wav` in a fresh git checkout
   (the file sits at the repository root, not in `app/`); an installed copy
   is unchanged.

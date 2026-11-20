@@ -139,14 +139,24 @@ def log_path_default():
 
 
 class InstallLog:
-    """Console echo plus an append-only install log (no secrets, no audio)."""
+    """Console echo plus an append-only install log (no secrets, no audio).
+
+    The file opens on start(), not in __init__: the default log lives inside
+    the default target, and creating it before the preflight made a fresh
+    folder look non-empty. Lines written before start() are buffered.
+    """
 
     def __init__(self, path=None, persist=True):
         self.path = os.path.abspath(path or log_path_default())
         self.persist = persist
         self._handle = None
-        if not persist:
+        self._started = False
+        self._pending = []
+
+    def start(self):
+        if not self.persist or self._started:
             return
+        self._started = True
         try:
             folder = os.path.dirname(self.path)
             if folder:
@@ -155,9 +165,20 @@ class InstallLog:
             self._handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 - lives for the install
         except OSError:
             self._handle = None
+        pending, self._pending = self._pending, []
+        for message in pending:
+            self._emit(message)
 
     def write(self, message=""):
         say(message)
+        if not self.persist:
+            return
+        if not self._started:
+            self._pending.append(message)
+            return
+        self._emit(message)
+
+    def _emit(self, message):
         if self._handle is None:
             return
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
