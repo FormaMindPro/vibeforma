@@ -47,6 +47,11 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 
 (из `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
 
+**Вариант C — установщик Windows (без Python):** `VibeForma-Setup-<версия>.exe`
+из [Releases](../../releases) ставится для текущего пользователя: без прав
+администратора и без Python. SmartScreen, проверка подписи, папка данных и
+обновление — [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
+
 **Вариант A — релизный zip:** скачайте `VibeForma-<версия>.zip` в
 [Releases](../../releases), распакуйте, запустите `install.cmd`.
 
