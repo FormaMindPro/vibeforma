@@ -52,7 +52,7 @@ the model.
 
 Windows 10/11, Python 3.10+ (3.12+ recommended). With an NVIDIA GPU the
 recognition is fast (CUDA float16); without one the installer falls back to
-CPU (int8) — use the `small` model there.
+CPU (int8) and preselects the `small` model.
 
 **One command (PowerShell, Windows 10+):**
 
@@ -87,8 +87,25 @@ install.cmd
 The installer: copies `app/` to `%LOCALAPPDATA%\VibeForma` → creates a `.venv`
 → installs dependencies → downloads the model (the only network step; skipped
 if the model is already in the shared Hugging Face cache) → writes
-`config.json` → creates shortcuts (desktop + startup, branded icon) → starts
-the service.
+`config.json` → creates shortcuts (desktop, Start menu and startup, branded
+icon) → records the product in Settings > Apps → starts the service.
+
+Base dependencies only come from `app/requirements.txt`; the CUDA wheels
+(`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) are installed from
+`app/requirements-cuda.txt` only when CUDA is detected — a CPU install never
+downloads them. On CPU the dialog preselects the `small` model and
+`config.json` gets `device: "cpu"`, `compute_type: "int8"`; an existing
+config that still says `cuda` on a machine without CUDA is corrected (a
+console question on an interactive run, silence plus a log line when
+unattended). The recognition language preselects your Windows locale (`ru`
+on Russian Windows), `en` when the locale has no matching code; change it in
+the dialog or with `--language`.
+
+If the old `%LOCALAPPDATA%\WhisperDictation` folder is found, its
+`config.json` (with `hotwords`) and downloaded `models` are copied into the
+new install, and the old desktop/startup/Start menu shortcuts are removed —
+so two copies never autostart. The old folder itself is copied, not deleted:
+remove it after the new version starts cleanly.
 
 Before writing anything it checks Windows 10 build 1809+, x64/ARM64,
 Python 3.10–3.14, free space (model + 4 GB) and the target — an empty
@@ -107,11 +124,21 @@ Installer flags:
 | Flag | Meaning |
 | --- | --- |
 | `--model <name>` | model to install; without it a choice dialog shows (on an existing install the configured model is kept) |
+| `--language <code>` | recognition language; default: your Windows locale, `en` when it has no matching code |
 | `--target <folder>` | service folder (default `%LOCALAPPDATA%\VibeForma`) |
 | `--dry-run` | print the plan, execute nothing |
 | `--cpu` | force CPU (int8) even with CUDA present |
 | `--no-run` | don't launch the service at the end |
 | `--log <file>` | install log path (default `%LOCALAPPDATA%\VibeForma\logs\install.log`) |
+
+## Uninstall
+
+VibeForma is listed in **Settings > Apps** (per user, no admin rights).
+Uninstall it from there, or run `uninstall.cmd` in the service folder. The
+uninstaller removes the shortcuts, the startup entry, the Settings > Apps
+record and the service files. Models and `config.json` (with your `hotwords`)
+stay unless you pass `--remove-data`, so a reinstall can start offline.
+`--keep-data` skips the question and always keeps them.
 
 ## Models
 
@@ -145,7 +172,8 @@ share of non-scaling stages); the gap widens on longer audio.
 ## Languages
 
 - **Recognition**: pinned exactly — the model recognizes exactly the chosen
-  language (default `en`); switch in the tray or settings. No auto-detection:
+  language (default `en`; the installer preselects your Windows locale);
+  switch in the tray or settings. No auto-detection:
   what you set is what is recognized. A per-language prompt preset improves
   punctuation for the major languages; personal terms belong to
   `config.json → "hotwords"`.
@@ -218,8 +246,11 @@ app/
   i18n.py              UI strings loader (locales/*.json, en fallback)
   locales/             en.json, ru.json — drop a file to add a language
   assets/              icon.png, icon.ico
-  requirements.txt
+  requirements.txt     base dependencies (no CUDA wheels)
+  requirements-cuda.txt  base + CUDA wheels, used only on CUDA machines
   run.cmd              launcher: pythonw main.py | --selftest
+  uninstall.cmd        uninstaller entry point
+  uninstall.py         uninstaller (stdlib): shortcuts, Settings > Apps, files
 install.cmd            one-click installer
 install.py             installer (python, stdlib)
 ```

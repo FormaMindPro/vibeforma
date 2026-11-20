@@ -94,6 +94,7 @@
   "settings.autostart_w": "start the service when Windows starts",
   "settings.ram": "Service memory with model: {mb} MB",
   "settings.save": "Save",
+  "settings.version": "VibeForma {ver}",
   "settings.cancel": "Cancel",
   "tabs.record": "Recording",
   "tabs.model": "Model & language",

@@ -44,6 +44,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   CI, and fail closed when the signing secret is absent.
 - `test_ru.wav` is now part of the repository and the release; `install.py`
   copies it and gained `--selftest`.
+- **A CPU profile: the installer fits the machine.** Base dependencies come
+  from `app/requirements.txt`; the CUDA wheels (`nvidia-cublas-cu12`,
+  `nvidia-cudnn-cu12`) are installed from `app/requirements-cuda.txt` only
+  when CUDA is detected, so a CPU install no longer downloads them. On CPU
+  the dialog preselects the `small` model and `config.json` gets
+  `device: "cpu"`, `compute_type: "int8"`; an existing config that still
+  says `cuda` on a machine without CUDA is corrected. The recognition
+  language defaults to the Windows locale (`en` when no code matches) and
+  `--language` overrides it.
+- **Migration from WhisperDictation.** When the old
+  `%LOCALAPPDATA%\WhisperDictation` folder is found, its `config.json`
+  (with `hotwords`) and downloaded `models` are copied into the new install,
+  and its desktop/startup/Start menu shortcuts are removed, so two copies
+  never autostart. The old folder is copied, not deleted.
+- **Uninstall.** `uninstall.cmd` / `uninstall.py` (stdlib) remove the
+  shortcuts, the startup entry, the Settings > Apps record and the service
+  files; models and `config.json` are kept unless `--remove-data`, so a
+  reinstall starts offline. `Settings > Apps` and the Start menu now list
+  VibeForma; the version is shown in the settings window.
 
 ### Note
 - The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
@@ -71,6 +90,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New settings (System tab): ask on a focus change, exclude from the
   clipboard history, show the dictated text in notifications. Defaults keep
   the private behavior: ask, exclude, hide.
+- The service window and launcher are titled VibeForma instead of
+  WhisperDictation; shortcuts are created on the desktop, in the Start menu
+  and in startup.
 
 ### Security
 - **The log no longer names windows or quotes dictation.** The service used
