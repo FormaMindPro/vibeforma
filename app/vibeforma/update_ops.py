@@ -36,10 +36,30 @@ class UpdateActions(ServiceHost):
         self.log.info("New release %s found (current %s)", rel["tag"], VERSION)
         self.pending_update = rel
         if self.tray:
-            self.tray.notify(self.tr("notify.update_found", ver=rel["tag"]))
+            message = self.tr("notify.update_found", ver=rel["tag"])
+            excerpt = updater.changelog_excerpt(rel.get("body"))
+            if excerpt:
+                message += "\n" + excerpt
+            self.tray.notify(message)
         if (self.cfg.get("auto_update") == "auto"
                 and self.state == STATE_IDLE):
             self.apply_pending_update()
+
+    def open_release_notes(self) -> bool:
+        """Tray: what changed in the pending release, in the browser."""
+        import urllib.parse
+        import webbrowser
+
+        import updater
+
+        url = updater.release_notes_url(self.pending_update)
+        if not url:
+            return False
+        if urllib.parse.urlsplit(url).scheme != "https":
+            return False
+        self.log.info("Release notes opened: %s", url)
+        webbrowser.open(url)
+        return True
 
     def update_if_newer(self, notify_latest: bool = False) -> None:
         """Backward-compatible alias: a check never installs on its own."""
