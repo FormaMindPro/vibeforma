@@ -4,6 +4,7 @@ Hotkey -> mic recording -> local recognition (faster-whisper, ~99 languages)
 -> text inserted into the focused field (clipboard + Shift+Insert).
 Fully local: the network is used only for the first model download.
 """
+import ctypes
 import sys
 import os
 import subprocess
@@ -686,7 +687,24 @@ def selftest():
 
 
 # ---------------------------------------------------------------- main
+def _enable_dpi_awareness():
+    """Native rendering at any Windows scaling (150% default on laptops).
+
+    Without it Tk draws at 96 DPI and Windows stretches the window as a
+    bitmap — all text comes out blurry. Must run before the first window.
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def main():
+    if sys.platform == "win32":
+        _enable_dpi_awareness()
     if "--selftest" in sys.argv:
         sys.exit(selftest())
 
