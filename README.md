@@ -27,6 +27,9 @@ It finds Python, downloads the latest release, installs everything into
 model, shortcuts and a Settings > Apps entry) and starts the service. Press
 `Ctrl+Alt+Space` in any app and speak.
 
+The installer asks where to install: press Enter for
+`%LOCALAPPDATA%\VibeForma`, or type another folder such as `D:\VibeForma`.
+
 To launch it later: **Start menu → VibeForma**, the desktop shortcut, or
 `%LOCALAPPDATA%\VibeForma\run.cmd`. The service icon sits in the tray.
 
@@ -37,6 +40,8 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 ```
 
 - `-Model <name>` — install this model instead of showing the choice dialog
+- `-Target <folder>` — install folder without the question (default:
+  `%LOCALAPPDATA%\VibeForma`)
 - `-Cpu` — CPU only (int8), even when CUDA is present
 - `-DryRun` — print the plan and change nothing
 - `-NoRun` — do not launch the service at the end

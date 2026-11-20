@@ -15,6 +15,7 @@
 # an interactive run).
 param(
     [string]$Model = "",
+    [string]$Target = "",
     [switch]$NoRun,
     [switch]$Cpu,
     [switch]$DryRun
@@ -81,6 +82,7 @@ Write-Step "Running install.py from $srcPath"
 Push-Location $srcPath
 $installArgs = @("install.py")
 if ($Model -ne "") { $installArgs += @("--model", $Model) }
+if ($Target -ne "") { $installArgs += @("--target", $Target) }
 if ($Cpu) { $installArgs += "--cpu" }
 if ($DryRun) { $installArgs += "--dry-run" }
 if ($NoRun) { $installArgs += "--no-run" }
