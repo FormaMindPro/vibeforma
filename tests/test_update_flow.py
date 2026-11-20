@@ -6,8 +6,8 @@ import main
 import updater
 
 RELEASE = {
-    "tag": "v0.2.0",
-    "version": (0, 2, 0),
+    "tag": "v9.9.9",
+    "version": (9, 9, 9),
     "zip": "https://test/z",
     "manifest": "https://test/m",
     "signature": "https://test/s",
@@ -32,7 +32,7 @@ def test_notify_mode_only_records_the_pending_release(monkeypatch):
 
     svc.check_updates()
 
-    assert svc.pending_update["tag"] == "v0.2.0"
+    assert svc.pending_update["tag"] == "v9.9.9"
     assert not applied
 
 

@@ -3,7 +3,7 @@ import contextlib
 import json
 import os
 
-VERSION = "0.1.9"
+VERSION = "0.2.0"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Where the user's data lives. A source install keeps it beside the code; the
