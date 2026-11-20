@@ -51,6 +51,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `MINISIGN_SECRET_KEY` to the repository secrets. This is deliberate:
   no unsigned update is applied.
 
+### Changed
+- **Insertion knows its target and leaves your clipboard alone.** When the
+  window that was active at the hotkey press is no longer in front,
+  VibeForma no longer steals the focus: it asks "Paste into the current
+  window / Copy / Cancel" (30 s without an answer means Copy; without a
+  dialog the text is only copied). The previous clipboard is restored only
+  when `GetClipboardSequenceNumber` shows that nobody wrote to it in the
+  meantime — an empty clipboard is restored too (it used to be skipped) —
+  and the restore can be turned off in settings.
+- On Windows 10+ the dictated text is marked as excluded from the clipboard
+  history and cloud sync (`ExcludeClipboardContentFromMonitorProcessing`,
+  `CanIncludeInClipboardHistory=0`, `CanUploadToCloudClipboard=0`); the
+  settings note states that other clipboard managers may still keep it.
+- **Notifications no longer show the dictated text by default** — "Inserted,
+  N chars"; the phrase appears only with the new "show the dictated text in
+  notifications" opt-in. A tray message explains when the text was left in
+  the clipboard because the window changed.
+- New settings (System tab): ask on a focus change, exclude from the
+  clipboard history, show the dictated text in notifications. Defaults keep
+  the private behavior: ask, exclude, hide.
+
 ## 0.1.9 — 2026-11-20
 
 ### Fixed

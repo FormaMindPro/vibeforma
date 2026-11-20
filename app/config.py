@@ -56,6 +56,9 @@ DEFAULTS = {
     "beep_off": True,
     "restore_clipboard": True,
     "paste_method": "shift_insert",     # shift_insert | ctrl_v
+    "confirm_focus_change": True,       # ask where to paste if the window changed
+    "clipboard_exclude_history": True,  # keep the text out of history and cloud
+    "notify_text": False,               # show the phrase in notifications (opt-in)
     "autostart": True,
     "http_api": False,                  # optional: POST 127.0.0.1:8787/transcribe
     "http_port": 8787,

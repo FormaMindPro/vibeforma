@@ -295,6 +295,16 @@ class SettingsWindow:
             opt(f_sys, self.v_paste, ("shift_insert", "ctrl_v"), width=16))
         self.v_restore = tk.BooleanVar(value=bool(c.get("restore_clipboard", True)))
         self._bind(f_sys, self.v_restore, tr("settings.restore"))
+        self.v_confirm = tk.BooleanVar(
+            value=bool(c.get("confirm_focus_change", True)))
+        self._bind(f_sys, self.v_confirm, tr("settings.confirm_focus"))
+        self.v_exclude = tk.BooleanVar(
+            value=bool(c.get("clipboard_exclude_history", True)))
+        self._bind(f_sys, self.v_exclude, tr("settings.exclude_history"))
+        note(f_sys, tr("settings.note_exclude_history"))
+        self.v_notify_text = tk.BooleanVar(
+            value=bool(c.get("notify_text", False)))
+        self._bind(f_sys, self.v_notify_text, tr("settings.notify_text"))
         head(f_sys, tr("sys.g_startup"))
         self.v_hotkey = tk.StringVar(value=c.get("hotkey", "ctrl+alt+space"))
         row(f_sys, tr("settings.hotkey"),
@@ -396,6 +406,9 @@ class SettingsWindow:
             self.v_ui.get(), self.cfg.get("locale", "auto"))
         c["paste_method"] = self.v_paste.get()
         c["restore_clipboard"] = bool(self.v_restore.get())
+        c["confirm_focus_change"] = bool(self.v_confirm.get())
+        c["clipboard_exclude_history"] = bool(self.v_exclude.get())
+        c["notify_text"] = bool(self.v_notify_text.get())
         c["hud"] = bool(self.v_hud.get())
         c["hud_alpha"] = float(self.v_alpha.get())
         c["hud_autogrow"] = bool(self.v_autogrow.get())
