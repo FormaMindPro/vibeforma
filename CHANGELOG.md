@@ -3,7 +3,7 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 0.2.0 — 2026-11-20
 
 ### Added
 - **A support report and a troubleshooting guide.** `--doctor`
@@ -24,23 +24,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plain-text excerpt of the release notes, and the tray adds **What's new
   in …** that opens the https release page only. A release without a page
   keeps the plain notification.
-
-### Fixed
-- `--selftest` and `--doctor` find `test_ru.wav` in a fresh git checkout
-  (the file sits at the repository root, not in `app/`); an installed copy
-  is unchanged.
-- `install.py --dry-run` no longer creates `install.log` in the default
-  data folder: the plan is printed only, and a log is written only when
-  `--log` names a file (matching "execute nothing").
-
-### Changed
-- **The one-command install from GitHub is the main path.** The README and
-  `docs/INSTALL-WINDOWS.md` say so explicitly: the bootstrap command installs
-  the latest release into the user's Python environment, and the packed setup
-  is the optional path for machines without Python (no certificate or release
-  signing is required to distribute by the command).
-
-### Added
 - **A packed Windows setup, signed and fail-closed.** `tools/build_installer.py`
   builds a one-folder PyInstaller application (no Python on the target) and a
   per-user Inno Setup installer: English or Russian wizard, Start menu, an
@@ -140,13 +123,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the wizard reopens from the tray and from Settings > System, and the new
   `onboarding_done` flag (default `false`) remembers that it ran.
 
-### Note
-- The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
-  empty), so real updates are refused until a maintainer adds the public key
-  and `MINISIGN_SECRET_KEY` to the repository secrets. This is deliberate:
-  no unsigned update is applied.
-
 ### Changed
+- **The one-command install from GitHub is the main path.** The README and
+  `docs/INSTALL-WINDOWS.md` say so explicitly: the bootstrap command installs
+  the latest release into the user's Python environment, and the packed setup
+  is the optional path for machines without Python (no certificate or release
+  signing is required to distribute by the command).
 - **Code hygiene: the service package, typed modules, blocked lint, pinned
   dependencies.** `app/main.py` is a 46-line entry shim over the new
   `vibeforma` package (`service`, `actions`, `settings_ops`, `update_ops`,
@@ -187,6 +169,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   starts the new listener before the old one stops, and a failed start keeps
   the previous combination with a visible notification.
 
+### Fixed
+- `--selftest` and `--doctor` find `test_ru.wav` in a fresh git checkout
+  (the file sits at the repository root, not in `app/`); an installed copy
+  is unchanged.
+- `install.py --dry-run` no longer creates `install.log` in the default
+  data folder: the plan is printed only, and a log is written only when
+  `--log` names a file (matching "execute nothing").
+
 ### Security
 - **The log no longer names windows or quotes dictation.** The service used
   to write the paste target's window title at recording start and after each
@@ -203,6 +193,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   text are hidden, the mic level stays, and the status line disappears 30 s
   after it was set. `hud_privacy: true` starts the panel in this mode.
 - README (en/ru) gained "What stays on disk" and the HTTP API contract.
+
+### Note
+- The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
+  empty), so real updates are refused until a maintainer adds the public key
+  and `MINISIGN_SECRET_KEY` to the repository secrets. This is deliberate:
+  no unsigned update is applied.
+
 
 ## 0.1.9 — 2026-11-20
 

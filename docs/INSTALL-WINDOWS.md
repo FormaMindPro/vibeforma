@@ -39,7 +39,7 @@ publisher name and makes the file verifiable.
 Check the signature before installing (PowerShell):
 
 ```powershell
-Get-AuthenticodeSignature .\VibeForma-Setup-0.1.9.exe | Format-List Status, StatusMessage, SignerCertificate
+Get-AuthenticodeSignature .\VibeForma-Setup-0.2.0.exe | Format-List Status, StatusMessage, SignerCertificate
 ```
 
 `Status: Valid` and a `SignerCertificate` issued to the publisher mean the
