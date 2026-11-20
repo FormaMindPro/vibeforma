@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## Unreleased
 
 ### Added
+- **A packed Windows setup, signed and fail-closed.** `tools/build_installer.py`
+  builds a one-folder PyInstaller application (no Python on the target) and a
+  per-user Inno Setup installer: English or Russian wizard, Start menu, an
+  optional desktop shortcut and logon start, an in-place upgrade and an
+  uninstaller that keeps settings and models unless asked. The packed app
+  keeps user data in `%LOCALAPPDATA%\VibeForma`, so an upgrade replaces the
+  program only; a packed installation upgrades through the next signed setup
+  (or winget) and the zip updater refuses instead of touching its own files.
+  The build runs the exe's own `--bundle-check`, signs with signtool when
+  `VIBEFORMA_CERT_*` is set and stops instead of shipping an unsigned file;
+  the release workflow builds and signs the setup and adds its hash to the
+  signed release manifest. `--winget` writes the four winget manifests with
+  the real hash. `docs/INSTALL-WINDOWS.md` covers SmartScreen, signature
+  verification, the data folder and upgrades.
 - **An error catalog, a Russian installer, calmer settings.** Every UI
   error — microphone, model download or load, recognition, a bad dictionary
   file — now comes from `app/errors.py`: a plain message plus a next action,

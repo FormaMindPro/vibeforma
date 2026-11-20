@@ -1,0 +1,3 @@
+-r requirements-dev.txt
+# Packed-build toolchain (tools/build_installer.py); not needed for tests.
+pyinstaller==6.22.3

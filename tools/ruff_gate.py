@@ -16,7 +16,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SELECT = "E4,E7,E9,F,B,SIM,UP,I,S,BLE,RUF100"
 TARGETS = ["app", "install.py", "install_core.py", "install_env.py",
-           "install_steps.py", "install_system.py", "tests", "tools"]
+           "install_steps.py", "install_system.py", "packaging", "tests",
+           "tools"]
 
 
 def main():

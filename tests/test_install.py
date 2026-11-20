@@ -56,6 +56,7 @@ def test_install_uses_the_substituted_subprocess(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(install.subprocess, "run", fake_run)
+    monkeypatch.setattr(install, "write_uninstall_entry", lambda *a, **k: True)
     monkeypatch.setattr(sys, "argv", [
         "install.py", "--model", "small", "--target", str(target),
         "--no-run", "--log", str(tmp_path / "install.log")])
@@ -82,6 +83,7 @@ def test_selftest_flag_runs_the_service_gate(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(install.subprocess, "run", fake_run)
+    monkeypatch.setattr(install, "write_uninstall_entry", lambda *a, **k: True)
     monkeypatch.setattr(sys, "argv", [
         "install.py", "--model", "small", "--target", str(target),
         "--no-run", "--selftest", "--log", str(tmp_path / "install.log")])
