@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## Unreleased
 
 ### Added
+- **The installer is a transaction.** Before writing anything it checks
+  Windows 10 build 1809+, x64/ARM64, Python 3.10–3.14, free space
+  (model + 4 GB) and the target folder (empty, an existing install, or a
+  folder marked by `.vibeforma-install.json`). System folders, Program
+  Files, drive roots and the profile root are refused. The first failed
+  step stops the chain — no shortcuts, no config, no launch; a failed first
+  install removes its folder, an existing install is restored from a
+  backup. Every step, command and error tail goes to `install.log`
+  (`%LOCALAPPDATA%\VibeForma\logs`, `--log` overrides), and the console
+  prints the path. A rerun continues from the failed step, reusing the
+  venv, model and config already in place.
+- `install.ps1` installs a released build only: without a release zip it
+  stops with an explanation instead of falling back to the main branch.
 - **CI and a test suite.** GitHub Actions runs the tests on Windows and the
   platform-independent subset on Ubuntu (`-m "not windows"`), plus a ruff
   gate. The 34 tests need no model, GPU or network: config load/save and

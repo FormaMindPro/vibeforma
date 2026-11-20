@@ -58,7 +58,9 @@ irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | 
 
 The bootstrap downloads the latest release, unpacks it and runs the
 installer — everything else (venv, dependencies, model, shortcuts) happens
-automatically. Without `-Model` the model is chosen in a small dialog during
+automatically. It installs a released build only: when no release zip is
+available it stops and explains why instead of falling back to the main
+branch. Without `-Model` the model is chosen in a small dialog during
 install. With options:
 
 ```powershell
@@ -84,6 +86,18 @@ if the model is already in the shared Hugging Face cache) → writes
 `config.json` → creates shortcuts (desktop + startup, branded icon) → starts
 the service.
 
+Before writing anything it checks Windows 10 build 1809+, x64/ARM64,
+Python 3.10–3.14, free space (model + 4 GB) and the target — an empty
+folder, an existing VibeForma install, or a folder marked by
+`.vibeforma-install.json` from a previous run.
+System folders, Program Files, drive roots and the profile root are refused.
+The first failed step stops the chain: no shortcuts, no config, no launch.
+A failed first install removes its folder; an existing install is restored
+from a backup. `install.log` (default `%LOCALAPPDATA%\VibeForma\logs`,
+override with `--log`) records every step, command and error tail, and the
+console prints its path. Re-running continues from the failed step — the
+venv, model and config already in place are reused.
+
 Installer flags:
 
 | Flag | Meaning |
@@ -93,6 +107,7 @@ Installer flags:
 | `--dry-run` | print the plan, execute nothing |
 | `--cpu` | force CPU (int8) even with CUDA present |
 | `--no-run` | don't launch the service at the end |
+| `--log <file>` | install log path (default `%LOCALAPPDATA%\VibeForma\logs\install.log`) |
 
 ## Models
 
