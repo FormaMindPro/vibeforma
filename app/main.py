@@ -503,6 +503,7 @@ class Service:
     def _restart_after_update(self, tag):
         if self.tray:
             self.tray.notify(self.tr("notify.updated_restart", ver=tag))
+        self.log.info("Restarting service after update to %s", tag)
 
         def _spawn():
             time.sleep(2.0)
@@ -511,7 +512,9 @@ class Service:
             except Exception:
                 self.log.exception("Restart after update failed")
 
-        threading.Thread(target=_spawn, daemon=True).start()
+        # non-daemon: the interpreter waits for it, so startfile really runs
+        # even though shutdown() tears the service down right away
+        threading.Thread(target=_spawn, daemon=False).start()
         time.sleep(0.5)
         self.shutdown()
 

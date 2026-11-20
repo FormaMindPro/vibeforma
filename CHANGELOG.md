@@ -3,6 +3,15 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.6 — 2026-11-20
+
+### Fixed
+- **Auto-update restart actually restarts.** The first real update cycle
+  (0.1.4 → 0.1.5) applied fine but the process exited before the delayed
+  relaunch fired — the relaunch thread was a daemon and died with the
+  process. It is non-daemon now, so `run.cmd` really starts the updated
+  service.
+
 ## 0.1.5 — 2026-11-20
 
 ### Fixed
