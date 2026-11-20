@@ -3,6 +3,22 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.9 — 2026-11-20
+
+### Fixed
+- **The monitoring panel keeps its size at any display scaling** — its
+  pixel geometry (width, height, paddings, level bar) scales with the DPI
+  factor like the rest of the UI (at 150% it had shrunk 1.5×).
+
+### Added
+- **A record button on the panel** (🎤 / ⏹ while recording): clicking it
+  starts and stops dictation — the same state-guarded toggle as the hotkey.
+
+### Fixed
+- The status line shows the actual hotkey ("Готов — Ctrl+Alt+Space")
+  instead of the raw "{hotkey}" placeholder — in the panel and the tray
+  tooltip alike.
+
 ## 0.1.8 — 2026-11-20
 
 ### Fixed
