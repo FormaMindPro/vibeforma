@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
 import time
 
@@ -102,17 +103,22 @@ class UpdateActions(ServiceHost):
             time.sleep(2.0)   # let the old window/tray settle
             try:
                 # detached pythonw: os.startfile proved a silent no-op in
-                # non-interactive contexts, cmd-start flashes a console
-                pythonw = os.path.join(SERVICE_DIR, ".venv", "Scripts",
-                                       "pythonw.exe")
-                subprocess.Popen(  # noqa: S603 - a fixed interpreter path, no user input
-                    [pythonw, os.path.join(SERVICE_DIR, "main.py")],
+                # non-interactive contexts, cmd-start flashes a console.
+                # A packed build has no interpreter: the exe restarts itself.
+                if getattr(sys, "frozen", False):
+                    command = [sys.executable]
+                else:
+                    command = [os.path.join(SERVICE_DIR, ".venv", "Scripts",
+                                            "pythonw.exe"),
+                               os.path.join(SERVICE_DIR, "main.py")]
+                subprocess.Popen(  # noqa: S603 - fixed paths, no user input
+                    command,
                     cwd=SERVICE_DIR,
                     creationflags=subprocess.DETACHED_PROCESS
                     | subprocess.CREATE_NEW_PROCESS_GROUP,
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL)
-                self.log.info("Relaunch spawned: %s", pythonw)
+                self.log.info("Relaunch spawned: %s", command[0])
             except OSError:
                 self.log.exception("Restart after update failed")
 
