@@ -8,6 +8,8 @@
   "states.updating": "Обновление…",
   "tray.settings": "Настройки…",
   "tray.onboarding": "Помощник настройки…",
+  "tray.diagnostics": "Диагностика…",
+  "tray.release_notes": "Что нового в {ver}…",
   "tray.update_to": "Обновить до {ver}",
   "tray.update_later": "Позже",
   "tray.restart_update": "Перезапустить для завершения",
@@ -208,5 +210,11 @@
   "errors.recognition.failed.action": "Продиктуйте ещё раз; если повторяется — откройте папку логов в трее.",
   "errors.file.read.text": "Не удалось прочитать файл.",
   "errors.file.read.action": "Проверьте, что файл существует и это JSON со списком терминов.",
-  "settings.save_failed": "Не удалось сохранить настройки — подробности в логе"
+  "settings.save_failed": "Не удалось сохранить настройки — подробности в логе",
+  "doctor.button": "Диагностика…",
+  "doctor.title": "Диагностика VibeForma",
+  "doctor.copy": "Скопировать отчёт",
+  "doctor.close": "Закрыть",
+  "doctor.copied": "Отчёт скопирован в буфер обмена",
+  "doctor.note": "В отчёте нет текста диктовки и заголовков окон."
 }

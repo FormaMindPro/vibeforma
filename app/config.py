@@ -13,7 +13,22 @@ DATA_DIR = os.environ.get("VIBEFORMA_DATA_DIR") or SERVICE_DIR
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "service.log")
-TEST_WAV = os.path.join(SERVICE_DIR, "test_ru.wav")
+
+
+def _test_wav_path():
+    """The self-test WAV beside the service, or at the repository root.
+
+    An installed copy keeps app/test_ru.wav; a fresh git checkout keeps the
+    file at the root, so --selftest works there too.
+    """
+    beside = os.path.join(SERVICE_DIR, "test_ru.wav")
+    if os.path.isfile(beside):
+        return beside
+    parent = os.path.join(os.path.dirname(SERVICE_DIR), "test_ru.wav")
+    return parent if os.path.isfile(parent) else beside
+
+
+TEST_WAV = _test_wav_path()
 LOCK_PATH = os.path.join(DATA_DIR, "service.lock")
 MODELS_DIR = os.path.join(DATA_DIR, "models")   # models live in the data folder
 

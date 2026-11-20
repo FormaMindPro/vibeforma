@@ -18,6 +18,10 @@ class SettingsOps(ServiceHost):
         self.live["settings_tab"] = tab
         self.live["open_settings"] = True
 
+    def open_doctor(self) -> None:
+        """Tray request: the HUD opens the support report window."""
+        self.live["open_doctor"] = True
+
     def apply_settings(self, new_cfg: dict[str, Any]) -> None:
         """Save and apply to the live service; called from the HUD thread."""
         old_hotkey = self.cfg.get("hotkey")
