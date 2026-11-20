@@ -1,0 +1,25 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".venv", "models", "logs", "docs"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "SIM", "UP", "I", "S", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"tools/*" = ["S603"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "windows: requires Windows APIs or the Windows installer path",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/asr.py", "app/audio.py"]
+
+[tool.coverage.report]
+skip_empty = true

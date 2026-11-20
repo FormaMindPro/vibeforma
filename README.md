@@ -9,6 +9,7 @@ and understands **~99 languages** — the same downloaded model serves them all.
 Nothing leaves your computer; the network is used exactly once, to download
 the model.
 
+[![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Features
@@ -186,6 +187,22 @@ install.py             installer (python, stdlib)
   dictating.
 - **Russian layout and Ctrl+V** — pasting defaults to Shift+Insert, which is
   layout-independent; switchable in settings.
+
+## Development
+
+The test suite runs without the model, a GPU or the network. Windows CI runs
+the full suite; Linux CI runs the platform-independent tests (`-m "not windows"`).
+
+```bat
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python tools\ruff_gate.py
+```
+
+`tools/ruff_gate.py` compares `ruff` output with `tools/ruff-baseline.json`:
+the 164 findings recorded in 0.1.9 are a ceiling, and any new finding fails
+the gate. Fixing the recorded ones is a separate cleanup task.
 
 ## Reviewing the code with an AI assistant
 
