@@ -131,6 +131,17 @@ Installer flags:
 | `--no-run` | don't launch the service at the end |
 | `--log <file>` | install log path (default `%LOCALAPPDATA%\VibeForma\logs\install.log`) |
 
+## First run
+
+The first launch opens a three-step wizard. Step 1 picks the interface and
+recognition language. Step 2 picks the microphone: the level moves as it
+hears you, and "Test microphone" makes a short recording and shows the
+recognized text — nothing is inserted. Step 3 records the hotkey by pressing
+it: modifiers alone are refused, and a combination Windows already uses is
+only a warning. "Skip" writes the safe defaults. Reopen the wizard from the
+tray ("Setup wizard…") or from Settings > System; `onboarding_done` in
+`config.json` remembers that it ran.
+
 ## Uninstall
 
 VibeForma is listed in **Settings > Apps** (per user, no admin rights).

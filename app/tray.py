@@ -56,6 +56,9 @@ class Tray:
                 pystray.MenuItem(
                     lambda item: service.tr("tray.settings"), self._on_settings),
                 pystray.MenuItem(
+                    lambda item: service.tr("tray.onboarding"),
+                    lambda *a: service.open_onboarding()),
+                pystray.MenuItem(
                     lambda item: service.tr(
                         "tray.update_to", ver=service.pending_update["tag"]),
                     lambda *a: service.apply_pending_update(),

@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import i18n
+import onboarding
 from config import LANG_NAMES, LANGS, MODELS, MODEL_GB, VERSION
 
 BG = "#16181D"
@@ -317,6 +318,11 @@ class SettingsWindow:
             opt(f_sys, self.v_device, devices, width=30))
         self.v_autostart = tk.BooleanVar(value=bool(c.get("autostart", True)))
         self._bind(f_sys, self.v_autostart, tr("settings.autostart_w"))
+        btn_setup = tk.Button(f_sys, text=tr("settings.onboarding"),
+                              command=self.svc.open_onboarding, width=22,
+                              bg="#22262E", fg=FG, relief="flat",
+                              activebackground="#2A2F38", cursor="hand2")
+        full(f_sys, btn_setup)
         head(f_sys, tr("updates.g"))
         self.v_upd = tk.BooleanVar(value=bool(c.get("update_check", True)))
         self._bind(f_sys, self.v_upd, tr("updates.auto"))
@@ -415,7 +421,16 @@ class SettingsWindow:
         c["hud"] = bool(self.v_hud.get())
         c["hud_alpha"] = float(self.v_alpha.get())
         c["hud_autogrow"] = bool(self.v_autogrow.get())
-        c["hotkey"] = self.v_hotkey.get().strip() or c.get("hotkey", "ctrl+alt+space")
+        hotkey = onboarding.normalize_hotkey(
+            self.v_hotkey.get().strip() or c.get("hotkey", "ctrl+alt+space"))
+        ok, code, _warning = onboarding.validate_hotkey(hotkey)
+        if not ok:
+            from tkinter import messagebox
+            messagebox.showwarning(self.tr("settings.hotkey"),
+                                   self.tr("onboarding.hotkey_" + code),
+                                   parent=self.win)
+            return
+        c["hotkey"] = hotkey
         c["input_device"] = self.v_device.get().strip() or c.get("input_device", "")
         c["autostart"] = bool(self.v_autostart.get())
         c["update_check"] = bool(self.v_upd.get())
