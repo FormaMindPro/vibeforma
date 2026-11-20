@@ -1,9 +1,11 @@
 # Installing VibeForma on Windows
 
 > The main install path is the one-command bootstrap from the README
-> (`irm .../install.ps1 | iex`): it downloads the latest release and runs
-> the installer in your Python environment. This page covers the optional
-> packed setup — the same app without Python.
+> ([Quick start](../README.md#quick-start), `irm .../install.ps1 | iex`): it
+> downloads the latest release and runs the source installer in your Python
+> environment (`install.py --help` lists its flags: `--model`, `--language`,
+> `--target`, `--dry-run`, `--no-run`, `--selftest`, `--cpu`, `--log`). This
+> page covers the optional packed setup — the same app without Python.
 
 The Windows setup installs the app for the current user: no administrator
 rights, no Python, no build tools. Recognition models are downloaded on the
@@ -39,7 +41,8 @@ publisher name and makes the file verifiable.
 Check the signature before installing (PowerShell):
 
 ```powershell
-Get-AuthenticodeSignature .\VibeForma-Setup-0.2.0.exe | Format-List Status, StatusMessage, SignerCertificate
+# substitute the file you downloaded for <version>
+Get-AuthenticodeSignature .\VibeForma-Setup-<version>.exe | Format-List Status, StatusMessage, SignerCertificate
 ```
 
 `Status: Valid` and a `SignerCertificate` issued to the publisher mean the

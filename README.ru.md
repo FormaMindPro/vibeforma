@@ -14,6 +14,38 @@
 
 > Это русская копия [README.md](README.md); в ней описано то же самое.
 
+## Быстрый старт
+
+Windows 10/11 x64, Python 3.10+ в `PATH`. Одна команда в PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
+```
+
+Она находит Python, скачивает последний релиз, ставит всё в
+`%LOCALAPPDATA%\VibeForma` (своё окружение `.venv`, зависимости, модель
+распознавания, ярлыки и запись в «Параметры → Приложения») и запускает
+сервис. Нажмите `Ctrl+Alt+Space` в любом приложении и говорите.
+
+Параметры передаются после блока скрипта:
+
+```powershell
+iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
+```
+
+- `-Model <имя>` — поставить эту модель вместо диалога выбора
+- `-Cpu` — только CPU (int8), даже если есть CUDA
+- `-DryRun` — показать план и ничего не менять
+- `-NoRun` — не запускать сервис в конце
+
+Из `cmd.exe`:
+`powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`
+
+Bootstrap ставит только выпущенные сборки: если zip релиза скачать не
+удалось, он останавливается с причиной и не подменяет релиз веткой main.
+Остальные способы установки (установщик без Python, релизный zip, git),
+все флаги и удаление — раздел [«Установка»](#установка).
+
 ## Возможности
 
 - Хоткей `Ctrl+Alt+Space` (меняется в настройках): говорите — фраза закрывается по паузе в тишине или повторным нажатием
@@ -47,17 +79,17 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 
 (из `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
 
-**Вариант C — установщик Windows (без Python, опционально):** основной путь —
+**Вариант A — установщик Windows (без Python, опционально):** основной путь —
 команда выше, но ей нужен Python. Если Python не подходит,
 `VibeForma-Setup-<версия>.exe` из [Releases](../../releases) ставит
 упакованное приложение для текущего пользователя: без прав администратора и
 без Python. SmartScreen, проверка подписи, папка данных и обновление —
 [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
 
-**Вариант A — релизный zip:** скачайте `VibeForma-<версия>.zip` в
+**Вариант B — релизный zip:** скачайте `VibeForma-<версия>.zip` в
 [Releases](../../releases), распакуйте, запустите `install.cmd`.
 
-**Вариант B — git:**
+**Вариант C — git:**
 
 ```bat
 git clone https://github.com/FormaMindPro/vibeforma.git

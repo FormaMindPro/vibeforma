@@ -12,6 +12,38 @@ the model.
 [![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+## Quick start
+
+Windows 10/11 x64, Python 3.10+ on `PATH`. One command in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
+```
+
+It finds Python, downloads the latest release, installs everything into
+`%LOCALAPPDATA%\VibeForma` (its own `.venv`, the dependencies, the speech
+model, shortcuts and a Settings > Apps entry) and starts the service. Press
+`Ctrl+Alt+Space` in any app and speak.
+
+Options go after the script block:
+
+```powershell
+iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
+```
+
+- `-Model <name>` — install this model instead of showing the choice dialog
+- `-Cpu` — CPU only (int8), even when CUDA is present
+- `-DryRun` — print the plan and change nothing
+- `-NoRun` — do not launch the service at the end
+
+From `cmd.exe`:
+`powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`
+
+The bootstrap installs released builds only: when no release zip can be
+downloaded it stops with the reason and never falls back to the main branch.
+Other ways to install (the setup without Python, a release zip, a git
+clone), every flag and uninstall — [Install](#install).
+
 ## Features
 
 - Hotkey `Ctrl+Alt+Space` (remappable): start speaking, the phrase closes on a
@@ -84,17 +116,17 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 
 (from `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
 
-**Option C — Windows setup (no Python, optional):** the one-command install
+**Option A — Windows setup (no Python, optional):** the one-command install
 above is the main path, but it needs Python. If Python is not an option,
 `VibeForma-Setup-<version>.exe` from [Releases](../../releases) installs the
 packed app for the current user: no administrator rights, no Python.
 SmartScreen, signature verification, the data folder and upgrades —
 [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
 
-**Option A — release zip:** grab `VibeForma-<version>.zip` from
+**Option B — release zip:** grab `VibeForma-<version>.zip` from
 [Releases](../../releases), unzip, double-click `install.cmd`.
 
-**Option B — git:**
+**Option C — git:**
 
 ```bat
 git clone https://github.com/FormaMindPro/vibeforma.git
