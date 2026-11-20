@@ -5,7 +5,9 @@
 > downloads the latest release and runs the source installer in your Python
 > environment (`install.py --help` lists its flags: `--model`, `--language`,
 > `--target`, `--dry-run`, `--no-run`, `--selftest`, `--cpu`, `--log`). This
-> page covers the optional packed setup — the same app without Python.
+> page covers the optional packed setup — the same app without Python. The
+> setup appears in a release once the signing certificate is configured;
+> until then a release ships the source zip only.
 
 The Windows setup installs the app for the current user: no administrator
 rights, no Python, no build tools. Recognition models are downloaded on the
