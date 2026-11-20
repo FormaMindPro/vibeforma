@@ -225,7 +225,8 @@ def test_python_version_gate():
             install.check_python_version(version)
 
 
-def test_windows_build_gate():
+def test_windows_build_gate(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     assert install.check_windows(build=install.WINDOWS_MIN_BUILD)
     with pytest.raises(install.InstallError, match="build"):
         install.check_windows(build=install.WINDOWS_MIN_BUILD - 1)
