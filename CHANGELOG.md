@@ -170,6 +170,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the previous combination with a visible notification.
 
 ### Fixed
+- The monitoring panel no longer stretches during dictation. Its height is
+  computed from the base on every change (it used to be recomputed from the
+  previous, already grown height, so the panel ratcheted taller and crawled
+  past the screen edge); it now follows the text the widget actually shows,
+  keeps its bottom edge in place and returns to the base size when the text
+  is short.
 - A fresh default install no longer refuses itself: the installer wrote
   `install.log` into `%LOCALAPPDATA%\VibeForma\logs` before the target
   preflight, so the empty-folder check saw a non-empty target. The log
