@@ -506,14 +506,25 @@ class Service:
         self.log.info("Restarting service after update to %s", tag)
 
         def _spawn():
-            time.sleep(2.0)
+            time.sleep(2.0)   # let the old window/tray settle
             try:
-                os.startfile(os.path.join(SERVICE_DIR, "run.cmd"))
+                # detached pythonw: os.startfile proved a silent no-op in
+                # non-interactive contexts, cmd-start flashes a console
+                pythonw = os.path.join(SERVICE_DIR, ".venv", "Scripts",
+                                       "pythonw.exe")
+                subprocess.Popen(
+                    [pythonw, os.path.join(SERVICE_DIR, "main.py")],
+                    cwd=SERVICE_DIR,
+                    creationflags=subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL)
+                self.log.info("Relaunch spawned: %s", pythonw)
             except Exception:
                 self.log.exception("Restart after update failed")
 
-        # non-daemon: the interpreter waits for it, so startfile really runs
-        # even though shutdown() tears the service down right away
+        # non-daemon: the interpreter waits for it, so the relaunch really
+        # runs even though shutdown() tears the service down right away
         threading.Thread(target=_spawn, daemon=False).start()
         time.sleep(0.5)
         self.shutdown()
