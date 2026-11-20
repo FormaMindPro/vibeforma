@@ -2,7 +2,7 @@
 import json
 import os
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SERVICE_DIR, "config.json")

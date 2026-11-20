@@ -3,6 +3,16 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.7 — 2026-11-20
+
+### Fixed
+- **The relaunch after an update now really starts.** Even with the
+  non-daemon spawner (0.1.6), `os.startfile("run.cmd")` turned out to be a
+  silent no-op in some session contexts. The service now relaunches itself
+  as a detached `pythonw` process directly — no `.cmd` wrapper, no flashing
+  console. Proven end-to-end in a sandbox: an old install finds the release,
+  applies it and comes back up on the new version by itself.
+
 ## 0.1.6 — 2026-11-20
 
 ### Fixed
