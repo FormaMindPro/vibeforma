@@ -30,15 +30,24 @@ the model.
   Windows 10+ the dictated text is kept out of the clipboard history and
   cloud sync
 - Settings window, organized in tabs (Recording / Model & language /
-  Appearance / System): silence pause, streaming interval, max recording
-  length, panel transparency, autogrow, sounds, hotkey, input device,
-  autostart — all applied live, no restart
+  Dictionary / History / Appearance / System): silence pause, streaming
+  interval, max recording length, panel transparency, autogrow, sounds,
+  hotkey, input device, autostart — all applied live, no restart
+- **Dictionary**: terms are added to the recognition prompt, replacements are
+  applied to the recognized text (case-insensitive, the longest term wins);
+  import/export as JSON and a preview that shows exactly what a sample text
+  becomes
+- **History (off by default)**: the last 100 dictations stay on this computer
+  in `history.jsonl`, with copy, paste again, delete and clear. Turning it off
+  deletes the file; the dictated text never goes to the log. "Undo last
+  insert" sends Ctrl+Z only to the same window within 30 s, otherwise it warns
+  instead; "Restore clipboard" puts the pre-dictation clipboard back
 - Models: pick one during install (a choice dialog with sizes and blurbs),
   then switch anytime in settings or the tray menu — the new model downloads
   first, the service reloads without a restart, and the previous model is
   kept on disk or deleted, at your choice; a failed download rolls back
 - Tray menu: pause, input device, model switch without restart, recognition
-  language, logs folder
+  language, history and "undo last insert", logs folder
 - Auto-update: the service checks GitHub releases in the background (default
   every 2 h; the interval and the on/off switch live in settings, plus a
   "Check now" button). A newer release is offered, not forced: the tray shows
