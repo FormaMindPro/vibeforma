@@ -9,6 +9,8 @@ and understands **~99 languages** — the same downloaded model serves them all.
 Nothing leaves your computer; the network is used exactly once, to download
 the model.
 
+Русская версия этого описания: [README.ru.md](README.ru.md).
+
 [![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -24,6 +26,9 @@ It finds Python, downloads the latest release, installs everything into
 `%LOCALAPPDATA%\VibeForma` (its own `.venv`, the dependencies, the speech
 model, shortcuts and a Settings > Apps entry) and starts the service. Press
 `Ctrl+Alt+Space` in any app and speak.
+
+To launch it later: **Start menu → VibeForma**, the desktop shortcut, or
+`%LOCALAPPDATA%\VibeForma\run.cmd`. The service icon sits in the tray.
 
 Options go after the script block:
 
