@@ -29,6 +29,12 @@ class Key:
     ctrl = "ctrl"
 
 
+class KeyCode:
+    @staticmethod
+    def from_vk(vk):
+        return ("vk", vk)
+
+
 class Controller:
     last = None
 
@@ -61,6 +67,7 @@ class _Pressed:
 
 
 keyboard.Key = Key
+keyboard.KeyCode = KeyCode
 keyboard.Controller = Controller
 pynput = types.ModuleType("pynput")
 pynput.keyboard = keyboard
@@ -301,3 +308,38 @@ def test_window_title_is_logged_on_opt_in():
                        log_title=True)
 
     assert log.lines == ["Pasted 5 chars — window: editor"]
+
+
+def test_undo_state_receives_the_previous_clipboard():
+    state = {}
+
+    insert.insert_text("hello", restore_clipboard=False, undo_state=state)
+
+    assert state == {"prev": "old", "prev_known": True}
+
+
+def test_undo_state_marks_an_unreadable_clipboard(monkeypatch):
+    def broken_paste():
+        raise OSError("clipboard busy")
+
+    monkeypatch.setattr(pyperclip, "paste", broken_paste)
+    state = {}
+
+    insert.insert_text("hello", restore_clipboard=False, undo_state=state)
+
+    assert state == {"prev": None, "prev_known": False}
+
+
+def test_send_undo_presses_the_physical_z_key():
+    insert.send_undo()
+
+    assert Controller.last.events == [
+        ("press", "ctrl"), ("press", ("vk", insert.UNDO_VK)),
+        ("release", ("vk", insert.UNDO_VK)), ("release", "ctrl"),
+    ]
+
+
+def test_copy_text_writes_the_clipboard():
+    insert.copy_text("hello")
+
+    assert pyperclip.clip == "hello"

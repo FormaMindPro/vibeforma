@@ -15,6 +15,8 @@ import time
 from config import (CONFIG_PATH, LOCK_PATH, LOG_DIR, LOG_PATH,
                     SERVICE_DIR, TEST_WAV, VERSION, find_input_device,
                     input_device_names, load, save)
+import dictionary
+import history
 
 STATE_LOADING = "loading"
 STATE_IDLE = "idle"
@@ -168,6 +170,9 @@ class Service:
         self._test_mode = False
         self.pending_update = None
         self.restart_pending = None
+        self.history = history.History(history.history_path(SERVICE_DIR))
+        self._last_insert = None
+        self._target_title = ""
         # shared live view for the HUD (written by worker threads, read by GUI)
         self.live = {
             "state": STATE_LOADING,
@@ -180,6 +185,8 @@ class Service:
             "exit": False,
             "privacy": bool(self.cfg.get("hud_privacy", False)),
             "open_onboarding": False,
+            "open_settings": False,
+            "settings_tab": None,
             "test_text": "",
             "test_state": "",
         }
@@ -249,9 +256,12 @@ class Service:
         self._partial_busy = False
         import insert as insert_mod
         self._target_hwnd = insert_mod.get_foreground_hwnd()
+        title_wanted = (self.cfg.get("log_window_titles", False)
+                        or self.cfg.get("history_app", False))
+        self._target_title = insert_mod.foreground_window() if title_wanted else ""
         if self.cfg.get("log_window_titles", False):
             self.log.info("Paste target window: %s (hwnd=%s)",
-                          insert_mod.foreground_window(), self._target_hwnd)
+                          self._target_title, self._target_hwnd)
         else:
             self.log.info("Paste target window: hwnd=%s", self._target_hwnd)
         self.recorder = self._make_recorder()
@@ -324,6 +334,9 @@ class Service:
             text = self.asr.transcribe(buf)
             dt = time.time() - t0
             self.log.info("Latency to ready text: %.2f s", dt)
+            text, hits = dictionary.apply(text, self.cfg.get("dictionary"))
+            if hits:
+                self.log.info("Dictionary: %d replacement(s)", hits)
             if self._test_mode:
                 # Onboarding check: show the text, never insert it.
                 self.log.info("Microphone test: %d chars (not inserted)",
@@ -339,6 +352,7 @@ class Service:
                     self.tray.notify(self.tr("notify.not_recognized_short"))
                 return
             import insert as insert_mod
+            undo_state = {}
             result = insert_mod.insert_text(
                 text, restore_clipboard=self.cfg.get("restore_clipboard", True),
                 log=self.log, target_hwnd=getattr(self, "_target_hwnd", None),
@@ -347,7 +361,8 @@ class Service:
                 if self.cfg.get("confirm_focus_change", True) else None,
                 exclude_history=self.cfg.get("clipboard_exclude_history",
                                              True),
-                log_title=self.cfg.get("log_window_titles", False))
+                log_title=self.cfg.get("log_window_titles", False),
+                undo_state=undo_state)
             self.live["partial"] = ""
             self.live["level"] = 0.0
             if result == insert_mod.RESULT_COPIED:
@@ -357,6 +372,14 @@ class Service:
             elif result == insert_mod.RESULT_CANCELLED:
                 self.set_last(self.tr("notify.cancelled"))
             else:
+                self._last_insert = {
+                    "text": text,
+                    "hwnd": getattr(self, "_target_hwnd", None),
+                    "ts": time.time(),
+                    "prev": undo_state.get("prev"),
+                    "prev_known": bool(undo_state.get("prev_known")),
+                }
+                self._remember(text)
                 message = self.inserted_message(text)
                 self.set_last(message)
                 if self.tray:
@@ -377,6 +400,63 @@ class Service:
             short = text[:80] + ("…" if len(text) > 80 else "")
             return self.tr("notify.inserted", text=short)
         return self.tr("notify.inserted_chars", n=len(text))
+
+    # -- dictionary / history ----------------------------------------------
+    def _remember(self, text):
+        """Write the dictation to the local history when the user opted in."""
+        if not self.cfg.get("history", False):
+            return
+        app = self._target_title if self.cfg.get("history_app", False) else ""
+        try:
+            self.history.add(text, app=app)
+        except Exception as e:  # noqa: BLE001 - a broken file must not break dictation
+            self.log.warning("History write failed: %s", e)
+
+    def history_records(self):
+        return self.history.load()
+
+    def history_delete(self, index):
+        self.history.delete(index)
+
+    def history_clear(self):
+        self.history.clear()
+
+    def history_copy(self, text, hint="history.copied"):
+        import insert as insert_mod
+        insert_mod.copy_text(text or "")
+        message = self.tr(hint)
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+
+    def undo_last(self):
+        """Ctrl+Z in the same window within 30 s; otherwise a warning."""
+        import insert as insert_mod
+        code = history.undo_allowed(self._last_insert, time.time(),
+                                    insert_mod.get_foreground_hwnd())
+        if code == "ok":
+            insert_mod.send_undo()
+            self._last_insert = None
+            message = self.tr("history.undo_done")
+        else:
+            message = self.tr(f"history.undo_{code}")
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+        return message
+
+    def restore_last_clipboard(self):
+        """Put the clipboard back as it was before the last insertion."""
+        import insert as insert_mod
+        state = self._last_insert or {}
+        if not state.get("prev_known"):
+            return self.tr("history.restore_none")
+        insert_mod.copy_text(state.get("prev") or "")
+        message = self.tr("history.restored")
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+        return message
 
     # -- tray actions -----------------------------------------------------
     def toggle_pause(self):
@@ -475,8 +555,9 @@ class Service:
         self._test_mode = False
 
     # -- settings ----------------------------------------------------------
-    def open_settings(self):
+    def open_settings(self, tab=None):
         """Tray/HUD request: the HUD (main thread) opens the dialog."""
+        self.live["settings_tab"] = tab
         self.live["open_settings"] = True
 
     def apply_settings(self, new_cfg):

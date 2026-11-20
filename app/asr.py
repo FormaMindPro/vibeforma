@@ -82,7 +82,9 @@ def _prompt(cfg):
         preset = PROMPT_PRESETS.get(lang)
         if preset:
             parts.append(preset)
-    hotwords = (cfg.get("hotwords") or "").strip()
+    import dictionary
+    hotwords = dictionary.merge_hotwords(cfg.get("hotwords"),
+                                         cfg.get("dictionary"))
     if hotwords:
         parts.append(hotwords)
     return " ".join(parts) or None

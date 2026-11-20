@@ -223,16 +223,20 @@ class Hud:
         self.root.after(120, self._tick)
 
     def _open_settings_window(self):
+        tab = self.state.get("settings_tab")
+        self.state["settings_tab"] = None
         try:
             alive = self._settings is not None and self._settings.win.winfo_exists()
         except Exception:
             alive = False
         if alive:
             self._settings.win.deiconify()
+            if tab:
+                self._settings.select_tab(tab)
             return
         import settings_window
         self._settings = settings_window.SettingsWindow(
-            self.root, self.svc, self.log)
+            self.root, self.svc, self.log, tab=tab)
 
     def _open_onboarding_window(self):
         try:

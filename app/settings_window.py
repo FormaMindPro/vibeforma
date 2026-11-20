@@ -1,14 +1,19 @@
 """Settings dialog (tkinter Toplevel) — lives on the HUD main thread.
 
 Localized through i18n (en/ru shipped). Organized into tabs (ttk.Notebook):
-Recording / Model & language / Appearance / System — the window stays
-compact no matter how many settings land. The model tab switches models
-through a progress dialog (download -> load -> remove old on request).
+Recording / Model & language / Dictionary / History / Appearance / System —
+the window stays compact no matter how many settings land. The model tab
+switches models through a progress dialog (download -> load -> remove old
+on request). Dictionary and history are local: no cloud, no account.
 """
 import ctypes
+import os
+import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
+import dictionary
+import history
 import i18n
 import onboarding
 from config import LANG_NAMES, LANGS, MODELS, MODEL_GB, VERSION
@@ -130,7 +135,7 @@ class ModelSwitchDialog:
 
 
 class SettingsWindow:
-    def __init__(self, master, svc, log):
+    def __init__(self, master, svc, log, tab=None):
         self.svc = svc
         self.cfg = svc.cfg
         self.log = log
@@ -167,12 +172,19 @@ class SettingsWindow:
         nb.pack(fill="both", expand=True)
         f_rec = tk.Frame(nb, bg=BG)
         f_mod = tk.Frame(nb, bg=BG)
+        f_dic = tk.Frame(nb, bg=BG)
+        f_his = tk.Frame(nb, bg=BG)
         f_look = tk.Frame(nb, bg=BG)
         f_sys = tk.Frame(nb, bg=BG)
         nb.add(f_rec, text=tr("tabs.record"))
         nb.add(f_mod, text=tr("tabs.model"))
+        nb.add(f_dic, text=tr("tabs.dictionary"))
+        nb.add(f_his, text=tr("tabs.history"))
         nb.add(f_look, text=tr("tabs.look"))
         nb.add(f_sys, text=tr("tabs.system"))
+        self._tab_frames = {"record": f_rec, "model": f_mod,
+                            "dictionary": f_dic, "history": f_his,
+                            "look": f_look, "system": f_sys}
 
         rows = self.rows = {}   # shared with _bind() below
 
@@ -277,6 +289,94 @@ class SettingsWindow:
             opt(f_mod, self.v_ui, [d for d, _ in ui_pairs], width=16))
         note(f_mod, tr("settings.note_ui"))
 
+        # -- tab: dictionary -----------------------------------------------------
+        self.dictionary = dictionary.normalize(c.get("dictionary"))
+        head(f_dic, tr("dictionary.g"))
+        note(f_dic, tr("dictionary.note"))
+        self.dic_list = tk.Listbox(f_dic, height=6, width=46, bg=FIELD_BG,
+                                   fg=FG, relief="flat", highlightthickness=0,
+                                   selectbackground="#2E86DE",
+                                   font=("Segoe UI", 9))
+        full(f_dic, self.dic_list)
+        self.v_dic_from = tk.StringVar(value="")
+        self.v_dic_to = tk.StringVar(value="")
+        row(f_dic, tr("dictionary.from"),
+            tk.Entry(f_dic, textvariable=self.v_dic_from, width=26,
+                     bg=FIELD_BG, fg=FG, insertbackground=FG, relief="flat"))
+        row(f_dic, tr("dictionary.to"),
+            tk.Entry(f_dic, textvariable=self.v_dic_to, width=26,
+                     bg=FIELD_BG, fg=FG, insertbackground=FG, relief="flat"))
+        dic_btns = tk.Frame(f_dic, bg=BG)
+        for text, command in (
+                (tr("dictionary.add"), self._add_entry),
+                (tr("dictionary.remove"), self._remove_entry),
+                (tr("dictionary.import"), self._import_entries),
+                (tr("dictionary.export"), self._export_entries)):
+            tk.Button(dic_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        full(f_dic, dic_btns)
+        preview_row = tk.Frame(f_dic, bg=BG)
+        tk.Button(preview_row, text=tr("dictionary.preview"),
+                  command=self._preview, bg="#22262E", fg=FG, relief="flat",
+                  activebackground="#2A2F38", activeforeground=FG,
+                  cursor="hand2").pack(side="left")
+        self.v_dic_sample = tk.StringVar(value="")
+        tk.Entry(preview_row, textvariable=self.v_dic_sample, width=30,
+                 bg=FIELD_BG, fg=FG, insertbackground=FG,
+                 relief="flat").pack(side="left", padx=(8, 0))
+        full(f_dic, preview_row)
+        self.dic_status = tk.Label(f_dic, text="", font=("Segoe UI", 9),
+                                   fg="#9FE0A8", bg=BG, wraplength=px(420),
+                                   justify="left", anchor="w")
+        full(f_dic, self.dic_status)
+        self._refresh_dictionary()
+
+        # -- tab: history --------------------------------------------------------
+        head(f_his, tr("settings.g_history"))
+        self.v_history = tk.BooleanVar(value=bool(c.get("history", False)))
+        self._bind(f_his, self.v_history, tr("history.enable"))
+        self.v_history_app = tk.BooleanVar(value=bool(c.get("history_app", False)))
+        self._bind(f_his, self.v_history_app, tr("history.app"))
+        note(f_his, tr("history.note", n=history.MAX_RECORDS))
+        self.his_list = tk.Listbox(f_his, height=7, width=50, bg=FIELD_BG,
+                                   fg=FG, relief="flat", highlightthickness=0,
+                                   selectbackground="#2E86DE",
+                                   font=("Consolas", 9))
+        full(f_his, self.his_list)
+        his_btns = tk.Frame(f_his, bg=BG)
+        for text, command in (
+                (tr("history.refresh"), self._refresh_history),
+                (tr("history.copy"), self._copy_selected),
+                (tr("history.paste_again"), self._paste_again_selected),
+                (tr("history.delete"), self._delete_selected),
+                (tr("history.clear"), self._clear_history)):
+            tk.Button(his_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        full(f_his, his_btns)
+        undo_row = tk.Frame(f_his, bg=BG)
+        tk.Button(undo_row, text=tr("history.undo"), command=self._undo_last,
+                  bg="#22262E", fg=FG, relief="flat",
+                  activebackground="#2A2F38", activeforeground=FG,
+                  cursor="hand2").pack(side="left")
+        tk.Button(undo_row, text=tr("history.restore"),
+                  command=self._restore_clipboard, bg="#22262E", fg=FG,
+                  relief="flat", activebackground="#2A2F38",
+                  activeforeground=FG, cursor="hand2").pack(
+                      side="left", padx=(6, 0))
+        full(f_his, undo_row)
+        self.his_status = tk.Label(f_his, text="", font=("Segoe UI", 9),
+                                   fg="#9FE0A8", bg=BG, wraplength=px(420),
+                                   justify="left", anchor="w")
+        full(f_his, self.his_status)
+        self._history_items = []
+        self._refresh_history()
+        if tab in self._tab_frames:
+            nb.select(self._tab_frames[tab])
+
         # -- tab: appearance ---------------------------------------------------
         head(f_look, tr("settings.g_panel"))
         self.v_alpha = tk.DoubleVar(value=float(c.get("hud_alpha", 0.94)))
@@ -363,7 +463,7 @@ class SettingsWindow:
 
         # -- size to the tallest tab, nothing clipped ----------------------------
         self.win.update_idletasks()
-        frames = (f_rec, f_mod, f_look, f_sys)
+        frames = (f_rec, f_mod, f_dic, f_his, f_look, f_sys)
         w = max(f.winfo_reqwidth() for f in frames) + 16
         h = max(f.winfo_reqheight() for f in frames) + 40 + 50 + 10
         sw = self.win.winfo_screenwidth()
@@ -382,6 +482,162 @@ class SettingsWindow:
                                         sticky="w", padx=16, pady=2)
         rows[f] += 1
         return var
+
+    def select_tab(self, key):
+        """Jump to a tab by key (record/model/dictionary/history/look/system)."""
+        frame = self._tab_frames.get(key)
+        if frame is not None:
+            self.nb.select(frame)
+
+    # -- dictionary tab ------------------------------------------------------
+    def _refresh_dictionary(self):
+        self.dic_list.delete(0, "end")
+        for entry in self.dictionary:
+            line = entry["from"]
+            if entry["to"]:
+                line += "  ->  " + entry["to"]
+            self.dic_list.insert("end", line)
+
+    def _add_entry(self):
+        entry = dictionary.normalize([{
+            "from": self.v_dic_from.get(),
+            "to": self.v_dic_to.get(),
+        }])
+        if not entry:
+            self.dic_status.configure(text=self.tr("dictionary.no_from"))
+            return
+        self.dictionary = dictionary.normalize(self.dictionary + entry)
+        self.v_dic_from.set("")
+        self.v_dic_to.set("")
+        self._refresh_dictionary()
+        self.dic_status.configure(text="")
+
+    def _remove_entry(self):
+        selected = self.dic_list.curselection()
+        if not selected:
+            return
+        index = int(selected[0])
+        if 0 <= index < len(self.dictionary):
+            del self.dictionary[index]
+            self._refresh_dictionary()
+
+    def _import_entries(self):
+        path = filedialog.askopenfilename(
+            parent=self.win, title=self.tr("dictionary.import"),
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                imported = dictionary.from_json(f.read())
+        except (OSError, ValueError) as e:
+            self.dic_status.configure(text=self.tr("dictionary.bad_file",
+                                                   err=e))
+            return
+        self.dictionary = dictionary.normalize(self.dictionary + imported)
+        self._refresh_dictionary()
+        self.dic_status.configure(
+            text=self.tr("dictionary.imported", n=len(imported)))
+
+    def _export_entries(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, title=self.tr("dictionary.export"),
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(dictionary.to_json(self.dictionary))
+        except OSError as e:
+            self.dic_status.configure(text=self.tr("dictionary.bad_file",
+                                                   err=e))
+            return
+        self.dic_status.configure(
+            text=self.tr("dictionary.exported", path=os.path.basename(path)))
+
+    def _preview(self):
+        sample = self.v_dic_sample.get()
+        if not sample:
+            self.dic_status.configure(text=self.tr("dictionary.preview_none"))
+            return
+        result, count = dictionary.apply(sample, self.dictionary)
+        if count:
+            text = self.tr("dictionary.preview_result", text=result,
+                           n=count)
+        else:
+            text = self.tr("dictionary.preview_same", text=result)
+        self.dic_status.configure(text=text)
+
+    # -- history tab ---------------------------------------------------------
+    def _refresh_history(self):
+        try:
+            items = list(self.svc.history_records())
+        except Exception as e:  # noqa: BLE001 - a broken file shows as empty
+            self.log.warning("History read failed: %s", e)
+            items = []
+        self._history_items = items
+        self.his_list.delete(0, "end")
+        for record in reversed(items):
+            stamp = time.strftime("%Y-%m-%d %H:%M",
+                                  time.localtime(float(record.get("ts") or 0)))
+            text = str(record.get("text", "")).replace("\n", " ")
+            short = text[:70] + ("..." if len(text) > 70 else "")
+            line = f"{stamp}  {int(record.get('chars') or 0):4d}  {short}"
+            app = record.get("app") or ""
+            if app:
+                line += "  [" + app + "]"
+            self.his_list.insert("end", line)
+        if not items:
+            key = ("history.empty" if self.v_history.get()
+                   else "history.disabled")
+            self.his_status.configure(text=self.tr(key))
+
+    def _selected_history(self):
+        selected = self.his_list.curselection()
+        if not selected:
+            return None
+        shown = int(selected[0])
+        index = len(self._history_items) - 1 - shown
+        if 0 <= index < len(self._history_items):
+            return index, self._history_items[index]
+        return None
+
+    def _copy_selected(self):
+        picked = self._selected_history()
+        if picked:
+            self.svc.history_copy(picked[1].get("text", ""))
+
+    def _paste_again_selected(self):
+        picked = self._selected_history()
+        if not picked:
+            return
+        self.svc.history_copy(picked[1].get("text", ""),
+                              hint="history.paste_again_hint")
+        self.win.destroy()
+
+    def _delete_selected(self):
+        picked = self._selected_history()
+        if not picked:
+            return
+        self.svc.history_delete(picked[0])
+        self._refresh_history()
+        self.his_status.configure(text=self.tr("history.deleted"))
+
+    def _clear_history(self):
+        if not messagebox.askyesno(self.tr("history.clear"),
+                                   self.tr("history.clear_question"),
+                                   parent=self.win):
+            return
+        self.svc.history_clear()
+        self._refresh_history()
+        self.his_status.configure(text=self.tr("history.cleared"))
+
+    def _undo_last(self):
+        self.his_status.configure(text=self.svc.undo_last())
+
+    def _restore_clipboard(self):
+        self.his_status.configure(text=self.svc.restore_last_clipboard())
 
     def _update_model_desc(self):
         try:
@@ -402,6 +658,7 @@ class SettingsWindow:
 
     def _save(self):
         c = dict(self.cfg)
+        old_history = bool(self.cfg.get("history", False))
         c["silence_ms"] = int(self.v_silence.get())
         c["partial_every_s"] = float(self.v_partial.get())
         c["max_record_s"] = int(self.v_maxrec.get())
@@ -418,6 +675,9 @@ class SettingsWindow:
         c["confirm_focus_change"] = bool(self.v_confirm.get())
         c["clipboard_exclude_history"] = bool(self.v_exclude.get())
         c["notify_text"] = bool(self.v_notify_text.get())
+        c["dictionary"] = dictionary.normalize(self.dictionary)
+        c["history"] = bool(self.v_history.get())
+        c["history_app"] = bool(self.v_history_app.get())
         c["hud"] = bool(self.v_hud.get())
         c["hud_alpha"] = float(self.v_alpha.get())
         c["hud_autogrow"] = bool(self.v_autogrow.get())
@@ -447,6 +707,9 @@ class SettingsWindow:
             self.svc.apply_settings(c)
         except Exception as e:
             self.log.exception("Saving settings failed: %s", e)
+        if old_history and not c["history"]:
+            # Turning the history off forgets what was stored locally.
+            self.svc.history_clear()
         self.win.destroy()
         if model_changed:
             progress = {"phase": "download", "name": new_model}

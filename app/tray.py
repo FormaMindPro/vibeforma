@@ -85,6 +85,12 @@ class Tray:
                 pystray.MenuItem(
                     lambda item: service.tr("tray.lang"), self._lang_submenu),
                 pystray.MenuItem(
+                    lambda item: service.tr("tray.history"),
+                    lambda *a: service.open_settings("history")),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.undo"),
+                    lambda *a: service.undo_last()),
+                pystray.MenuItem(
                     lambda item: service.tr("tray.logs"), self._on_open_logs),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(

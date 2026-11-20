@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## Unreleased
 
 ### Added
+- **Dictionary and history.** A Dictionary tab keeps term -> replacement
+  pairs: terms go into the recognition prompt, replacements are applied
+  after recognition (case-insensitive, longest term wins), and JSON import /
+  export plus a sample preview make the list easy to check. An opt-in
+  History tab stores the last 100 dictations locally in `history.jsonl`
+  with copy, paste again, delete and clear; turning it off deletes the file,
+  and the dictated text is never written to the log. "Undo last insert"
+  sends Ctrl+Z by virtual key only to the same window within 30 s and warns
+  instead otherwise; "Restore clipboard" returns the clipboard from before
+  the dictation.
 - **The installer is a transaction.** Before writing anything it checks
   Windows 10 build 1809+, x64/ARM64, Python 3.10–3.14, free space
   (model + 4 GB) and the target folder (empty, an existing install, or a

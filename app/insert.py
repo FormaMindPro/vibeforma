@@ -13,16 +13,36 @@ import threading
 import time
 
 import pyperclip
-from pynput.keyboard import Controller, Key
+from pynput.keyboard import Controller, Key, KeyCode
 
 PASTE_DELAY_S = 0.03   # before the paste, let the clipboard settle
 AFTER_DELAY_S = 0.06   # after the paste so slow apps register it
 RESTORE_DELAY_S = 1.0  # give the target app time to read the clipboard
 FOCUS_TIMEOUT_S = 30   # the focus dialog closes as "copy" when unanswered
+UNDO_VK = 0x5A         # VK_Z: layout-independent Ctrl+Z
 
 RESULT_PASTED = "pasted"
 RESULT_COPIED = "copied"
 RESULT_CANCELLED = "cancelled"
+
+
+def copy_text(value: str):
+    """Put text into the clipboard (history actions, restore)."""
+    pyperclip.copy(value)
+
+
+def send_undo():
+    """Ctrl+Z into the focused field by virtual key, not by a character.
+
+    A character key ("z") resolves through the active layout and may land
+    on another letter under a non-Latin layout; VK_Z is the physical key.
+    """
+    kb = Controller()
+    time.sleep(PASTE_DELAY_S)
+    with kb.pressed(Key.ctrl):
+        kb.press(KeyCode.from_vk(UNDO_VK))
+        kb.release(KeyCode.from_vk(UNDO_VK))
+    time.sleep(AFTER_DELAY_S)
 
 
 def foreground_window() -> str:
@@ -133,14 +153,16 @@ def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
 def insert_text(text: str, restore_clipboard: bool = True,
                 log: logging.Logger | None = None, target_hwnd=None,
                 paste_method: str = "shift_insert", confirm_focus=None,
-                exclude_history: bool = True, log_title: bool = False) -> str:
+                exclude_history: bool = True, log_title: bool = False,
+                undo_state: dict | None = None) -> str:
     """Paste text into the target window; returns one of the RESULT_* values.
 
     confirm_focus is called only when the foreground window differs from
     target_hwnd; it returns RESULT_PASTED (paste into the current window),
     RESULT_COPIED (leave the text in the clipboard) or RESULT_CANCELLED
     (restore the clipboard). Without a callable the text is copied, never
-    pasted into a foreign window.
+    pasted into a foreign window. undo_state, when given, receives the
+    previous clipboard ("prev") and whether it was readable ("prev_known").
     """
     prev = None
     prev_known = False
@@ -150,6 +172,9 @@ def insert_text(text: str, restore_clipboard: bool = True,
     except Exception as e:
         if log:
             log.warning("Failed to read the clipboard: %s", e)
+    if undo_state is not None:
+        undo_state["prev"] = prev
+        undo_state["prev_known"] = prev_known
     pyperclip.copy(text)
     own_seq = clipboard_sequence()
     if exclude_history and not exclude_from_clipboard_history() and log:

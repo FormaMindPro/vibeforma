@@ -45,6 +45,9 @@ DEFAULTS = {
     "language": "en",                   # pinned exactly: a LANGS code, never guessed
     "locale": "auto",                   # UI language: auto = follow Windows
     "hotwords": "",                     # terms appended to the prompt (user-local)
+    "dictionary": [],                   # {"from", "to"} pairs, post-ASR replacements
+    "history": False,                   # keep a local dictation history (opt-in)
+    "history_app": False,               # remember the target app in the history
     "auto_stop": True,
     "silence_ms": 2000,                 # phrase-closing pause
     "max_record_s": 120,
