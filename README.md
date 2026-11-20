@@ -47,12 +47,14 @@ the model.
   first, the service reloads without a restart, and the previous model is
   kept on disk or deleted, at your choice; a failed download rolls back
 - Tray menu: pause, input device, model switch without restart, recognition
-  language, history and "undo last insert", logs folder
+  language, history and "undo last insert", diagnostics, logs folder
 - Auto-update: the service checks GitHub releases in the background (default
   every 2 h; the interval and the on/off switch live in settings, plus a
   "Check now" button). A newer release is offered, not forced: the tray shows
   Update / Later, and only the explicit "install automatically" opt-in skips
-  the question. The release manifest is signed (minisign/Ed25519); the updater
+  the question. The notification carries a short excerpt of the release
+  notes, and the tray adds "What's new in …" with a link to the release
+  page. The release manifest is signed (minisign/Ed25519); the updater
   verifies the signature, the zip hash and the file list before running the
   installer, keeps a backup and restores the previous version on failure.
 - Autostart with Windows, desktop shortcut, single-instance lock, rotating logs
@@ -184,7 +186,9 @@ or deletes it (a model in the shared Hugging Face cache is left there; a
 failed download leaves the old model untouched). Models live in
 `%LOCALAPPDATA%\VibeForma\models\<name>` or in the shared Hugging Face cache;
 the service loads offline-first and only reaches the network when the model
-is nowhere on disk.
+is nowhere on disk. For an offline install, put a model folder into
+`models\<name>` (or the shared Hugging Face cache) beforehand: the installer
+and the service then need no network at all.
 
 Measured on the 12.5 s test phrase (CUDA float16, best of 3):
 
@@ -269,13 +273,14 @@ app/
   tray.py              tray icon and menu (pystray)
   hud.py               monitoring panel (tkinter, own thread)
   settings_window.py   settings dialog (tkinter)
+  doctor.py            support report: --doctor, tray/settings diagnostics
   config.py            config.json, defaults, device lookup, CUDA DLL bootstrap
   i18n.py              UI strings loader (locales/*.json, en fallback)
   locales/             en.json, ru.json — drop a file to add a language
   assets/              icon.png, icon.ico
   requirements.txt     base dependencies (no CUDA wheels)
   requirements-cuda.txt  base + CUDA wheels, used only on CUDA machines
-  run.cmd              launcher: pythonw main.py | --selftest
+  run.cmd              launcher: pythonw main.py | --selftest | --doctor
   uninstall.cmd        uninstaller entry point
   uninstall.py         uninstaller (stdlib): shortcuts, Settings > Apps, files
 install.cmd            one-click installer
@@ -283,6 +288,13 @@ install.py             installer (python, stdlib)
 ```
 
 ## Troubleshooting
+
+Start with the built-in report: `run.cmd --doctor` (or tray → **Diagnostics…**)
+lists Python, dependencies, model, device, microphone, hotkey, update
+settings, disk space and privacy switches with OK / WARN / FAIL and exits 0
+or 1. The report has no dictated text and no window titles; the window has a
+**Copy report** button. The full guide, including the HTTP API port, disk
+space and SmartScreen: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 - **Python not found** — install from python.org (tick "Add to PATH").
 - **No CUDA** — the installer picks CPU int8 automatically; prefer

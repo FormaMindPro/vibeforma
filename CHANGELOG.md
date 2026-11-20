@@ -5,6 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+- **A support report and a troubleshooting guide.** `--doctor`
+  (`run.cmd --doctor`, `VibeForma.exe --doctor`, tray → **Diagnostics…**,
+  Settings → **System** → **Diagnostics…**) checks Python and the service
+  dependencies, the model on disk, the CUDA/CPU profile, the microphone,
+  the hotkey, update settings, disk space and the privacy switches, prints
+  `OK` / `WARN` / `FAIL` and exits 0 or 1. The Tk window has a
+  **Copy report** button; a packed exe also writes the report to
+  `%TEMP%\vibeforma-doctor.txt`. The report is read-only and never contains
+  dictated text, window titles, `hotwords`, the dictionary, the history or
+  the HTTP token. `docs/TROUBLESHOOTING.md` covers the microphone, a busy
+  HTTP port, disk space, SmartScreen and signature checks, model loading,
+  the hotkey, insertion and updates; README (en/ru) and
+  `docs/INSTALL-WINDOWS.md` link it and answer "where the audio goes" and
+  "what stays on disk".
+- **Release notes at update time.** The update notification carries a short
+  plain-text excerpt of the release notes, and the tray adds **What's new
+  in …** that opens the https release page only. A release without a page
+  keeps the plain notification.
+
+### Fixed
+- `--selftest` and `--doctor` find `test_ru.wav` in a fresh git checkout
+  (the file sits at the repository root, not in `app/`); an installed copy
+  is unchanged.
+
 ### Changed
 - **The one-command install from GitHub is the main path.** The README and
   `docs/INSTALL-WINDOWS.md` say so explicitly: the bootstrap command installs
