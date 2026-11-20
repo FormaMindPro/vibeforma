@@ -313,19 +313,27 @@ class Service:
                     self.tray.notify(self.tr("notify.not_recognized_short"))
                 return
             import insert as insert_mod
-            insert_mod.insert_text(
+            result = insert_mod.insert_text(
                 text, restore_clipboard=self.cfg.get("restore_clipboard", True),
                 log=self.log, target_hwnd=getattr(self, "_target_hwnd", None),
-                paste_method=self.cfg.get("paste_method", "shift_insert"))
-            self.live["last"] = self.tr(
-                "notify.inserted",
-                text=text[:90] + ("…" if len(text) > 90 else ""))
+                paste_method=self.cfg.get("paste_method", "shift_insert"),
+                confirm_focus=(lambda: insert_mod.ask_focus_change(self.cfg))
+                if self.cfg.get("confirm_focus_change", True) else None,
+                exclude_history=self.cfg.get("clipboard_exclude_history",
+                                             True))
             self.live["partial"] = ""
             self.live["level"] = 0.0
-            if self.tray:
-                self.tray.notify(self.tr(
-                    "notify.inserted",
-                    text=text[:80] + ("…" if len(text) > 80 else "")))
+            if result == insert_mod.RESULT_COPIED:
+                self.live["last"] = self.tr("notify.copied")
+                if self.tray:
+                    self.tray.notify(self.tr("notify.copied"))
+            elif result == insert_mod.RESULT_CANCELLED:
+                self.live["last"] = self.tr("notify.cancelled")
+            else:
+                message = self.inserted_message(text)
+                self.live["last"] = message
+                if self.tray:
+                    self.tray.notify(message)
         except Exception as e:
             self.log.exception("Recognition error: %s", e)
             beep(400, 200)
@@ -335,6 +343,13 @@ class Service:
         finally:
             if self._running:
                 self._set_state(STATE_IDLE)
+
+    def inserted_message(self, text):
+        """Notification text: the character count, the phrase on opt-in."""
+        if self.cfg.get("notify_text", False):
+            short = text[:80] + ("…" if len(text) > 80 else "")
+            return self.tr("notify.inserted", text=short)
+        return self.tr("notify.inserted_chars", n=len(text))
 
     # -- tray actions -----------------------------------------------------
     def toggle_pause(self):

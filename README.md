@@ -23,8 +23,12 @@ the model.
   `app/locales/` to translate it into anything else
 - Monitoring panel: mic level, VAD indicator, recognized text streaming
   near-real-time while you speak
-- Layout-independent pasting (Shift+Insert) with the old clipboard restored
-  after 1 s
+- Layout-independent pasting (Shift+Insert) that never steals the focus: if
+  the window changed during dictation, it offers "paste here / copy /
+  cancel" instead of pasting into a stranger. The old clipboard is restored
+  after 1 s, but only if you have not copied something new meanwhile; on
+  Windows 10+ the dictated text is kept out of the clipboard history and
+  cloud sync
 - Settings window, organized in tabs (Recording / Model & language /
   Appearance / System): silence pause, streaming interval, max recording
   length, panel transparency, autogrow, sounds, hotkey, input device,
@@ -200,9 +204,10 @@ install.py             installer (python, stdlib)
   `--model small` on CPU.
 - **The mic hears nothing** — choose the input device in the tray; the panel
   shows a silence warning when the level stays near zero while recording.
-- **Text lands in the wrong window** — the service restores focus to the
-  window that was active at the hotkey press; don't switch windows while
-  dictating.
+- **The text was not pasted after dictation** — the active window changed
+  while you spoke. VibeForma asks where to put the text; "Copy" leaves it in
+  the clipboard, and the tray message says so. Set "ask where to paste" off
+  to copy silently in that case.
 - **Russian layout and Ctrl+V** — pasting defaults to Shift+Insert, which is
   layout-independent; switchable in settings.
 

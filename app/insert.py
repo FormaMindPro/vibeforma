@@ -1,5 +1,14 @@
-"""Insert text into the focused field: clipboard + paste, optional restore."""
+"""Insert text into the focused field: clipboard + paste, optional restore.
+
+The dictated text is pasted only into the window that was active when the
+recording started. If the focus moved, the user is asked where the text
+should go (current window / clipboard / cancel) — never a silent paste into
+a foreign window. The previous clipboard is restored only when the user has
+not changed it in the meantime (GetClipboardSequenceNumber).
+"""
+import contextlib
 import logging
+import sys
 import threading
 import time
 
@@ -9,6 +18,11 @@ from pynput.keyboard import Controller, Key
 PASTE_DELAY_S = 0.03   # before the paste, let the clipboard settle
 AFTER_DELAY_S = 0.06   # after the paste so slow apps register it
 RESTORE_DELAY_S = 1.0  # give the target app time to read the clipboard
+FOCUS_TIMEOUT_S = 30   # the focus dialog closes as "copy" when unanswered
+
+RESULT_PASTED = "pasted"
+RESULT_COPIED = "copied"
+RESULT_CANCELLED = "cancelled"
 
 
 def foreground_window() -> str:
@@ -16,6 +30,9 @@ def foreground_window() -> str:
     try:
         import ctypes
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+                                          ctypes.c_int]
         hwnd = user32.GetForegroundWindow()
         buf = ctypes.create_unicode_buffer(256)
         user32.GetWindowTextW(hwnd, buf, 256)
@@ -29,42 +46,129 @@ def get_foreground_hwnd():
     """HWND of the current foreground window (captured at recording start)."""
     try:
         import ctypes
-        return ctypes.windll.user32.GetForegroundWindow()
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        return user32.GetForegroundWindow()
     except Exception:
         return None
 
 
-def restore_foreground(hwnd):
-    """Best-effort: bring the recorded window back before pasting."""
-    if not hwnd:
-        return
+def clipboard_sequence() -> int:
+    """Windows clipboard change counter; 0 when the platform has none."""
     try:
         import ctypes
         user32 = ctypes.windll.user32
-        if user32.GetForegroundWindow() == hwnd:
-            return
-        # ALT keystroke unlocks SetForegroundWindow from a background process
-        user32.keybd_event(0x12, 0, 0, 0)
-        user32.SetForegroundWindow(hwnd)
-        user32.keybd_event(0x12, 0, 2, 0)  # KEYEVENTF_KEYUP
-        time.sleep(0.15)
-    except Exception:
-        pass
+        user32.GetClipboardSequenceNumber.restype = ctypes.c_uint
+        return int(user32.GetClipboardSequenceNumber())
+    except (AttributeError, OSError):
+        return 0
+
+
+def exclude_from_clipboard_history() -> bool:
+    """Mark the current clipboard content as private for history and cloud.
+
+    Uses the Windows 10+ clipboard formats: presence of
+    ExcludeClipboardContentFromMonitorProcessing keeps the item out of the
+    clipboard history, CanIncludeInClipboardHistory=0 and
+    CanUploadToCloudClipboard=0 keep it out of cloud sync. Returns False
+    where the platform or the clipboard does not support it.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if not user32.OpenClipboard(None):
+            return False
+        try:
+            marked = True
+            for name in ("ExcludeClipboardContentFromMonitorProcessing",
+                         "CanIncludeInClipboardHistory",
+                         "CanUploadToCloudClipboard"):
+                marked = _set_clipboard_flag(ctypes, user32, kernel32,
+                                             name) and marked
+            return marked
+        finally:
+            user32.CloseClipboard()
+    except Exception:  # noqa: BLE001 - any ctypes failure means "unsupported"
+        return False
+
+
+def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
+    """Set one clipboard format to a DWORD 0; the caller holds the clipboard."""
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    user32.RegisterClipboardFormatW.restype = ctypes.c_uint
+    user32.RegisterClipboardFormatW.argtypes = [ctypes.c_wchar_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+    user32.CloseClipboard.argtypes = []
+
+    fmt = user32.RegisterClipboardFormatW(name)
+    if not fmt:
+        return False
+    handle = kernel32.GlobalAlloc(0x0002, 4)  # GMEM_MOVEABLE
+    if not handle:
+        return False
+    ptr = kernel32.GlobalLock(handle)
+    if not ptr:
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        ctypes.cast(ptr, ctypes.POINTER(ctypes.c_uint32))[0] = 0
+    finally:
+        kernel32.GlobalUnlock(handle)
+    if not user32.SetClipboardData(fmt, handle):
+        kernel32.GlobalFree(handle)
+        return False
+    return True
 
 
 def insert_text(text: str, restore_clipboard: bool = True,
                 log: logging.Logger | None = None, target_hwnd=None,
-                paste_method: str = "shift_insert"):
+                paste_method: str = "shift_insert", confirm_focus=None,
+                exclude_history: bool = True) -> str:
+    """Paste text into the target window; returns one of the RESULT_* values.
+
+    confirm_focus is called only when the foreground window differs from
+    target_hwnd; it returns RESULT_PASTED (paste into the current window),
+    RESULT_COPIED (leave the text in the clipboard) or RESULT_CANCELLED
+    (restore the clipboard). Without a callable the text is copied, never
+    pasted into a foreign window.
+    """
     prev = None
+    prev_known = False
     try:
         prev = pyperclip.paste()
+        prev_known = True
     except Exception as e:
         if log:
             log.warning("Failed to read the clipboard: %s", e)
     pyperclip.copy(text)
+    own_seq = clipboard_sequence()
+    if exclude_history and not exclude_from_clipboard_history() and log:
+        log.info("Clipboard history exclusion is not available here")
 
-    restore_foreground(target_hwnd)
     target = foreground_window()
+    if target_hwnd and get_foreground_hwnd() != target_hwnd:
+        choice = _ask_focus_change(confirm_focus, log)
+        if choice == RESULT_COPIED:
+            if log:
+                log.info("Target window changed — the text is in the clipboard")
+            return RESULT_COPIED
+        if choice != RESULT_PASTED:
+            _restore_now(prev, prev_known, own_seq, text, log)
+            if log:
+                log.info("Target window changed — insertion cancelled")
+            return RESULT_CANCELLED
+        time.sleep(0.15)  # let the closed dialog hand the focus back
+
     kb = Controller()
     time.sleep(PASTE_DELAY_S)
     if paste_method == "shift_insert":
@@ -82,13 +186,100 @@ def insert_text(text: str, restore_clipboard: bool = True,
     if log:
         log.info("Pasted %d chars — window: %s", len(text), target)
 
-    if restore_clipboard and prev:
-        threading.Thread(target=_restore, args=(prev,), daemon=True).start()
+    if restore_clipboard and prev_known:
+        threading.Thread(target=_restore, args=(prev, own_seq, text, log),
+                         daemon=True).start()
+    return RESULT_PASTED
 
 
-def _restore(prev: str):
-    time.sleep(RESTORE_DELAY_S)
+def _ask_focus_change(confirm_focus, log) -> str:
+    if confirm_focus is None:
+        return RESULT_COPIED
     try:
-        pyperclip.copy(prev)
+        answer = confirm_focus()
+    except Exception as e:  # noqa: BLE001 - a failed dialog must not abort
+        if log:
+            log.warning("Focus dialog failed: %s", e)
+        return RESULT_COPIED
+    if answer in (RESULT_PASTED, RESULT_COPIED, RESULT_CANCELLED):
+        return answer
+    return RESULT_COPIED
+
+
+def _clipboard_unchanged(own_seq: int, pasted: str) -> bool:
+    """True when nobody has written to the clipboard since our own copy."""
+    current = clipboard_sequence()
+    if own_seq and current:
+        return current == own_seq
+    try:
+        return pyperclip.paste() == pasted
     except Exception:
-        pass
+        return False
+
+
+def _restore_now(prev, prev_known, own_seq, pasted, log):
+    if not prev_known:
+        return
+    if not _clipboard_unchanged(own_seq, pasted):
+        if log:
+            log.info("Clipboard changed meanwhile — keeping the user's content")
+        return
+    with contextlib.suppress(Exception):
+        pyperclip.copy(prev)
+
+
+def _restore(prev, own_seq, pasted, log):
+    time.sleep(RESTORE_DELAY_S)
+    _restore_now(prev, True, own_seq, pasted, log)
+
+
+def ask_focus_change(cfg=None) -> str:
+    """Ask where the text should go when the target window lost the focus."""
+    try:
+        import tkinter as tk
+
+        import i18n
+    except Exception:  # noqa: BLE001 - no Tk means no dialog
+        return RESULT_COPIED
+
+    def tr(key):
+        try:
+            return i18n.t(cfg, key)
+        except Exception:  # noqa: BLE001 - fall back to the key itself
+            return key
+
+    root = None
+    try:
+        root = tk.Tk()
+        root.title("VibeForma")
+        root.attributes("-topmost", True)
+        root.resizable(False, False)
+        answer = {"value": RESULT_COPIED}
+
+        def choose(value):
+            answer["value"] = value
+            root.quit()
+
+        body = tk.Frame(root, padx=18, pady=14)
+        body.pack()
+        tk.Label(body, text=tr("focus.changed"), wraplength=380,
+                 justify="left").pack(anchor="w")
+        buttons = tk.Frame(body)
+        buttons.pack(fill="x", pady=(12, 0))
+        tk.Button(buttons, text=tr("focus.paste_here"),
+                  command=lambda: choose(RESULT_PASTED)).pack(side="left")
+        tk.Button(buttons, text=tr("focus.copy"),
+                  command=lambda: choose(RESULT_COPIED)).pack(side="left",
+                                                             padx=8)
+        tk.Button(buttons, text=tr("focus.cancel"),
+                  command=lambda: choose(RESULT_CANCELLED)).pack(side="left")
+        root.after(int(FOCUS_TIMEOUT_S * 1000),
+                   lambda: choose(RESULT_COPIED))
+        root.mainloop()
+        return answer["value"]
+    except Exception:  # noqa: BLE001 - a broken dialog falls back to "copy"
+        return RESULT_COPIED
+    finally:
+        if root is not None:
+            with contextlib.suppress(Exception):
+                root.destroy()
