@@ -259,7 +259,7 @@ def plan(target, model, device, language, dry_run, log):
          f"language={language} (fix the device of an existing config)",
          dry_run=dry_run)
     step(log, "Shortcuts",
-         f"desktop + startup + Start menu: {LNKS[0]} -> run.cmd, "
+         f"desktop + startup + Start menu: {LNKS[0]} -> pythonw.exe main.py, "
          "icon app/assets/icon.ico", dry_run=dry_run)
     step(log, "Settings > Apps",
          "per-user uninstall entry: uninstall.cmd",
