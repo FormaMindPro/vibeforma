@@ -24,9 +24,28 @@ DIM = "#7A8290"
 
 W = 380
 BASE_TEXT_LINES = 4
+MAX_TEXT_LINES = 12
 LINE_H = 20
 BASE_H = 190
 LAST_TTL_S = 30
+
+
+def wrapped_lines(text, cpl=46):
+    """Wrapped line count at the HUD width; an empty line still takes one."""
+    total = 0
+    for line in (text or "").split("\n"):
+        total += max(1, -(-len(line) // cpl))
+    return total
+
+
+def panel_lines(text, base=BASE_TEXT_LINES, cap=MAX_TEXT_LINES, cpl=46):
+    """Visible text lines to reserve: never below the base, never above the cap."""
+    return max(base, min(cap, wrapped_lines(text, cpl)))
+
+
+def panel_height(base_h, want, base=BASE_TEXT_LINES, line_h=LINE_H):
+    """Window height from the base, never from the previous height."""
+    return base_h + (want - base) * line_h
 
 
 def dpi_factor(win):
@@ -54,7 +73,7 @@ class Hud:
         self._W = px(W)
         self._line_h = px(LINE_H)
         base_h = px(BASE_H)
-        self._root_h = base_h
+        self._base_h = self._root_h = base_h
 
         self.root.title("VibeForma")
         self.root.geometry("{}x{}+{}+{}".format(*self._place(base_h)))
@@ -269,24 +288,37 @@ class Hud:
             with contextlib.suppress(Exception):
                 self.root.attributes("-alpha", max(0.3, min(1.0, float(a))))
 
+    def _display_lines(self):
+        """Wrapped lines the Text actually shows; 0 when Tk cannot tell."""
+        try:
+            shown = self.text.count("1.0", "end-1c", "displaylines")
+            if isinstance(shown, (tuple, list)):
+                shown = shown[0]
+            return int(shown or 0)
+        except Exception:  # noqa: BLE001 - the char estimate stands
+            return 0
+
     def _autogrow(self, partial: str):
-        """Grow the panel with the text when hud_autogrow is on."""
+        """Grow the panel with the text, keeping its bottom edge in place."""
         with contextlib.suppress(Exception):
             if not self.cfg.get("hud_autogrow", True):
                 want = BASE_TEXT_LINES
             else:
-                cpl = 46  # chars per line at this width/font
-                lines = sum(max(1, -(-len(line) // cpl))
-                            for line in partial.split("\n"))
-                want = max(BASE_TEXT_LINES, min(12, lines + 1))
+                want = panel_lines(partial)
+                shown = self._display_lines()
+                if shown:
+                    want = max(BASE_TEXT_LINES, min(MAX_TEXT_LINES, shown))
             if want != int(self.text.cget("height")):
                 self.text.configure(height=want)
-                h = (self._root_h - BASE_TEXT_LINES * self._line_h
-                     + want * self._line_h)
+                h = panel_height(self._base_h, want, base=BASE_TEXT_LINES,
+                                 line_h=self._line_h)
+                screen_h = self.root.winfo_screenheight()
+                h = min(h, max(self._base_h, screen_h - self._px(80)))
                 if h != self._root_h:
+                    bottom = self.root.winfo_y() + self._root_h
                     self._root_h = h
                     x = self.root.winfo_x()
-                    y = self.root.winfo_y()
+                    y = max(0, bottom - h)
                     self.root.geometry(f"{self._W}x{h}+{x}+{y}")
 
     def _paint_dot(self, color):
