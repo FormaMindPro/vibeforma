@@ -151,6 +151,7 @@ def run(args, log):
     log.write("VibeForma {} - installation{}".format(version, "  (dry-run: plan only)" if args.dry_run else ""))
     log.write(f"Log: {log.path}" if log.persist else "Log: not written (dry-run)")
     if sys.platform != "win32":
+        log.start()
         log.write("[X] The installer targets Windows 10/11.")
         return 1
 
@@ -158,12 +159,14 @@ def run(args, log):
     device, compute = detect_compute(args.cpu)
     language = (args.language or "").strip().lower() or windows_language()
     if language not in supported_languages():
+        log.start()
         log.write("[X] Unknown language {} - available: {}".format(
             language, ", ".join(supported_languages())))
         return 1
 
     model = args.model
     if model and model not in MODELS:
+        log.start()
         log.write("[X] Unknown model {} - available: {}".format(model, ", ".join(MODELS)))
         return 1
     if not model:
@@ -181,6 +184,7 @@ def run(args, log):
     if not model and not args.dry_run:
         choice = choose_setup(log, device, language)
         if choice is None:
+            log.start()
             log.write(installer_text(installer_language(), "cancelled"))
             return 0
         model = choice["model"]
@@ -208,11 +212,13 @@ def run(args, log):
         if not args.dry_run:
             check_writable(target)
     except InstallError as error:
+        log.start()
         log.write(f"[X] Preflight failed: {error}")
         log.write("Nothing was written.")
         if created and os.path.exists(target):
             shutil.rmtree(target, ignore_errors=True)
         return 1
+    log.start()
     log.write("[preflight] Windows build, architecture, Python, target folder "
               f"and disk: OK ({state} install)")
 

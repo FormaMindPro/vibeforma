@@ -104,6 +104,26 @@ def test_failure_cleans_an_existing_empty_folder(monkeypatch, tmp_path):
 
 
 @pytest.mark.windows
+def test_default_target_does_not_trip_over_its_own_log(monkeypatch, tmp_path):
+    local = tmp_path / "local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    target = local / "VibeForma"
+    # The default log path resolves to target\logs\install.log at run time;
+    # the target is passed explicitly so the test never writes to the profile.
+    monkeypatch.setattr(sys, "argv", [
+        "install.py", "--model", "small", "--language", "en", "--no-run",
+        "--target", str(target)])
+    fake = FakeRun()
+    monkeypatch.setattr(install.subprocess, "run", fake)
+
+    assert install.main() == 0
+
+    assert (target / "main.py").is_file()
+    log_text = (target / "logs" / "install.log").read_text(encoding="utf-8")
+    assert "OK (fresh install)" in log_text
+
+
+@pytest.mark.windows
 def test_protected_target_is_refused_before_any_write(monkeypatch, tmp_path):
     target = tmp_path / "Windows"
     log = tmp_path / "install.log"
