@@ -62,8 +62,30 @@ def test_install_uses_the_substituted_subprocess(monkeypatch, tmp_path):
 
     assert (target / "config.json").exists()
     assert (target / "main.py").exists()
+    assert (target / "test_ru.wav").exists()
     flat = [" ".join(str(part) for part in call)
             for call in calls if isinstance(call, list)]
     assert any("-m pip install" in line for line in flat)
     assert any("-m venv" in line for line in flat)
     assert any("powershell" in line for line in flat)
+
+
+@pytest.mark.windows
+def test_selftest_flag_runs_the_service_gate(monkeypatch, tmp_path):
+    target = tmp_path / "vf"
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", [
+        "install.py", "--model", "small", "--target", str(target),
+        "--no-run", "--selftest"])
+
+    assert install.main() == 0
+
+    flat = [" ".join(str(part) for part in call)
+            for call in calls if isinstance(call, list)]
+    assert any("main.py --selftest" in line for line in flat)

@@ -21,6 +21,7 @@ STATE_RECORDING = "recording"
 STATE_PROCESSING = "processing"
 STATE_PAUSED = "paused"
 STATE_ERROR = "error"
+STATE_UPDATING = "updating"
 
 
 # ---------------------------------------------------------------- utilities
@@ -162,6 +163,9 @@ class Service:
         self.recorder = None
         self._running = True
         self._partial_busy = False
+        self._update_busy = False
+        self.pending_update = None
+        self.restart_pending = None
         # shared live view for the HUD (written by worker threads, read by GUI)
         self.live = {
             "state": STATE_LOADING,
@@ -195,6 +199,11 @@ class Service:
         self.live["state"] = state
         if self.tray:
             self.tray.set_state(state)
+        if (state == STATE_IDLE and self.pending_update
+                and self.cfg.get("auto_update") == "auto"
+                and not self._update_busy):
+            threading.Thread(target=self.apply_pending_update,
+                             daemon=True).start()
 
     # -- hotkey ---------------------------------------------------------
     def on_hotkey(self):
@@ -207,6 +216,8 @@ class Service:
             self.log.info("Hotkey during recognition — ignored")
         elif st == STATE_PAUSED:
             self.log.info("Service is paused — hotkey ignored")
+        elif st == STATE_UPDATING:
+            self.log.info("Update in progress — hotkey ignored")
         else:  # loading / error
             self.log.info("Model is not ready yet — hotkey ignored")
 
@@ -464,8 +475,8 @@ class Service:
             progress.update(phase="error", detail=str(e))
 
     # -- updates -----------------------------------------------------------
-    def update_if_newer(self, notify_latest: bool = False):
-        """Check GitHub; if a newer release exists — download, install, restart."""
+    def check_updates(self, notify_latest: bool = False):
+        """Check GitHub; a newer release only becomes pending (no silent apply)."""
         import updater
         try:
             rel = updater.latest_release()
@@ -483,21 +494,64 @@ class Service:
             if notify_latest and self.tray:
                 self.tray.notify(self.tr("notify.update_latest", ver=VERSION))
             return
+        self.log.info("New release %s found (current %s)", rel["tag"], VERSION)
+        self.pending_update = rel
+        if self.tray:
+            self.tray.notify(self.tr("notify.update_found", ver=rel["tag"]))
+        if (self.cfg.get("auto_update") == "auto"
+                and self.state == STATE_IDLE):
+            self.apply_pending_update()
+
+    def update_if_newer(self, notify_latest: bool = False):
+        """Backward-compatible alias: a check never installs on its own."""
+        self.check_updates(notify_latest)
+
+    def apply_pending_update(self):
+        """Install the pending release after consent (tray) or explicit opt-in."""
+        rel = self.pending_update
+        if not rel or self._update_busy:
+            return False
         if self.state != STATE_IDLE:
             if self.tray:
                 self.tray.notify(self.tr("notify.update_later", ver=rel["tag"]))
-            return
-        self.log.info("New release %s found (current %s)", rel["tag"], VERSION)
-        if self.tray:
-            self.tray.notify(self.tr("notify.update_found", ver=rel["tag"]))
-        if updater.apply(rel, SERVICE_DIR, self.log):
-            self._restart_after_update(rel["tag"])
-        elif self.tray:
-            self.tray.notify(self.tr("notify.update_fail"))
+            return False
+        self._update_busy = True
+
+        def _work():
+            import updater
+            self._set_state(STATE_UPDATING)
+            if self.tray:
+                self.tray.notify(self.tr("notify.update_applying", ver=rel["tag"]))
+            ok, reason = updater.apply(rel, SERVICE_DIR, self.log)
+            self._update_busy = False
+            self.pending_update = None
+            self._set_state(STATE_IDLE)
+            if ok:
+                self.restart_pending = rel["tag"]
+                if self.cfg.get("auto_update") == "auto":
+                    self._restart_after_update(rel["tag"])
+                elif self.tray:
+                    self.tray.notify(self.tr(
+                        "notify.update_installed", ver=rel["tag"]))
+            elif self.tray:
+                self.log.warning("Update was not applied: %s", reason)
+                self.tray.notify(self.tr("notify.update_refused"))
+
+        threading.Thread(target=_work, daemon=True).start()
+        return True
+
+    def dismiss_pending_update(self):
+        self.pending_update = None
+
+    def restart_for_update(self):
+        tag = self.restart_pending
+        self.restart_pending = None
+        if tag:
+            self._restart_after_update(tag)
 
     def check_updates_now(self):
         """Settings button: manual check with a visible result."""
-        threading.Thread(target=self.update_if_newer, args=(True,),
+        threading.Thread(target=self.check_updates, args=(True,),
                          daemon=True).start()
 
     def _restart_after_update(self, tag):
@@ -619,7 +673,7 @@ def start_update_checker(cfg, svc, log):
         while True:
             try:
                 if cfg.get("update_check", True) and svc.state == STATE_IDLE:
-                    svc.update_if_newer()
+                    svc.check_updates()
             except Exception as e:
                 log.debug("Update check: %s", e)
             time.sleep(max(1, float(cfg.get("update_interval_h", 2))) * 3600)

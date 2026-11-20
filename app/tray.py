@@ -14,6 +14,7 @@ STATE_COLORS = {
     "processing": "#F39C12",
     "paused": "#5D6D7E",
     "error": "#8E44AD",
+    "updating": "#8FB8E8",
 }
 LANG_QUICK = ("en", "ru", "uk", "de", "fr", "es", "it", "pl", "zh", "ja", "ko", "ar")
 _ASSET_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -54,6 +55,19 @@ class Tray:
             menu=pystray.Menu(
                 pystray.MenuItem(
                     lambda item: service.tr("tray.settings"), self._on_settings),
+                pystray.MenuItem(
+                    lambda item: service.tr(
+                        "tray.update_to", ver=service.pending_update["tag"]),
+                    lambda *a: service.apply_pending_update(),
+                    visible=lambda item: service.pending_update is not None),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.update_later"),
+                    lambda *a: service.dismiss_pending_update(),
+                    visible=lambda item: service.pending_update is not None),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.restart_update"),
+                    lambda *a: service.restart_for_update(),
+                    visible=lambda item: service.restart_pending is not None),
                 pystray.MenuItem(
                     lambda item: (service.tr("tray.resume")
                                   if service.state == "paused"

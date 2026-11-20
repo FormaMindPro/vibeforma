@@ -201,6 +201,8 @@ def main():
                     help="show the plan without executing")
     ap.add_argument("--no-run", action="store_true",
                     help="do not launch the service at the end")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run app/main.py --selftest after a successful install")
     ap.add_argument("--cpu", action="store_true",
                     help="force CPU (int8) even when CUDA is present")
     args = ap.parse_args()
@@ -268,7 +270,15 @@ def main():
                                % sys.version.split()[0])
 
     def copy_app():
-        shutil.copytree(APP_DIR, target, dirs_exist_ok=True)
+        shutil.copytree(
+            APP_DIR, target, dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+    def copy_test_wav():
+        src = os.path.join(REPO_DIR, "test_ru.wav")
+        if not os.path.isfile(src):
+            raise RuntimeError("test_ru.wav is missing from the release")
+        shutil.copy2(src, os.path.join(target, "test_ru.wav"))
 
     def make_venv():
         if os.path.exists(vp):
@@ -320,10 +330,19 @@ def main():
     def run_service():
         os.startfile(os.path.join(target, "run.cmd"))
 
+    def run_selftest():
+        rc = subprocess.run(  # noqa: S603
+            [vp, os.path.join(target, "main.py"), "--selftest"],
+            cwd=target, check=False).returncode
+        if rc != 0:
+            raise RuntimeError(f"selftest exited with code {rc}")
+
     step("Python 3.10+", "check the interpreter version", check_python)
     if not args.dry_run and failed:
         return 1
     step("Copy app/ into the service folder", "copytree app/ → %s" % target, copy_app)
+    step("Test WAV", f"copy test_ru.wav → {target}\\test_ru.wav (needed by --selftest)",
+         copy_test_wav)
     step("Virtual environment .venv", "python -m venv %s\\.venv" % target, make_venv)
     step("Dependencies (pip)", ".venv pip install -r requirements.txt "
          "(faster-whisper, sounddevice, pynput, pystray, Pillow, pyperclip, CUDA libs)",
@@ -335,6 +354,8 @@ def main():
          write_config)
     step("Shortcuts", "desktop + startup: «%s» → run.cmd, icon app/assets/icon.ico"
          % LNK_NAME, make_shortcuts)
+    if args.selftest and not args.dry_run and not failed:
+        step("Selftest", "main.py --selftest (model, WAV, clipboard)", run_selftest)
     if args.no_run:
         say("")
         say("[step] Launch the service — skipped (--no-run)")

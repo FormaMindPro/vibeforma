@@ -310,6 +310,9 @@ class SettingsWindow:
         head(f_sys, tr("updates.g"))
         self.v_upd = tk.BooleanVar(value=bool(c.get("update_check", True)))
         self._bind(f_sys, self.v_upd, tr("updates.auto"))
+        self.v_upd_auto = tk.BooleanVar(
+            value=c.get("auto_update") == "auto")
+        self._bind(f_sys, self.v_upd_auto, tr("updates.install_auto"))
         self.v_upd_h = tk.IntVar(value=int(c.get("update_interval_h", 2)))
         row(f_sys, tr("updates.interval"), scale(f_sys, 1, 24, 1, self.v_upd_h))
         btn_upd = tk.Button(f_sys, text=tr("updates.check_now"),
@@ -401,6 +404,7 @@ class SettingsWindow:
         c["autostart"] = bool(self.v_autostart.get())
         c["update_check"] = bool(self.v_upd.get())
         c["update_interval_h"] = int(self.v_upd_h.get())
+        c["auto_update"] = "auto" if self.v_upd_auto.get() else "notify"
         new_model = self.v_model.get()
         model_changed = new_model != c.get("model")
         if not model_changed:
