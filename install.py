@@ -116,6 +116,7 @@ from install_system import (
     remove_legacy_shortcuts,
     remove_uninstall_entry,
     run_service,
+    service_command,
     uninstall_entry_values,
     write_uninstall_entry,
 )
@@ -139,11 +140,29 @@ __all__ = [
     migrate_legacy, model_description, model_step, pip_install,
     plan, product_entries, protected_reason, remove_legacy_shortcuts,
     remove_uninstall_entry, requirements_file, restore_target,
-    run_logged, run_selftest, run_service, say,
+    run_logged, run_selftest, run_service, say, service_command,
     stdin_tty, step, supported_languages, target_state,
     uninstall_entry_values, windows_language, write_config, write_marker,
     write_ps1, write_uninstall_entry,
 ]
+
+
+def choose_target(ask=None, interactive=None):
+    """Where to install: a console question, the default when unattended."""
+    tty = stdin_tty() if interactive is None else interactive
+    if not tty:
+        return DEFAULT_TARGET
+    asker = input if ask is None else ask
+    question = (f"\u041f\u0430\u043f\u043a\u0430 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438"
+                f" [{DEFAULT_TARGET}]: ")
+    try:
+        answer = asker(question)
+    except EOFError:
+        return DEFAULT_TARGET
+    answer = (answer or "").strip().strip('"').strip("'")
+    if not answer:
+        return DEFAULT_TARGET
+    return os.path.abspath(os.path.expandvars(answer))
 
 
 def run(args, log):
@@ -323,8 +342,9 @@ def main():
     ap.add_argument("--language", default="",
                     help="recognition language code (default: the Windows "
                          "locale; en when it has no matching code)")
-    ap.add_argument("--target", default=DEFAULT_TARGET,
-                    help="service folder (default: %%LOCALAPPDATA%%\\VibeForma)")
+    ap.add_argument("--target", default="",
+                    help="service folder; default: ask in a console, "
+                         "%%LOCALAPPDATA%%\\VibeForma when unattended")
     ap.add_argument("--dry-run", action="store_true",
                     help="show the plan without executing")
     ap.add_argument("--no-run", action="store_true",
@@ -337,8 +357,13 @@ def main():
                     help="install log path (default: "
                          "%%LOCALAPPDATA%%\\VibeForma\\logs\\install.log)")
     args = ap.parse_args()
-
-    log = InstallLog(args.log or None,
+    if not args.target.strip():
+        args.target = choose_target()
+    default_log = os.path.join(
+        os.path.abspath(os.path.expandvars(args.target)),
+        "logs", INSTALL_LOG_NAME)
+    log_path = args.log or default_log
+    log = InstallLog(log_path if (args.log or not args.dry_run) else None,
                      persist=not args.dry_run or bool(args.log))
     try:
         return run(args, log)

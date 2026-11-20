@@ -27,6 +27,9 @@ irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | 
 распознавания, ярлыки и запись в «Параметры → Приложения») и запускает
 сервис. Нажмите `Ctrl+Alt+Space` в любом приложении и говорите.
 
+Установщик спросит папку установки: Enter — `%LOCALAPPDATA%\VibeForma`,
+либо укажите другой каталог, например `D:\VibeForma`.
+
 Запустить позже: **«Пуск» → VibeForma**, ярлык на рабочем столе или
 `%LOCALAPPDATA%\VibeForma\run.cmd`. Значок сервиса живёт в трее.
 
@@ -37,6 +40,8 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 ```
 
 - `-Model <имя>` — поставить эту модель вместо диалога выбора
+- `-Target <папка>` — папка установки без вопроса (по умолчанию
+  `%LOCALAPPDATA%\VibeForma`)
 - `-Cpu` — только CPU (int8), даже если есть CUDA
 - `-DryRun` — показать план и ничего не менять
 - `-NoRun` — не запускать сервис в конце

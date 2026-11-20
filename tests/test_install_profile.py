@@ -175,8 +175,28 @@ def test_legacy_detected_requires_config_or_models(tmp_path):
 def test_shortcut_scripts_cover_start_menu_and_legacy():
     assert "Programs" in install.SHORTCUTS_PS
     assert "__LNK__" in install.SHORTCUTS_PS
+    assert "pythonw.exe" in install.SHORTCUTS_PS
+    assert "main.py" in install.SHORTCUTS_PS
+    assert "run.cmd" not in install.SHORTCUTS_PS
     assert "__LEGACY__" in install.LEGACY_LINKS_PS
     assert "GetFolderPath(\"Startup\")" in install.LEGACY_LINKS_PS
+
+
+def test_choose_target_asks_and_falls_back(tmp_path):
+    answer = str(tmp_path / "vf")
+    assert install.choose_target(
+        ask=lambda q: answer, interactive=True) == install.os.path.abspath(answer)
+    assert install.choose_target(
+        ask=lambda q: "", interactive=True) == install.DEFAULT_TARGET
+    assert install.choose_target(
+        ask=lambda q: None, interactive=False) == install.DEFAULT_TARGET
+
+
+def test_service_command_launches_pythonw_directly():
+    cmd = install.service_command(r"C:\VF")
+    assert cmd[0].endswith(install.os.path.join(
+        ".venv", "Scripts", "pythonw.exe"))
+    assert cmd[1].endswith("main.py")
 
 
 def test_uninstall_entry_values(tmp_path):

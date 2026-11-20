@@ -3,6 +3,26 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.2.1 — 2026-11-20
+
+### Fixed
+- **Shortcuts launch the app directly.** Desktop, Start menu and autostart
+  shortcuts now run `pythonw.exe main.py` instead of `run.cmd`, so a broken
+  `.cmd` association no longer blocks the launch. The installer starts the
+  service the same way.
+- **The monitoring panel can be brought back.** The tray has **Show panel**,
+  and launching the app again asks the running instance to show the panel
+  instead of exiting silently.
+- **The settings footer is always visible.** Save / Cancel are packed before
+  the expanding notebook: at 150% scaling the tab content scrolls and the
+  buttons are not cut off.
+
+### Added
+- **Install folder choice.** The installer asks where to install (default
+  `%LOCALAPPDATA%\VibeForma`); `--target` and the bootstrap `-Target` set the
+  folder without the question, for example `D:\VibeForma`. The README (en/ru)
+  describes the choice.
+
 ## 0.2.0 — 2026-11-20
 
 ### Added
