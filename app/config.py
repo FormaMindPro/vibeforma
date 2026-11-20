@@ -46,7 +46,8 @@ from model_catalog import MODEL_GB, MODELS  # noqa: E402,F401 - re-exported
 # Native names (endonyms) shown in the UI: every language is written in
 # that language itself.
 LANG_NAMES = {
-    "en": "English", "ru": "Русский", "uk": "Українська", "de": "Deutsch",
+    "en": "English", "ru": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
+    "uk": "\u0423\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430", "de": "Deutsch",
     "fr": "Français", "es": "Español", "it": "Italiano", "pt": "Português",
     "nl": "Nederlands", "pl": "Polski", "cs": "Čeština", "sv": "Svenska",
     "da": "Dansk", "fi": "Suomi", "no": "Norsk", "el": "Ελληνικά",
