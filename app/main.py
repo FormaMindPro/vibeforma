@@ -16,6 +16,7 @@ from config import (CONFIG_PATH, LOCK_PATH, LOG_DIR, LOG_PATH,
                     SERVICE_DIR, TEST_WAV, VERSION, find_input_device,
                     input_device_names, load, save)
 import dictionary
+import errors
 import history
 
 STATE_LOADING = "loading"
@@ -273,7 +274,7 @@ class Service:
                 self._finish_mic_test("", "error")
             self._set_state(STATE_IDLE)
             if self.tray:
-                self.tray.notify(self.tr("notify.mic_unavailable", err=e))
+                self.tray.notify(errors.text(self.cfg, "mic", e))
             return
         self._set_state(STATE_RECORDING)
 
@@ -387,9 +388,9 @@ class Service:
         except Exception as e:
             self.log.exception("Recognition error: %s", e)
             beep(400, 200)
-            self.set_last(self.tr("notify.error_last", err=e))
+            self.set_last(errors.last_line(self.cfg, "recognition", e))
             if self.tray:
-                self.tray.notify(self.tr("notify.error", err=e))
+                self.tray.notify(errors.text(self.cfg, "recognition", e))
         finally:
             if self._running:
                 self._set_state(STATE_IDLE)
@@ -640,14 +641,18 @@ class Service:
             try:
                 asr_mod._resolve_model(new_name, self.log)
             except Exception as e:
-                progress.update(phase="error", detail=str(e))
+                self.log.exception("Model download failed: %s", e)
+                progress.update(phase="error",
+                                detail=errors.text(self.cfg, "model", e))
                 return
             progress.update(phase="load", name=new_name)
             ok = self.asr.reload_model(new_name)
             if not ok:
                 self.cfg["model"] = old   # reload_model had already set the new name
                 save(self.cfg)
-                progress.update(phase="error", detail="load failed")
+                progress.update(phase="error",
+                                detail=errors.text(self.cfg, "model",
+                                                   RuntimeError("load failed")))
                 return
             save(self.cfg)
             if not keep_old:
@@ -664,7 +669,9 @@ class Service:
             if self.tray:
                 self.tray.notify(self.tr("notify.model_ok", name=new_name))
         except Exception as e:
-            progress.update(phase="error", detail=str(e))
+            self.log.exception("Model switch failed: %s", e)
+            progress.update(phase="error",
+                            detail=errors.text(self.cfg, "model", e))
 
     # -- updates -----------------------------------------------------------
     def check_updates(self, notify_latest: bool = False):
@@ -798,7 +805,7 @@ class Service:
                 self.log.exception("Model failed to load: %s", e)
                 self._set_state(STATE_ERROR)
                 if self.tray:
-                    self.tray.notify(self.tr("notify.model_error", err=e))
+                    self.tray.notify(errors.text(self.cfg, "model", e))
         threading.Thread(target=_load, daemon=True).start()
 
     def shutdown(self):

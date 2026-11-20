@@ -16,7 +16,7 @@ import dictionary
 import history
 import i18n
 import onboarding
-from config import LANG_NAMES, LANGS, MODELS, MODEL_GB, VERSION
+from config import DEFAULTS, LANG_NAMES, LANGS, MODELS, MODEL_GB, VERSION
 
 BG = "#16181D"
 FG = "#D5D9E0"
@@ -61,6 +61,28 @@ def process_ram_mb():
     return 0
 
 
+def phase_text(tr, p):
+    """Localized model-switch phase, shared by the dialog and the inline label."""
+    ph = p.get("phase")
+    if ph == "download":
+        name = p.get("name", "")
+        return tr("dlg.phase_download", name=name, gb=MODEL_GB.get(name, "?"))
+    if ph == "load":
+        return tr("dlg.phase_load", name=p.get("name", ""))
+    if ph == "remove":
+        return tr("dlg.phase_remove", name=p.get("name", ""))
+    if ph == "done":
+        text = tr("dlg.phase_done", name=p.get("name", ""))
+        if p.get("cache_note"):
+            text += "\n" + tr("dlg.cache_note", name=p["cache_note"])
+        return text
+    if ph == "busy":
+        return tr("dlg.phase_busy")
+    if ph == "error":
+        return tr("dlg.phase_error", detail=p.get("detail", ""))
+    return "…"
+
+
 class ModelSwitchDialog:
     """Progress dialog for a settings-driven model switch.
 
@@ -99,25 +121,7 @@ class ModelSwitchDialog:
         self.win.after(200, self._poll)
 
     def _text(self, p):
-        ph = p.get("phase")
-        if ph == "download":
-            name = p.get("name", "")
-            return self.tr("dlg.phase_download", name=name,
-                           gb=MODEL_GB.get(name, "?"))
-        if ph == "load":
-            return self.tr("dlg.phase_load", name=p.get("name", ""))
-        if ph == "remove":
-            return self.tr("dlg.phase_remove", name=p.get("name", ""))
-        if ph == "done":
-            t = self.tr("dlg.phase_done", name=p.get("name", ""))
-            if p.get("cache_note"):
-                t += "\n" + self.tr("dlg.cache_note", name=p["cache_note"])
-            return t
-        if ph == "busy":
-            return self.tr("dlg.phase_busy")
-        if ph == "error":
-            return self.tr("dlg.phase_error", detail=p.get("detail", ""))
-        return "…"
+        return phase_text(self.tr, p)
 
     def _poll(self):
         try:
@@ -170,6 +174,16 @@ class SettingsWindow:
 
         nb = self.nb = ttk.Notebook(body, style="Vibe.TNotebook")
         nb.pack(fill="both", expand=True)
+        search_row = tk.Frame(body, bg=BG)
+        search_row.pack(fill="x", padx=16, pady=(6, 0), before=nb)
+        tk.Label(search_row, text=tr("settings.search"), font=("Segoe UI", 9),
+                 fg=DIM, bg=BG).pack(side="left")
+        self.v_search = tk.StringVar(value="")
+        search_entry = tk.Entry(search_row, textvariable=self.v_search,
+                                width=24, bg=FIELD_BG, fg=FG,
+                                insertbackground=FG, relief="flat")
+        search_entry.pack(side="left", padx=(8, 0))
+        search_entry.bind("<Return>", lambda _e: self._search())
         f_rec = tk.Frame(nb, bg=BG)
         f_mod = tk.Frame(nb, bg=BG)
         f_dic = tk.Frame(nb, bg=BG)
@@ -185,24 +199,32 @@ class SettingsWindow:
         self._tab_frames = {"record": f_rec, "model": f_mod,
                             "dictionary": f_dic, "history": f_his,
                             "look": f_look, "system": f_sys}
+        self._frame_key = {frame: key for key, frame in
+                           self._tab_frames.items()}
+        self._search_index = []   # (label text, tab key, label widget)
 
         rows = self.rows = {}   # shared with _bind() below
 
         def head(f, text):
             rows[f] = rows.get(f, 0)
-            tk.Label(f, text=text, font=("Segoe UI", 10, "bold"),
-                     fg="#8FB8E8", bg=BG).grid(row=rows[f], column=0,
-                                               columnspan=2, sticky="w",
-                                               padx=16, pady=(12, 2))
+            label = tk.Label(f, text=text, font=("Segoe UI", 10, "bold"),
+                             fg="#8FB8E8", bg=BG)
+            label.grid(row=rows[f], column=0, columnspan=2, sticky="w",
+                       padx=16, pady=(12, 2))
             rows[f] += 1
+            self._search_index.append(
+                (text, self._frame_key[f], label))
 
-        def row(f, label, widget):
+        def row(f, label_text, widget):
             rows[f] = rows.get(f, 0)
-            tk.Label(f, text=label, font=("Segoe UI", 10), fg=FG,
-                     bg=BG).grid(row=rows[f], column=0, sticky="w",
-                                 padx=16, pady=2)
+            label = tk.Label(f, text=label_text, font=("Segoe UI", 10),
+                             fg=FG, bg=BG)
+            label.grid(row=rows[f], column=0, sticky="w",
+                       padx=16, pady=2)
             widget.grid(row=rows[f], column=1, sticky="e", padx=16, pady=2)
             rows[f] += 1
+            self._search_index.append(
+                (label_text, self._frame_key[f], label))
 
         def full(f, widget):
             rows[f] = rows.get(f, 0)
@@ -288,6 +310,10 @@ class SettingsWindow:
         row(f_mod, tr("settings.ui_lang"),
             opt(f_mod, self.v_ui, [d for d, _ in ui_pairs], width=16))
         note(f_mod, tr("settings.note_ui"))
+        self.model_status = tk.Label(f_mod, text="", font=("Segoe UI", 9),
+                                     fg="#9FE0A8", bg=BG, wraplength=px(420),
+                                     justify="left", anchor="w")
+        full(f_mod, self.model_status)
 
         # -- tab: dictionary -----------------------------------------------------
         self.dictionary = dictionary.normalize(c.get("dictionary"))
@@ -455,9 +481,16 @@ class SettingsWindow:
                   width=10, bg="#22262E", fg=FG, relief="flat",
                   activebackground="#2A2F38",
                   activeforeground=FG).pack(side="right")
+        tk.Button(btns, text=tr("settings.reset"), command=self._reset,
+                  width=10, bg="#22262E", fg=FG, relief="flat",
+                  activebackground="#2A2F38",
+                  activeforeground=FG).pack(side="left", padx=(16, 0))
         tk.Label(btns, text=tr("settings.version", ver=VERSION),
                  font=("Segoe UI", 9), fg=DIM,
-                 bg=BG).pack(side="left", padx=(16, 0))
+                 bg=BG).pack(side="left", padx=(12, 0))
+        self.save_status = tk.Label(btns, text="", font=("Segoe UI", 9),
+                                    fg="#9FE0A8", bg=BG)
+        self.save_status.pack(side="left", padx=(12, 0))
 
         body.columnconfigure(0, weight=1)
 
@@ -488,6 +521,76 @@ class SettingsWindow:
         frame = self._tab_frames.get(key)
         if frame is not None:
             self.nb.select(frame)
+
+    # -- search, reset, inline model progress --------------------------------
+    def _search(self):
+        """Jump to the first setting whose label contains the query."""
+        query = self.v_search.get().strip().casefold()
+        if not query:
+            return
+        for text, key, label in self._search_index:
+            if query in text.casefold():
+                self.select_tab(key)
+                self._flash(label)
+                return
+        for i in range(self.nb.index("end")):
+            title = str(self.nb.tab(i, "text"))
+            if query in title.casefold():
+                self.nb.select(i)
+                return
+        self.save_status.configure(text=self.tr("settings.search_nothing"))
+
+    def _flash(self, label):
+        """Highlight a found setting for a moment, then restore its colors."""
+        try:
+            label.configure(bg="#2E86DE", fg="white")
+
+            def _restore():
+                if self.win.winfo_exists():
+                    label.configure(bg=BG, fg="#8FB8E8")
+            self.win.after(1500, _restore)
+        except tk.TclError:
+            pass
+
+    def _reset(self):
+        """Restore option defaults; the model, dictionary and history stay."""
+        d = DEFAULTS
+        self.v_silence.set(d["silence_ms"])
+        self.v_partial.set(d["partial_every_s"])
+        self.v_maxrec.set(d["max_record_s"])
+        self.v_autostop.set(d["auto_stop"])
+        self.v_beep_on.set(d["beep_on"])
+        self.v_beep_off.set(d["beep_off"])
+        self.v_keep.set(d["model_keep_old"])
+        self.v_lang.set(LANG_NAMES.get(d["language"], d["language"]))
+        self.v_ui.set("auto")
+        self.v_paste.set(d["paste_method"])
+        self.v_restore.set(d["restore_clipboard"])
+        self.v_confirm.set(d["confirm_focus_change"])
+        self.v_exclude.set(d["clipboard_exclude_history"])
+        self.v_notify_text.set(d["notify_text"])
+        self.v_hud.set(d["hud"])
+        self.v_alpha.set(d["hud_alpha"])
+        self.v_autogrow.set(d["hud_autogrow"])
+        self.v_hotkey.set(d["hotkey"])
+        self.v_device.set(d["input_device"])
+        self.v_autostart.set(d["autostart"])
+        self.v_upd.set(d["update_check"])
+        self.v_upd_auto.set(d["auto_update"] == "auto")
+        self.v_upd_h.set(d["update_interval_h"])
+        self.save_status.configure(text=self.tr("settings.reset_done"))
+
+    def _poll_model(self, progress):
+        """Show the switch progress inside the settings window."""
+        try:
+            if not self.win.winfo_exists():
+                return
+            p = dict(progress)
+            self.model_status.configure(text=phase_text(self.tr, p))
+            if p.get("phase") not in ("done", "error", "busy"):
+                self.win.after(400, lambda: self._poll_model(progress))
+        except tk.TclError:
+            pass
 
     # -- dictionary tab ------------------------------------------------------
     def _refresh_dictionary(self):
@@ -531,8 +634,8 @@ class SettingsWindow:
             with open(path, encoding="utf-8") as f:
                 imported = dictionary.from_json(f.read())
         except (OSError, ValueError) as e:
-            self.dic_status.configure(text=self.tr("dictionary.bad_file",
-                                                   err=e))
+            self.log.exception("Dictionary import failed: %s", e)
+            self.dic_status.configure(text=self.tr("dictionary.bad_file"))
             return
         self.dictionary = dictionary.normalize(self.dictionary + imported)
         self._refresh_dictionary()
@@ -550,8 +653,8 @@ class SettingsWindow:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(dictionary.to_json(self.dictionary))
         except OSError as e:
-            self.dic_status.configure(text=self.tr("dictionary.bad_file",
-                                                   err=e))
+            self.log.exception("Dictionary export failed: %s", e)
+            self.dic_status.configure(text=self.tr("dictionary.bad_file"))
             return
         self.dic_status.configure(
             text=self.tr("dictionary.exported", path=os.path.basename(path)))
@@ -707,11 +810,15 @@ class SettingsWindow:
             self.svc.apply_settings(c)
         except Exception as e:
             self.log.exception("Saving settings failed: %s", e)
+            self.save_status.configure(text=self.tr("settings.save_failed"))
+            return
         if old_history and not c["history"]:
             # Turning the history off forgets what was stored locally.
             self.svc.history_clear()
-        self.win.destroy()
+        # The window stays open: the confirmation is visible right here.
+        self.save_status.configure(text=self.tr("settings.saved"))
         if model_changed:
             progress = {"phase": "download", "name": new_model}
-            ModelSwitchDialog(self.master, progress, self.tr)
+            self.model_status.configure(text=phase_text(self.tr, progress))
+            self._poll_model(progress)
             self.svc.switch_model(new_model, bool(self.v_keep.get()), progress)

@@ -177,7 +177,8 @@ def test_rerun_after_a_model_failure_resumes_and_finishes(
     marker = json.loads(
         (target / install.INSTALL_MARKER).read_text(encoding="utf-8"))
     assert marker["complete"] is True
-    assert "Done." in log.read_text(encoding="utf-8")
+    done = install.installer_text(install.installer_language(), "done")
+    assert done in log.read_text(encoding="utf-8")
 
 
 @pytest.mark.windows

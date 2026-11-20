@@ -255,6 +255,67 @@ def default_model(device):
     return DEFAULT_MODEL_CPU if device == "cpu" else DEFAULT_MODEL
 
 
+# Installer UI: ru on a Russian Windows, en everywhere else (fallback en).
+# Log lines and step titles stay English on purpose - they are diagnostics
+# read by maintainers, not by the person installing.
+INSTALLER_TEXTS = {
+    "en": {
+        "title": "VibeForma - setup",
+        "heading": "Choose the model to install",
+        "hint": ("It downloads once and runs locally; "
+                 "you can switch models later in Settings."),
+        "cpu_hint": " No CUDA found - the small model is preselected for CPU.",
+        "language_label": "Recognition language:",
+        "language_hint": ("The model recognizes exactly this language; "
+                          "you can switch it later in the tray or Settings."),
+        "install": "Install",
+        "cancel": "Cancel",
+        "console_choose": "Choose the model to install:",
+        "console_number": "Number [1-{n}] (Enter = {default}): ",
+        "console_language": "Recognition language [en, ru, ...] (Enter = {language}): ",
+        "unattended": "   no console attached - using {model} / {language}",
+        "cancelled": "Installation cancelled - no model chosen.",
+        "done": ("Done. Hotkey: Ctrl+Alt+Space (by default). "
+                 "Tray icon + monitoring panel are up."),
+    },
+    "ru": {
+        "title": "VibeForma - установка",
+        "heading": "Выберите модель для установки",
+        "hint": ("Она скачается один раз и работает локально; "
+                 "модель можно сменить позже в настройках."),
+        "cpu_hint": " CUDA не найдена - для процессора выбрана модель small.",
+        "language_label": "Язык распознавания:",
+        "language_hint": ("Модель распознаёт ровно этот язык; "
+                          "его можно сменить позже в трее или настройках."),
+        "install": "Установить",
+        "cancel": "Отмена",
+        "console_choose": "Выберите модель для установки:",
+        "console_number": "Номер [1-{n}] (Enter = {default}): ",
+        "console_language": "Язык распознавания [en, ru, ...] (Enter = {language}): ",
+        "unattended": "   консоль не подключена - беру {model} / {language}",
+        "cancelled": "Установка отменена - модель не выбрана.",
+        "done": ("Готово. Горячая клавиша: Ctrl+Alt+Space (по умолчанию). "
+                 "Иконка в трее и панель мониторинга запущены."),
+    },
+}
+
+
+def installer_language(locale=None):
+    """Installer UI language from a Windows locale; en is the fallback."""
+    raw = str(locale if locale is not None else windows_language() or "")
+    code = raw.replace("_", "-").split("-")[0].strip().lower()
+    return "ru" if code == "ru" else "en"
+
+
+def installer_text(lang, key, **kw):
+    """A user-facing installer string; an unknown key falls back to en."""
+    table = INSTALLER_TEXTS.get(lang) or INSTALLER_TEXTS["en"]
+    text = table.get(key)
+    if text is None:
+        text = INSTALLER_TEXTS["en"].get(key, key)
+    return text.format(**kw) if kw else text
+
+
 def legacy_dir():
     base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
     return os.path.join(base, LEGACY_DIR_NAME)
@@ -680,14 +741,18 @@ def write_ps1(body):
     return path
 
 
-def model_description(name):
+def model_description(name, lang="en"):
     """Model blurb from the shipped locale (single source of wording)."""
-    try:
-        with open(os.path.join(APP_DIR, "locales", "en.json"),
-                  encoding="utf-8") as f:
-            return json.load(f).get(f"models.desc.{name}", "")
-    except Exception:  # noqa: BLE001 - a missing blurb is not fatal
-        return ""
+
+    def blurb(code):
+        try:
+            with open(os.path.join(APP_DIR, "locales", code + ".json"),
+                      encoding="utf-8") as f:
+                return json.load(f).get(f"models.desc.{name}") or ""
+        except Exception:  # noqa: BLE001 - a missing blurb is not fatal
+            return ""
+
+    return blurb(lang) or blurb("en") or ""
 
 
 def stdin_tty():
@@ -707,8 +772,9 @@ def choose_setup(log=None, device="cuda", language="en"):
     """
     write = log.write if log is not None else say
     default = default_model(device)
+    ui = installer_language()
     if not stdin_tty():
-        write(f"   no console attached - using {default} / {language}")
+        write(installer_text(ui, "unattended", model=default, language=language))
         return {"model": default, "language": language}
     # crisp dialog at Windows scaling >100% (the app does the same in main.py)
     with contextlib.suppress(Exception):
@@ -719,16 +785,15 @@ def choose_setup(log=None, device="cuda", language="en"):
     except Exception:  # noqa: BLE001 - fall back to the console menu
         root = None
     if root is not None:
-        root.title("VibeForma - setup")
+        root.title(installer_text(ui, "title"))
         root.configure(bg="#16181D")
         root.resizable(False, False)
-        tk.Label(root, text="Choose the model to install",
+        tk.Label(root, text=installer_text(ui, "heading"),
                  font=("Segoe UI", 11, "bold"), fg="#8FB8E8",
                  bg="#16181D").pack(fill="x", padx=16, pady=(12, 2))
-        hint = ("It downloads once and runs locally; "
-                "you can switch models later in Settings.")
+        hint = installer_text(ui, "hint")
         if device == "cpu":
-            hint += " No CUDA found - the small model is preselected for CPU."
+            hint += installer_text(ui, "cpu_hint")
         tk.Label(root, text=hint,
                  font=("Segoe UI", 9), fg="#7A8290", bg="#16181D",
                  wraplength=370, justify="left").pack(fill="x", padx=16)
@@ -743,21 +808,20 @@ def choose_setup(log=None, device="cuda", language="en"):
                            activeforeground="#D5D9E0",
                            highlightthickness=0,
                            anchor="w").pack(fill="x")
-            tk.Label(row, text=model_description(name), font=("Segoe UI", 8),
+            tk.Label(row, text=model_description(name, ui), font=("Segoe UI", 8),
                      fg="#7A8290", bg="#16181D", wraplength=370,
                      justify="left").pack(fill="x", padx=(26, 0))
         codes = supported_languages() or (language,)
         lang_var = tk.StringVar(value=language)
         lang_row = tk.Frame(root, bg="#16181D")
         lang_row.pack(fill="x", padx=16, pady=(10, 0))
-        tk.Label(lang_row, text="Recognition language:",
+        tk.Label(lang_row, text=installer_text(ui, "language_label"),
                  font=("Segoe UI", 10), fg="#D5D9E0",
                  bg="#16181D").pack(side="left")
         tk.OptionMenu(lang_row, lang_var, *codes).configure(
             font=("Segoe UI", 10), bg="#22262E", fg="#D5D9E0",
             activebackground="#2A2F38", highlightthickness=0)
-        tk.Label(root, text="The model recognizes exactly this language; "
-                 "you can switch it later in the tray or Settings.",
+        tk.Label(root, text=installer_text(ui, "language_hint"),
                  font=("Segoe UI", 8), fg="#7A8290", bg="#16181D",
                  wraplength=370, justify="left").pack(fill="x", padx=16)
         result = {"model": None, "language": None}
@@ -769,12 +833,12 @@ def choose_setup(log=None, device="cuda", language="en"):
 
         btns = tk.Frame(root, bg="#16181D")
         btns.pack(fill="x", pady=(10, 12))
-        tk.Button(btns, text="Install", command=_install, width=10,
-                  bg="#2E86DE", fg="white", relief="flat",
+        tk.Button(btns, text=installer_text(ui, "install"), command=_install,
+                  width=10, bg="#2E86DE", fg="white", relief="flat",
                   activebackground="#1B6EC2",
                   activeforeground="white").pack(side="right", padx=(4, 16))
-        tk.Button(btns, text="Cancel", command=root.destroy, width=10,
-                  bg="#22262E", fg="#D5D9E0", relief="flat",
+        tk.Button(btns, text=installer_text(ui, "cancel"), command=root.destroy,
+                  width=10, bg="#22262E", fg="#D5D9E0", relief="flat",
                   activebackground="#2A2F38",
                   activeforeground="#D5D9E0").pack(side="right")
         root.update_idletasks()
@@ -784,13 +848,15 @@ def choose_setup(log=None, device="cuda", language="en"):
         return result["model"] and result  # None when cancelled
     # console fallback (tty, no Tk)
     write("")
-    write("Choose the model to install:")
+    write(installer_text(ui, "console_choose"))
     for i, name in enumerate(MODELS, 1):
-        write(f"  {i}. {name:<16} ~{MODEL_GB[name]:.1f} GB   {model_description(name)}")
-    raw = input(
-        f"Number [1-{len(MODELS)}] (Enter = {default}): ").strip()
+        write(f"  {i}. {name:<16} ~{MODEL_GB[name]:.1f} GB   "
+              f"{model_description(name, ui)}")
+    raw = input(installer_text(ui, "console_number", n=len(MODELS),
+                               default=default)).strip()
     model = MODELS[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(MODELS) else default
-    chosen = input(f"Recognition language [en, ru, ...] (Enter = {language}): ").strip().lower()
+    chosen = input(installer_text(ui, "console_language",
+                                  language=language)).strip().lower()
     if chosen not in supported_languages():
         chosen = language
     return {"model": model, "language": chosen}
@@ -997,7 +1063,7 @@ def run(args, log):
     if not model and not args.dry_run:
         choice = choose_setup(log, device, language)
         if choice is None:
-            log.write("Installation cancelled - no model chosen.")
+            log.write(installer_text(installer_language(), "cancelled"))
             return 0
         model = choice["model"]
         language = choice["language"]
@@ -1118,8 +1184,7 @@ def run(args, log):
         return 1
     log.write("")
     log.write("-" * 62)
-    log.write("Done. Hotkey: Ctrl+Alt+Space (by default). "
-              "Tray icon + panel are up.")
+    log.write(installer_text(installer_language(), "done"))
     log.write(f"Log: {log.path}")
     return 0
 
