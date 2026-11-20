@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+- **The one-command install from GitHub is the main path.** The README and
+  `docs/INSTALL-WINDOWS.md` say so explicitly: the bootstrap command installs
+  the latest release into the user's Python environment, and the packed setup
+  is the optional path for machines without Python (no certificate or release
+  signing is required to distribute by the command).
+
 ### Added
 - **A packed Windows setup, signed and fail-closed.** `tools/build_installer.py`
   builds a one-folder PyInstaller application (no Python on the target) and a
