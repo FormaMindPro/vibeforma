@@ -57,11 +57,12 @@ def bundle_check() -> int:
 
 
 def main() -> None:
-    if getattr(sys, "frozen", False):
+    if (getattr(sys, "frozen", False)
+            and "VIBEFORMA_DATA_DIR" not in os.environ):
         base = os.path.join(os.environ.get("LOCALAPPDATA",
                                            os.path.expanduser("~")),
                             "VibeForma")
-        os.environ.setdefault("VIBEFORMA_DATA_DIR", base)
+        os.environ["VIBEFORMA_DATA_DIR"] = base
         os.makedirs(base, exist_ok=True)
     if "--bundle-check" in sys.argv:
         sys.exit(bundle_check())

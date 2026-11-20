@@ -125,6 +125,12 @@ def test_entrypoint_keeps_data_out_of_the_program_folder():
     assert text.index("VIBEFORMA_DATA_DIR") < text.index("from vibeforma")
 
 
+def test_entrypoint_respects_a_caller_data_dir():
+    text = ENTRY.read_text(encoding="utf-8")
+    assert '"VIBEFORMA_DATA_DIR" not in os.environ' in text
+    assert "setdefault" not in text
+
+
 def test_release_workflow_signs_and_fails_closed():
     text = (ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8")

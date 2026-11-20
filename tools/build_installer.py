@@ -248,7 +248,10 @@ def bundle_check(exe):
     """Run the packed exe's self-diagnosis; returns (ok, report text)."""
     with contextlib.suppress(OSError):
         os.remove(BUNDLE_REPORT)
-    result = subprocess.run([exe, "--bundle-check"], timeout=300, check=False)
+    with tempfile.TemporaryDirectory(prefix="vibeforma-bundle-data-") as data:
+        env = dict(os.environ, VIBEFORMA_DATA_DIR=data)
+        result = subprocess.run([exe, "--bundle-check"], timeout=300,
+                                check=False, env=env)
     text = ""
     with (contextlib.suppress(OSError),
           open(BUNDLE_REPORT, encoding="utf-8") as f):
