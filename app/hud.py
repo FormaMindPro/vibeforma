@@ -12,6 +12,7 @@ STATE_COLORS = {
     "processing": "#F39C12",
     "paused": "#5D6D7E",
     "error": "#8E44AD",
+    "updating": "#8FB8E8",
 }
 BG = "#16181D"
 FG = "#D5D9E0"

@@ -18,6 +18,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   0.1.9 are a recorded ceiling; any new finding fails CI, while fixing the
   old ones stays a separate cleanup task.
 - README badges and a local test command.
+- **Verified, consent-based updates.** A release now ships a signed
+  `release-manifest.json` (minisign / Ed25519) and `SHA256SUMS`; the updater
+  checks the signature, the zip hash and a signed file whitelist before any
+  installer code runs, and refuses an unsigned release. `auto_update` defaults
+  to `notify`: the tray offers Update / Later, and only an explicit opt-in
+  installs without asking. The new `updating` state blocks the hotkey and
+  recording. Before replacing files the updater backs them up and restores the
+  previous version if the installer fails.
+- `tools/build_release.py` and `.github/workflows/release.yml`: build the zip
+  with `test_ru.wav`, write the manifest and `SHA256SUMS`, sign the manifest in
+  CI, and fail closed when the signing secret is absent.
+- `test_ru.wav` is now part of the repository and the release; `install.py`
+  copies it and gained `--selftest`.
+
+### Note
+- The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
+  empty), so real updates are refused until a maintainer adds the public key
+  and `MINISIGN_SECRET_KEY` to the repository secrets. This is deliberate:
+  no unsigned update is applied.
 
 ## 0.1.9 — 2026-11-20
 

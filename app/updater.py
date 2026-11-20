@@ -1,9 +1,13 @@
-"""Release update checker: GitHub latest release, apply while idle.
+"""Release update checker: GitHub latest release, verified apply while idle.
 
-The background loop in main.py calls latest_release() every
-update_interval_h hours (default 2). When a newer release is found, apply()
-downloads the release zip and runs install.py against the current service
-folder; the service then restarts itself. Failures are logged, never fatal.
+The background loop in main.py checks every update_interval_h hours
+(default 2). A check only records a pending release; applying it requires
+the user's consent (auto_update == "notify", the default) or an explicit
+opt-in (auto_update == "auto"). Before any installer code runs, the zip is
+authenticated against a signed manifest and a compiled-in public key; on
+failure the previous installation is restored from a backup.
+
+The network is used only for the release metadata and assets, as before.
 """
 import json
 import logging
@@ -14,8 +18,14 @@ import sys
 import tempfile
 import urllib.request
 
+import release_verify
+
 REPO_API = "https://api.github.com/repos/FormaMindPro/vibeforma/releases/latest"
 _UA = {"User-Agent": "VibeForma-updater"}
+PRODUCT_FILES = ("run.cmd", "requirements.txt", "test_ru.wav", "config.json")
+PRODUCT_DIRS = ("assets", "locales", "app")
+SKIP_DIRS = {"__pycache__", ".venv", "models", "logs"}
+SKIP_FILES = {"service.lock", "config.json.tmp"}
 
 
 def version_tuple(v):
@@ -32,64 +42,154 @@ def is_newer(latest, current):
 
 
 def latest_release():
-    """Latest GitHub release: {'tag', 'version', 'zip', 'html'} or None."""
+    """Latest GitHub release: tag, version, asset URLs; None if unusable."""
     req = urllib.request.Request(REPO_API, headers=_UA)
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
         data = json.load(r)
     ver = version_tuple(data.get("tag_name", ""))
     if not ver:
         return None
-    asset = next((a for a in data.get("assets", [])
-                  if str(a.get("name", "")).startswith("VibeForma-")
-                  and str(a.get("name", "")).endswith(".zip")), None)
+    assets = {str(a.get("name", "")): a.get("browser_download_url")
+              for a in data.get("assets", [])}
+    zip_name = next((name for name in assets
+                     if name.startswith("VibeForma-")
+                     and name.endswith(".zip")), None)
     return {
         "tag": data.get("tag_name", ""),
         "version": ver,
-        "zip": asset.get("browser_download_url") if asset else None,
+        "zip": assets.get(zip_name) if zip_name else None,
+        "manifest": assets.get("release-manifest.json"),
+        "signature": assets.get("release-manifest.json.minisig"),
         "html": data.get("html_url", ""),
     }
 
 
-def apply(release, service_dir, log: logging.Logger):
-    """Download the release zip and run install.py against service_dir.
+def download_asset(url, path, timeout):
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:  # noqa: S310
+        shutil.copyfileobj(r, f)
 
-    install.py skips what already exists (venv, config, cached model), so
-    an update is cheap: copy app files, refresh shortcuts.
+
+def verify_release_files(zip_path, manifest_path, signature_path, tag,
+                         public_key_b64=None):
+    """Authenticate the manifest, hash and layout; returns the manifest."""
+    with open(manifest_path, "rb") as f:
+        manifest_bytes = f.read()
+    with open(signature_path, encoding="utf-8") as f:
+        signature_text = f.read()
+    release_verify.verify_manifest(
+        manifest_bytes, signature_text, public_key_b64)
+    manifest = release_verify.parse_manifest(manifest_bytes)
+    release_verify.version_matches(manifest, tag)
+    expected_zip = f"VibeForma-{manifest['version']}.zip"
+    if manifest["zip"] not in (os.path.basename(zip_path), expected_zip):
+        raise release_verify.ReleaseError(
+            "release manifest names a different zip")
+    release_verify.verify_zip(zip_path, manifest)
+    return manifest
+
+
+def _product_entries(service_dir):
+    entries = []
+    for name in sorted(os.listdir(service_dir)):
+        path = os.path.join(service_dir, name)
+        if name in SKIP_FILES or name in SKIP_DIRS:
+            continue
+        if os.path.isdir(path):
+            if name in PRODUCT_DIRS:
+                entries.append(name)
+        elif name.endswith(".py") or name in PRODUCT_FILES:
+            entries.append(name)
+    return entries
+
+
+def backup_service(service_dir, backup_dir):
+    """Copy product files and config aside; returns the saved entry names."""
+    os.makedirs(backup_dir, exist_ok=True)
+    names = _product_entries(service_dir)
+    for name in names:
+        src = os.path.join(service_dir, name)
+        dst = os.path.join(backup_dir, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+    return names
+
+
+def restore_service(service_dir, backup_dir, names):
+    """Put the saved entries back and drop product files added by a failed run."""
+    for name in _product_entries(service_dir):
+        if name not in names:
+            path = os.path.join(service_dir, name)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+    for name in names:
+        src = os.path.join(backup_dir, name)
+        dst = os.path.join(service_dir, name)
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        elif os.path.exists(dst):
+            os.remove(dst)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
+
+def _run_installer(src, service_dir):
+    r = subprocess.run(
+        [sys.executable, "install.py", "--target", service_dir, "--no-run"],
+        cwd=src, capture_output=True, text=True, timeout=1800)
+    return r.returncode, (r.stdout or r.stderr or "")[-500:]
+
+
+def apply(release, service_dir, log: logging.Logger, installer=None,
+          public_key_b64=None):
+    """Verified download, backup, install; rollback on failure.
+
+    Returns (ok, reason). The reason is English and meant for the log; the
+    UI shows a localized message and never raw network details.
     """
-    import zipfile
+    installer = installer or _run_installer
+    if not release.get("zip"):
+        return False, "release has no zip asset"
+    if not release.get("manifest") or not release.get("signature"):
+        return False, "release has no manifest or signature asset"
+    if public_key_b64 is None and not release_verify.RELEASE_PUBLIC_KEY:
+        return False, "release signing key is not configured; update refused"
 
     tmp = tempfile.mkdtemp(prefix="VibeForma-update-")
     try:
-        if not release.get("zip"):
-            log.warning("Update: release %s has no zip asset", release.get("tag"))
-            return False
         zp = os.path.join(tmp, "update.zip")
-        req = urllib.request.Request(release["zip"], headers=_UA)
-        with urllib.request.urlopen(req, timeout=60) as r, open(zp, "wb") as f:
-            shutil.copyfileobj(r, f)
-        xdir = os.path.join(tmp, "x")
-        with zipfile.ZipFile(zp) as z:
-            z.extractall(xdir)
-        src = None
-        for n in os.listdir(xdir):
-            if os.path.exists(os.path.join(xdir, n, "install.py")):
-                src = os.path.join(xdir, n)
-                break
-        if not src:
-            log.warning("Update: install.py not found in the release zip")
-            return False
+        mp = os.path.join(tmp, "release-manifest.json")
+        sp = os.path.join(tmp, "release-manifest.json.minisig")
+        download_asset(release["zip"], zp, 60)
+        download_asset(release["manifest"], mp, 30)
+        download_asset(release["signature"], sp, 30)
+        manifest = verify_release_files(
+            zp, mp, sp, release["tag"], public_key_b64)
+        src = release_verify.extract_verified(
+            zp, manifest, os.path.join(tmp, "x"))
+
+        backup_dir = os.path.join(tmp, "backup")
+        saved = backup_service(service_dir, backup_dir)
         log.info("Update: applying %s to %s", release["tag"], service_dir)
-        r = subprocess.run(
-            [sys.executable, "install.py", "--target", service_dir, "--no-run"],
-            cwd=src, capture_output=True, text=True, timeout=1800)
-        if r.returncode != 0:
-            log.warning("Update: installer exit %s: %s",
-                        r.returncode, (r.stdout or r.stderr)[-500:])
-            return False
+        code, output = installer(src, service_dir)
+        if code != 0:
+            restore_service(service_dir, backup_dir, saved)
+            log.warning("Update: installer exit %s, previous files restored: %s",
+                        code, output)
+            return False, f"installer exit {code}"
         log.info("Update applied to %s", service_dir)
-        return True
+        return True, ""
+    except release_verify.ReleaseError as e:
+        log.warning("Update refused: %s", e)
+        return False, str(e)
     except Exception as e:
-        log.warning("Update apply failed: %s", e)
-        return False
+        log.warning("Update apply failed: %s", e, exc_info=True)
+        return False, str(e)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

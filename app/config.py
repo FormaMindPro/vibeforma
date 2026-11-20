@@ -61,6 +61,7 @@ DEFAULTS = {
     "http_port": 8787,
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks
+    "auto_update": "notify",            # notify (ask) | auto (explicit opt-in)
     "model_keep_old": True,             # keep the previous model on disk (fast switching)
 }
 

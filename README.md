@@ -37,8 +37,11 @@ the model.
   language, logs folder
 - Auto-update: the service checks GitHub releases in the background (default
   every 2 h; the interval and the on/off switch live in settings, plus a
-  "Check now" button) — a newer release is downloaded, installed into the
-  same folder and the service restarts itself
+  "Check now" button). A newer release is offered, not forced: the tray shows
+  Update / Later, and only the explicit "install automatically" opt-in skips
+  the question. The release manifest is signed (minisign/Ed25519); the updater
+  verifies the signature, the zip hash and the file list before running the
+  installer, keeps a backup and restores the previous version on failure.
 - Autostart with Windows, desktop shortcut, single-instance lock, rotating logs
 
 ## Install
