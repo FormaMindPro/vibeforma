@@ -91,7 +91,11 @@ Pop-Location
 if ($rc -eq 0) {
     Remove-Item -Path $tmp -Recurse -Force
     Write-Host ""
-    Write-Host "VibeForma is installed. Hotkey: Ctrl+Alt+Space (by default)."
+    if ($DryRun) {
+        Write-Host "Dry run complete - nothing was installed."
+    } else {
+        Write-Host "VibeForma is installed. Hotkey: Ctrl+Alt+Space (by default)."
+    }
 } else {
     Write-Host ""
     Write-Host "[X] Installer exited with code $rc. Files kept at: $srcPath"
