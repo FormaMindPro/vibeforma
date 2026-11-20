@@ -1,5 +1,10 @@
 # Installing VibeForma on Windows
 
+> The main install path is the one-command bootstrap from the README
+> (`irm .../install.ps1 | iex`): it downloads the latest release and runs
+> the installer in your Python environment. This page covers the optional
+> packed setup — the same app without Python.
+
 The Windows setup installs the app for the current user: no administrator
 rights, no Python, no build tools. Recognition models are downloaded on the
 first run and live in your user profile.
