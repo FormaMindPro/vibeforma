@@ -1,0 +1,4 @@
+# Development and CI tooling for VibeForma (not installed into the service venv).
+ruff==0.17.6
+pytest==8.4.2
+pytest-cov==7.0.0

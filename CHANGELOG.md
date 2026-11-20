@@ -3,6 +3,22 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+- **CI and a test suite.** GitHub Actions runs the tests on Windows and the
+  platform-independent subset on Ubuntu (`-m "not windows"`), plus a ruff
+  gate. The 34 tests need no model, GPU or network: config load/save and
+  atomic replace, en/ru locale key and placeholder parity, version-to-changelog
+  sync, `updater.version_tuple` and release parsing, clipboard insertion with
+  substituted clipboard/keyboard modules, the installer with a substituted
+  `subprocess`, and the HTTP API guards (loopback, idle, known path).
+- `requirements-dev.txt` with pinned `ruff`, `pytest` and `pytest-cov`.
+- `tools/ruff_gate.py` and `tools/ruff-baseline.json`: the 164 findings of
+  0.1.9 are a recorded ceiling; any new finding fails CI, while fixing the
+  old ones stays a separate cleanup task.
+- README badges and a local test command.
+
 ## 0.1.9 — 2026-11-20
 
 ### Fixed

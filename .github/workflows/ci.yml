@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install development tools
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Compile sources
+        run: python -m compileall -q app install.py tests tools
+
+      - name: Ruff baseline gate
+        run: python tools/ruff_gate.py
+
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest -q
+
+      - name: Tests (Linux, pure functions)
+        if: runner.os == 'Linux'
+        run: python -m pytest -q -m "not windows"

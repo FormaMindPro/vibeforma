@@ -9,6 +9,7 @@
 **~99 языков** — одна скачанная модель обслуживает их все. Ничего не покидает
 компьютер; сеть нужна ровно один раз — чтобы скачать модель.
 
+[![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > Это русская копия [README.md](README.md); в ней описано то же самое.
@@ -137,6 +138,22 @@ install.py             установщик (python, stdlib)
 - **Микрофон не слышит** — выберите устройство ввода в трее; панель показывает предупреждение о тишине, если уровень около нуля при записи.
 - **Текст вставляется не в то окно** — сервис возвращает фокус в окно, активное при нажатии хоткея; не переключайте окна во время диктовки.
 - **Русская раскладка и Ctrl+V** — по умолчанию вставка через Shift+Insert, это не зависит от раскладки; переключается в настройках.
+
+## Разработка
+
+Тесты идут без модели, GPU и сети. CI на Windows прогоняет весь набор, на
+Linux — только платформенно-независимые тесты (`-m "not windows"`).
+
+```bat
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python tools\ruff_gate.py
+```
+
+`tools/ruff_gate.py` сверяет вывод `ruff` с `tools/ruff-baseline.json`:
+164 замечания, зафиксированные в 0.1.9, — потолок; любое новое замечание
+валит гейт. Исправление записанных — отдельная задача гигиены кода.
 
 ## Проверка кода ИИ-ассистентом
 

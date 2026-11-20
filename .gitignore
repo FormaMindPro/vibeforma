@@ -8,3 +8,10 @@ service.lock
 config.json
 test_ru.wav
 *.tmp
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
