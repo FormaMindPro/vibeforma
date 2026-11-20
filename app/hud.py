@@ -23,6 +23,14 @@ LINE_H = 20
 BASE_H = 190
 
 
+def dpi_factor(win):
+    """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
+    try:
+        return max(1.0, win.winfo_fpixels("1i") / 96.0)
+    except Exception:
+        return 1.0
+
+
 class Hud:
     def __init__(self, svc, log):
         self.svc = svc
@@ -34,69 +42,88 @@ class Hud:
         self._root_h = BASE_H
 
         self.root = tk.Tk()
+        px = self._px = lambda n: int(round(n * dpi_factor(self.root)))  # noqa: E731
+        self._W = px(W)
+        self._line_h = px(LINE_H)
+        base_h = px(BASE_H)
+        self._root_h = base_h
+
         self.root.title("VibeForma")
-        self.root.geometry("%dx%d+%d+%d" % self._place())
+        self.root.geometry("%dx%d+%d+%d" % self._place(base_h))
         self.root.attributes("-topmost", True)
         self.root.overrideredirect(True)   # borderless
         self.root.configure(bg=BG)
         self.root.attributes("-alpha", float(self.cfg.get("hud_alpha", 0.94)))
 
-        # -- header: [⚙]  status …  |  [✕] ---------------------------------
+        # -- header: [⚙]  status …  |  [🎤] [✕] ----------------------------
         top = tk.Frame(self.root, bg=BG)
-        top.pack(fill="x", padx=12, pady=(10, 2))
+        top.pack(fill="x", padx=px(12), pady=(px(10), px(2)))
         gear = tk.Label(top, text="⚙", font=("Segoe UI", 12), fg=FG, bg=BG,
                         cursor="hand2")
         gear.pack(side="left")
         gear.bind("<Button-1>", lambda e: self._open_settings())
-        self.dot = tk.Canvas(top, width=14, height=14, bg=BG, highlightthickness=0)
-        self.dot.pack(side="left", padx=(10, 4))
+        self.dot = tk.Canvas(top, width=px(14), height=px(14), bg=BG,
+                             highlightthickness=0)
+        self.dot.pack(side="left", padx=(px(10), px(4)))
         self.lbl = tk.Label(top, text="…", font=("Segoe UI", 11, "bold"),
                             fg=FG, bg=BG, anchor="w")
         self.lbl.pack(side="left")
-        sep = tk.Frame(top, width=1, height=16, bg="#3A4048")
-        sep.pack(side="right", padx=(8, 10))
+        # record button: click = the same state-guarded toggle as the hotkey
+        self.mic = tk.Label(top, text="🎤", font=("Segoe UI", 13), fg=FG,
+                            bg=BG, cursor="hand2", padx=px(6))
+        self.mic.bind("<Button-1>", lambda e: self._on_mic())
         xlab = tk.Label(top, text="✕", font=("Segoe UI", 11), fg=DIM, bg=BG,
                         cursor="hand2")
-        xlab.pack(side="right")
         xlab.bind("<Button-1>", lambda e: self.root.withdraw())
+        sep = tk.Frame(top, width=px(1), height=px(16), bg="#3A4048")
+        xlab.pack(side="right")
+        sep.pack(side="right", padx=(px(4), px(8)))
+        self.mic.pack(side="right")
         self._bind_drag(self.dot)
         self._bind_drag(self.lbl)
         self._bind_drag(top)
 
         # -- level bar + device hint ---------------------------------------
-        self.bar = tk.Canvas(self.root, height=10, bg="#22262E",
+        self.bar = tk.Canvas(self.root, height=px(10), bg="#22262E",
                              highlightthickness=0)
-        self.bar.pack(fill="x", padx=12, pady=(6, 0))
+        self.bar.pack(fill="x", padx=px(12), pady=(px(6), 0))
         self._bind_drag(self.bar)
         self.hint = tk.Label(self.root, text="", font=("Segoe UI", 8),
                              fg=DIM, bg=BG, anchor="w")
-        self.hint.pack(fill="x", padx=12)
+        self.hint.pack(fill="x", padx=px(12))
         self._bind_drag(self.hint)
 
         # -- live text -------------------------------------------------------
         self.text = tk.Text(self.root, height=BASE_TEXT_LINES, wrap="word",
                             font=("Segoe UI", 10), fg=FG, bg="#1D2027",
-                            relief="flat", padx=8, pady=6)
-        self.text.pack(fill="both", expand=True, padx=12, pady=(6, 4))
+                            relief="flat", padx=px(8), pady=px(6))
+        self.text.pack(fill="both", expand=True, padx=px(12), pady=(px(6), px(4)))
         self.text.insert("1.0", "…")
         self.text.configure(state="disabled")
+        try:
+            import tkinter.font as tkfont
+            f = tkfont.Font(font=self.text.cget("font"))
+            self._line_h = max(px(LINE_H), int(f.metrics("linespace")))
+        except Exception:
+            pass
 
         self.last = tk.Label(self.root, text="", font=("Segoe UI", 8),
                              fg=DIM, bg=BG, anchor="w")
-        self.last.pack(fill="x", padx=12, pady=(0, 8))
+        self.last.pack(fill="x", padx=px(12), pady=(0, px(8)))
         self._bind_drag(self.last)
 
         self.root.bind("<Escape>", lambda e: self.root.withdraw())
         self.root.after(120, self._tick)
 
     # -- layout / drag -----------------------------------------------------
-    def _place(self):
+    def _place(self, base_h):
         try:
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
-            return W, BASE_H, sw - W - 28, sh - BASE_H - 72
+            return self._W, base_h, sw - self._W - self._px(28), \
+                sh - base_h - self._px(72)
         except Exception:
-            return W, BASE_H, 100, 100
+            return self._W, base_h, 100, 100
 
     def _bind_drag(self, widget):
         widget.bind("<Button-1>", self._drag_start)
@@ -119,8 +146,15 @@ class Hud:
             pass
 
     def _state_label(self, key):
-        label = self.svc.tr("states.%s" % key)
+        label = self.svc.tr("states.%s" % key, hotkey=self.cfg.get("hotkey", ""))
         return key if label == "states.%s" % key else label
+
+    def _on_mic(self):
+        """Record button: the same state-guarded toggle as the hotkey."""
+        try:
+            self.svc.on_hotkey()
+        except Exception as e:
+            self.log.warning("HUD mic button: %s", e)
 
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
@@ -133,6 +167,10 @@ class Hud:
             key = st.get("state", "idle")
             color = STATE_COLORS.get(key, "#2E86DE")
             self.lbl.configure(text=self._state_label(key), fg=color)
+            if key == "recording":
+                self.mic.configure(text="⏹", fg="#E74C3C")
+            else:
+                self.mic.configure(text="🎤", fg=FG)
             self._paint_dot(color)
             level = min(1.0, float(st.get("level", 0.0)) * 12.0)  # rms ~0..0.08
             self._paint_bar(level)
@@ -190,22 +228,26 @@ class Hud:
                 want = max(BASE_TEXT_LINES, min(12, lines + 1))
             if want != int(self.text.cget("height")):
                 self.text.configure(height=want)
-                h = BASE_H - BASE_TEXT_LINES * LINE_H + want * LINE_H
+                h = (self._root_h - BASE_TEXT_LINES * self._line_h
+                     + want * self._line_h)
                 if h != self._root_h:
                     self._root_h = h
                     x = self.root.winfo_x()
                     y = self.root.winfo_y()
-                    self.root.geometry("%dx%d+%d+%d" % (W, h, x, y))
+                    self.root.geometry("%dx%d+%d+%d" % (self._W, h, x, y))
         except Exception:
             pass
 
     def _paint_dot(self, color):
         self.dot.delete("all")
-        self.dot.create_oval(2, 2, 12, 12, fill=color, outline="")
+        s = self._px
+        self.dot.create_oval(s(2), s(2), s(12), s(12), fill=color, outline="")
 
     def _paint_bar(self, level):
         self.bar.delete("all")
-        self.bar.create_rectangle(0, 0, max(2, int((W - 24) * level)), 10,
+        s = self._px
+        self.bar.create_rectangle(0, 0, max(s(2), int((self._W - s(24)) * level)),
+                                  s(10),
                                   fill="#3FA34D" if level < 0.9 else "#E74C3C",
                                   outline="")
 

@@ -125,7 +125,8 @@ class Tray:
     # -- state -------------------------------------------------------------
     def set_state(self, state: str):
         try:
-            label = self.service.tr("states.%s" % state)
+            label = self.service.tr("states.%s" % state,
+                                    hotkey=self.service.cfg.get("hotkey", ""))
             if label == "states.%s" % state:  # unknown key -> raw state
                 label = state
             self.icon.title = "VibeForma: " + label
