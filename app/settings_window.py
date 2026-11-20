@@ -154,11 +154,13 @@ class SettingsWindow:
             pass
         style.configure("Vibe.TNotebook", background=BG, borderwidth=0,
                         tabmargins=(8, 4, 8, 0))
-        style.configure("Vibe.TNotebook.Tab", background=FIELD_BG, fg=FG,
-                        padding=(10, 4))
+        # clam ignores a static foreground on tabs — drive ALL text colors
+        # through the state map (static fg renders as near-invisible dark)
+        style.configure("Vibe.TNotebook.Tab", background=FIELD_BG,
+                        padding=(10, 4), font=("Segoe UI", 10))
         style.map("Vibe.TNotebook.Tab",
                   background=[("selected", "#2E86DE")],
-                  fg=[("selected", "white")])
+                  foreground=[("selected", "white"), ("!selected", FG)])
 
         nb = self.nb = ttk.Notebook(body, style="Vibe.TNotebook")
         nb.pack(fill="both", expand=True)

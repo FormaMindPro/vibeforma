@@ -3,6 +3,14 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.8 — 2026-11-20
+
+### Fixed
+- **Tab labels are readable now.** The clam theme ignores a static tab
+  foreground, so the inactive tabs rendered near-invisible dark-on-dark.
+  All tab text colors now go through the style state map (white on the
+  selected tab, light gray on the rest).
+
 ## 0.1.7 — 2026-11-20
 
 ### Fixed
