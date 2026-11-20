@@ -50,6 +50,18 @@ The setup is built and signed in CI with `tools/build_installer.py --sign`;
 the build fails when the signing certificate is not configured, so no
 unsigned setup is published by the release workflow.
 
+## Diagnose
+
+`VibeForma.exe --doctor` checks Python/tk, the bundled dependencies, the
+model, the device, the microphone, the hotkey, update settings, disk space
+and the privacy switches. A windowed exe has no console, so the same report
+is written to `%TEMP%\vibeforma-doctor.txt`; the tray menu (**Diagnostics…**)
+and Settings → **System** → **Diagnostics…** show it with a
+**Copy report** button. Exit code 0 means no failed check, 1 means a failed
+one. The report never contains dictated text or window titles. Common
+problems — microphone, busy HTTP port, disk space, SmartScreen, updates —
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ## Where the data lives
 
 | Path | What |
