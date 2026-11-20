@@ -141,9 +141,12 @@ def log_path_default():
 class InstallLog:
     """Console echo plus an append-only install log (no secrets, no audio)."""
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, persist=True):
         self.path = os.path.abspath(path or log_path_default())
+        self.persist = persist
         self._handle = None
+        if not persist:
+            return
         try:
             folder = os.path.dirname(self.path)
             if folder:

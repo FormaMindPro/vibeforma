@@ -149,11 +149,14 @@ def test_temp_wav_is_deleted(server, tmp_path, service):
     status, _ = _post(server)
 
     assert status == 200
+    expected = [main.STATE_PROCESSING, main.STATE_IDLE]
     deadline = time.time() + 2
-    while list(tmp_path.glob("*.wav")) and time.time() < deadline:
-        time.sleep(0.02)   # the handler deletes it in finally, after the reply
+    # the handler deletes the file and goes idle in finally, after the reply
+    while (list(tmp_path.glob("*.wav")) or service.states != expected) \
+            and time.time() < deadline:
+        time.sleep(0.02)
     assert list(tmp_path.glob("*.wav")) == []
-    assert service.states == [main.STATE_PROCESSING, main.STATE_IDLE]
+    assert service.states == expected
 
 
 def test_api_refuses_to_start_without_a_token(service):

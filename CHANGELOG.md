@@ -29,6 +29,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--selftest` and `--doctor` find `test_ru.wav` in a fresh git checkout
   (the file sits at the repository root, not in `app/`); an installed copy
   is unchanged.
+- `install.py --dry-run` no longer creates `install.log` in the default
+  data folder: the plan is printed only, and a log is written only when
+  `--log` names a file (matching "execute nothing").
 
 ### Changed
 - **The one-command install from GitHub is the main path.** The README and
