@@ -12,6 +12,7 @@ interactive run, the configured model when config.json already exists,
 large-v3-turbo silently on an unattended run.
 """
 import argparse
+import ctypes
 import json
 import os
 import shutil
@@ -118,6 +119,11 @@ def choose_model():
     if not stdin_tty():
         say("   no console attached — using the default model %s" % DEFAULT_MODEL)
         return DEFAULT_MODEL
+    try:
+        # crisp dialog at Windows scaling >100% (the app does the same in main.py)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
     try:
         import tkinter as tk
         root = tk.Tk()

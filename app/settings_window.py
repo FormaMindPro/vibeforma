@@ -14,8 +14,16 @@ from config import LANG_NAMES, LANGS, MODELS, MODEL_GB
 
 BG = "#16181D"
 FG = "#D5D9E0"
-DIM = "#7A8290"
+DIM = "#9AA3B0"
 FIELD_BG = "#22262E"
+
+
+def dpi_factor(win):
+    """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
+    try:
+        return max(1.0, win.winfo_fpixels("1i") / 96.0)
+    except Exception:
+        return 1.0
 
 _k32 = ctypes.WinDLL("kernel32")
 
@@ -57,27 +65,29 @@ class ModelSwitchDialog:
     def __init__(self, master, progress, tr):
         self.progress = progress
         self.tr = tr
+        px = lambda n: int(round(n * dpi_factor(master)))  # noqa: E731
         self.win = tk.Toplevel(master)
         self.win.title(tr("dlg.model_title"))
         self.win.configure(bg=BG)
         self.win.resizable(False, False)
         tk.Label(self.win, text=tr("dlg.model_title"),
                  font=("Segoe UI", 11, "bold"), fg="#8FB8E8",
-                 bg=BG).pack(fill="x", padx=16, pady=(12, 4))
+                 bg=BG).pack(fill="x", padx=px(16), pady=(px(12), px(4)))
         self.lbl = tk.Label(self.win, text="…", font=("Segoe UI", 10),
-                            fg=FG, bg=BG, wraplength=330, justify="left")
-        self.lbl.pack(fill="x", padx=16)
-        self.bar = ttk.Progressbar(self.win, mode="indeterminate", length=330)
-        self.bar.pack(fill="x", padx=16, pady=(8, 4))
+                            fg=FG, bg=BG, wraplength=px(330), justify="left")
+        self.lbl.pack(fill="x", padx=px(16))
+        self.bar = ttk.Progressbar(self.win, mode="indeterminate",
+                                   length=px(330))
+        self.bar.pack(fill="x", padx=px(16), pady=(px(8), px(4)))
         self.bar.start(12)
         self.btn = tk.Button(self.win, text=tr("dlg.close"),
                              state="disabled", command=self.win.destroy,
                              width=12, bg="#22262E", fg=FG, relief="flat",
                              activebackground="#2A2F38", activeforeground=FG)
-        self.btn.pack(pady=(4, 12))
+        self.btn.pack(pady=(px(4), px(12)))
         try:
-            self.win.geometry("+%d+%d" % (master.winfo_rootx() + 40,
-                                          master.winfo_rooty() + 40))
+            self.win.geometry("+%d+%d" % (master.winfo_rootx() + px(40),
+                                          master.winfo_rooty() + px(40)))
         except Exception:
             pass
         self.win.after(200, self._poll)
@@ -127,6 +137,7 @@ class SettingsWindow:
         tr = lambda key, **kw: svc.tr(key, **kw)  # noqa: E731
         self.tr = tr
         c = self.cfg
+        px = lambda n: int(round(n * dpi_factor(self.win)))  # noqa: E731
 
         self.win = tk.Toplevel(master)
         self.win.title(tr("settings.title"))
@@ -186,22 +197,28 @@ class SettingsWindow:
 
         def note(f, text):
             rows[f] = rows.get(f, 0)
-            tk.Label(f, text=text, font=("Segoe UI", 8), fg=DIM,
-                     bg=BG, wraplength=380, justify="left").grid(
+            tk.Label(f, text=text, font=("Segoe UI", 9), fg=DIM,
+                     bg=BG, wraplength=px(400), justify="left").grid(
                 row=rows[f], column=0, columnspan=2, sticky="w", padx=16)
             rows[f] += 1
 
         def scale(f, from_, to, resolution, var, command=None):
             return tk.Scale(f, from_=from_, to=to, resolution=resolution,
-                            orient="horizontal", length=200, width=14,
+                            orient="horizontal", length=px(210), width=px(14),
                             showvalue=True, variable=var, bg=FIELD_BG, fg=FG,
                             highlightthickness=0, troughcolor="#2A2F38",
+                            font=("Segoe UI", 9),
                             command=command)
 
         def opt(f, var, values, width=None):
             m = tk.OptionMenu(f, var, *values)
+            m.configure(bg=FIELD_BG, fg=FG, activebackground="#2A2F38",
+                        activeforeground=FG, relief="flat",
+                        highlightthickness=0, anchor="w" if not width else "e")
+            m["menu"].configure(bg=FIELD_BG, fg=FG, activebackground="#2E86DE",
+                                activeforeground="white", font=("Segoe UI", 10))
             if width:
-                m.configure(width=width, anchor="e")
+                m.configure(width=width)
             return m
 
         # -- tab: recording --------------------------------------------------
@@ -228,8 +245,8 @@ class SettingsWindow:
         head(f_mod, tr("model.g"))
         self.v_model = tk.StringVar(value=str(c.get("model", "large-v3-turbo")))
         row(f_mod, tr("model.choose"), opt(f_mod, self.v_model, MODELS, width=16))
-        self.model_desc = tk.Label(f_mod, text="", font=("Segoe UI", 8),
-                                   fg=DIM, bg=BG, wraplength=380,
+        self.model_desc = tk.Label(f_mod, text="", font=("Segoe UI", 9),
+                                   fg=DIM, bg=BG, wraplength=px(400),
                                    justify="left")
         self.model_desc.grid(row=rows.get(f_mod, 0), column=0, columnspan=2,
                              sticky="w", padx=16)

@@ -3,6 +3,16 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.1.5 — 2026-11-20
+
+### Fixed
+- **Crisp text at Windows scaling >100%** (150% is the common laptop default):
+  the service and the installer's model dialog are now DPI-aware — Tk renders
+  natively instead of a stretched bitmap that made all labels blurry.
+  Fixed-pixel sizes (slider lengths, note wrapping) scale with the DPI factor.
+- The settings drop-downs are dark-themed now (they were glaring white) and
+  the small helper notes are brighter and slightly larger.
+
 ## 0.1.4 — 2026-11-20
 
 ### Added
