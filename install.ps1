@@ -7,10 +7,12 @@
 # From cmd.exe:
 #   powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"
 #
-# The bootstrap downloads the latest release zip (or the main branch archive),
-# unpacks it and runs install.py, which does the real work (venv, pip, model,
-# shortcuts, launch). Without -Model the model is chosen inside install.py
-# (a choice dialog on an interactive run).
+# The bootstrap downloads the latest release zip, unpacks it and runs
+# install.py, which does the real work (venv, pip, model, shortcuts,
+# launch). Only a released build is installed: when no release zip is
+# available the bootstrap stops and explains why (no main-branch fallback).
+# Without -Model the model is chosen inside install.py (a choice dialog on
+# an interactive run).
 param(
     [string]$Model = "",
     [switch]$NoRun,
@@ -40,17 +42,24 @@ Write-Step "Python found: $pyCmd"
 
 # -- download -----------------------------------------------------------------
 $zipUrl = $null
+$relError = $null
 try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/FormaMindPro/vibeforma/releases/latest"
     $asset = $rel.assets | Where-Object { $_.name -match '^VibeForma-.*\.zip$' } | Select-Object -First 1
     if ($asset) {
         $zipUrl = $asset.browser_download_url
         Write-Step "Downloading release $($rel.tag_name)"
+    } else {
+        $relError = "the latest release has no VibeForma zip asset"
     }
-} catch {}
+} catch {
+    $relError = $_.Exception.Message
+}
 if (-not $zipUrl) {
-    $zipUrl = "https://codeload.github.com/FormaMindPro/vibeforma/zip/refs/heads/main"
-    Write-Step "Downloading the main branch (no release asset found)"
+    Write-Host "[X] No released VibeForma build was found. The bootstrap installs released versions only; there is no main-branch fallback."
+    if ($relError) { Write-Host "    Reason: $relError" }
+    Write-Host "    Check https://github.com/FormaMindPro/vibeforma/releases or run install.cmd from a cloned repository."
+    exit 1
 }
 $tmp = Join-Path $env:TEMP ("VibeForma-install-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $tmp | Out-Null

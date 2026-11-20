@@ -28,7 +28,8 @@ def test_force_cpu_wins(monkeypatch):
 @pytest.mark.windows
 def test_unknown_model_is_rejected(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sys, "argv", [
-        "install.py", "--model", "bogus", "--target", str(tmp_path / "vf")])
+        "install.py", "--model", "bogus", "--target", str(tmp_path / "vf"),
+        "--log", str(tmp_path / "install.log")])
 
     assert install.main() == 1
     assert "Unknown model" in capsys.readouterr().out
@@ -38,7 +39,8 @@ def test_unknown_model_is_rejected(monkeypatch, tmp_path, capsys):
 def test_dry_run_writes_nothing(monkeypatch, tmp_path):
     target = tmp_path / "vf"
     monkeypatch.setattr(sys, "argv", [
-        "install.py", "--dry-run", "--model", "small", "--target", str(target)])
+        "install.py", "--dry-run", "--model", "small", "--target", str(target),
+        "--log", str(tmp_path / "install.log")])
 
     assert install.main() == 0
     assert not target.exists()
@@ -56,7 +58,7 @@ def test_install_uses_the_substituted_subprocess(monkeypatch, tmp_path):
     monkeypatch.setattr(install.subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "argv", [
         "install.py", "--model", "small", "--target", str(target),
-        "--no-run"])
+        "--no-run", "--log", str(tmp_path / "install.log")])
 
     assert install.main() == 0
 
@@ -82,7 +84,7 @@ def test_selftest_flag_runs_the_service_gate(monkeypatch, tmp_path):
     monkeypatch.setattr(install.subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "argv", [
         "install.py", "--model", "small", "--target", str(target),
-        "--no-run", "--selftest"])
+        "--no-run", "--selftest", "--log", str(tmp_path / "install.log")])
 
     assert install.main() == 0
 
