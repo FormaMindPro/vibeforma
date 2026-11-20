@@ -149,7 +149,7 @@ __all__ = [
 def run(args, log):
     version = app_version()
     log.write("VibeForma {} - installation{}".format(version, "  (dry-run: plan only)" if args.dry_run else ""))
-    log.write(f"Log: {log.path}")
+    log.write(f"Log: {log.path}" if log.persist else "Log: not written (dry-run)")
     if sys.platform != "win32":
         log.write("[X] The installer targets Windows 10/11.")
         return 1
@@ -332,7 +332,8 @@ def main():
                          "%%LOCALAPPDATA%%\\VibeForma\\logs\\install.log)")
     args = ap.parse_args()
 
-    log = InstallLog(args.log or None)
+    log = InstallLog(args.log or None,
+                     persist=not args.dry_run or bool(args.log))
     try:
         return run(args, log)
     finally:

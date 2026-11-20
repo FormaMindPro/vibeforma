@@ -47,6 +47,18 @@ def test_dry_run_writes_nothing(monkeypatch, tmp_path):
 
 
 @pytest.mark.windows
+def test_dry_run_without_log_creates_no_log_folder(monkeypatch, tmp_path):
+    local = tmp_path / "local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(sys, "argv", [
+        "install.py", "--dry-run", "--model", "small",
+        "--target", str(tmp_path / "vf")])
+
+    assert install.main() == 0
+    assert not (local / "VibeForma").exists()
+
+
+@pytest.mark.windows
 def test_install_uses_the_substituted_subprocess(monkeypatch, tmp_path):
     target = tmp_path / "vf"
     calls = []
