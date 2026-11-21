@@ -1,6 +1,7 @@
 """Settings applied to the live service and the model switch."""
 from __future__ import annotations
 
+import secrets
 import threading
 from typing import Any
 
@@ -26,6 +27,8 @@ class SettingsOps(ServiceHost):
         """Save and apply to the live service; called from the HUD thread."""
         old_hotkey = self.cfg.get("hotkey")
         old_dev = self.cfg.get("input_device")
+        old_api = bool(self.cfg.get("http_api"))
+        old_port = int(self.cfg.get("http_port") or 8787)
         self.cfg.update(new_cfg)   # same dict object — recorder reads it live
         save(self.cfg)
         self.log.info("Settings saved: silence=%s ms, autostop=%s, "
@@ -63,6 +66,38 @@ class SettingsOps(ServiceHost):
         if (self.cfg["input_device"] != old_dev
                 and self.state == STATE_RECORDING and self.tray):
             self.tray.notify(self.tr("notify.device_next"))
+        self._apply_http_api(old_api, old_port)
+
+    def _apply_http_api(self, old_api: bool, old_port: int) -> None:
+        """Start or stop the local API without a restart.
+
+        The form's server reads the token from config.json; when the switch is
+        turned on and no token exists yet, one is minted here. A port change
+        restarts the listener; a failure to bind is reported, never fatal.
+        """
+        want = bool(self.cfg.get("http_api"))
+        port = int(self.cfg.get("http_port") or 8787)
+        if not want:
+            if self.http_server is not None:
+                self.http_server.shutdown()
+                self.http_server.server_close()
+                self.http_server = None
+                self.log.info("HTTP API: stopped")
+            return
+        if not str(self.cfg.get("http_token") or "").strip():
+            self.cfg["http_token"] = secrets.token_urlsafe(24)
+            save(self.cfg)
+            self.log.info("HTTP API: token generated")
+        if self.http_server is not None and old_api and port == old_port:
+            return
+        if self.http_server is not None:
+            self.http_server.shutdown()
+            self.http_server.server_close()
+            self.http_server = None
+        from .http_api import start_http_api
+        self.http_server = start_http_api(self.cfg, self, self.log)
+        if self.http_server is None and self.tray:
+            self.tray.notify(self.tr("notify.http_api_failed", port=port))
 
     def set_model(self, name: str) -> None:
         if self.state != STATE_IDLE:

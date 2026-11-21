@@ -159,7 +159,18 @@ def test_temp_wav_is_deleted(server, tmp_path, service):
     assert service.states == expected
 
 
-def test_api_refuses_to_start_without_a_token(service):
-    httpd = main.start_http_api({"http_port": 0}, service, FakeLog())
+def test_api_mints_and_saves_a_token_when_missing(service, tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.json"))
+    cfg = {"http_port": 0}
 
-    assert httpd is None
+    httpd = main.start_http_api(cfg, service, FakeLog())
+    try:
+        assert httpd is not None
+        assert cfg["http_token"]
+        saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+        assert saved["http_token"] == cfg["http_token"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

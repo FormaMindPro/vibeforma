@@ -9,7 +9,7 @@ import threading
 
 from config import LOCK_PATH, VERSION, load
 
-from .http_api import start_http_api
+from .http_api import publish_location, start_http_api
 from .selftest import selftest
 from .service import Service
 from .updates import start_update_checker
@@ -96,8 +96,11 @@ def main() -> None:
     svc.attach_hotkey(hk)
     hk.start()
 
+    # A form finds this install through LOCALAPPDATA\VibeForma\location.json;
+    # the file carries the config path only, never the token.
+    publish_location(log)
     if cfg.get("http_api"):
-        start_http_api(cfg, svc, log)
+        svc.http_server = start_http_api(cfg, svc, log)
 
     start_update_checker(cfg, svc, log)
 

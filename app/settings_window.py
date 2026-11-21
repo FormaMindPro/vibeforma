@@ -549,6 +549,11 @@ class SettingsWindow:
                              bg="#22262E", fg=FG, relief="flat",
                              activebackground="#2A2F38", cursor="hand2")
         self._full(f, btn_diag)
+        self._head(f, self.tr("settings.g_voice_forms"))
+        self.v_http = tk.BooleanVar(value=bool(c.get("http_api", False)))
+        self._bind(f, self.v_http, self.tr("settings.http_api"))
+        self._note(f, self.tr("settings.note_http_api",
+                              port=int(c.get("http_port", 8787))))
         self._head(f, self.tr("updates.g"))
         self.v_upd = tk.BooleanVar(value=bool(c.get("update_check", True)))
         self._bind(f, self.v_upd, self.tr("updates.auto"))
@@ -913,6 +918,7 @@ class SettingsWindow:
         c["hotkey"] = hotkey
         c["input_device"] = self.v_device.get().strip() or c.get("input_device", "")
         c["autostart"] = bool(self.v_autostart.get())
+        c["http_api"] = bool(self.v_http.get())
         c["update_check"] = bool(self.v_upd.get())
         c["update_interval_h"] = int(self.v_upd_h.get())
         c["auto_update"] = "auto" if self.v_upd_auto.get() else "notify"

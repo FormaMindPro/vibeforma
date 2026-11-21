@@ -36,6 +36,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.asr = None
         self.vad = None
         self.recorder = None
+        self.http_server = None
         self._running = True
         self._partial_busy = False
         self._update_busy = False
