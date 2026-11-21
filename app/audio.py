@@ -18,6 +18,98 @@ FRAME = SAMPLE_RATE * FRAME_MS // 1000  # 512 samples
 VOICE_THRESHOLD = 0.5
 
 
+class Resampler:
+    """Stateful band-limited resampler (windowed sinc), numpy only.
+
+    A device usually runs at 44.1 or 48 kHz. Asking the legacy host API for
+    16 kHz makes Windows convert with its old resampler, and the folded high
+    frequencies land in the speech band: heard as a lisp, read by the model
+    as wrong words. Capturing at the native rate and filtering here keeps the
+    band clean.
+    """
+
+    def __init__(self, src_rate, dst_rate=SAMPLE_RATE, taps=25, beta=8.0):
+        self.src_rate = float(src_rate)
+        self.dst_rate = float(dst_rate)
+        self.step = self.src_rate / self.dst_rate
+        if taps % 2 == 0:
+            taps += 1
+        self.taps = taps
+        self.half = taps // 2
+        # Stop below the lower Nyquist, with a margin for the window's own
+        # transition band.
+        self.cutoff = min(1.0, self.dst_rate / self.src_rate) * 0.94
+        self.window = np.kaiser(taps, beta)
+        self.buf = np.zeros(self.half, dtype=np.float32)
+        self.pos = float(self.half)
+        self._idx = np.arange(taps)
+
+    def process(self, x):
+        x = np.asarray(x, dtype=np.float32).reshape(-1)
+        if not x.size:
+            return np.zeros(0, dtype=np.float32)
+        self.buf = np.concatenate((self.buf, x))
+        n = self.buf.size
+        limit = n - 1 - self.half
+        count = int(max(0, np.floor((limit - self.pos) / self.step) + 1))
+        if count <= 0:
+            return np.zeros(0, dtype=np.float32)
+        p = self.pos + self.step * np.arange(count)
+        base = np.floor(p).astype(np.int64)
+        idx = base[:, None] - self.half + self._idx[None, :]
+        frac = p[:, None] - idx
+        weights = self.cutoff * np.sinc(self.cutoff * frac) * self.window[None, :]
+        out = (self.buf[idx] * weights).sum(axis=1) / weights.sum(axis=1)
+        self.pos = p[-1] + self.step
+        keep = max(0, int(np.floor(self.pos)) - self.half - 1)
+        if keep > 0:
+            self.buf = self.buf[keep:]
+            self.pos -= keep
+        return out.astype(np.float32)
+
+
+def resample_16k(audio, rate):
+    """Whole buffer -> float32 @ 16 kHz; a no-op at 16 kHz."""
+    a = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if int(round(rate)) == SAMPLE_RATE:
+        return a
+    r = Resampler(rate)
+    tail = np.zeros(r.taps, dtype=np.float32)   # flush the filter's look-ahead
+    return r.process(np.concatenate((a, tail)))
+
+
+def capture_plan(device_index=None):
+    """(device, rate): the same microphone on WASAPI at its native rate.
+
+    WASAPI shared mode rejects 16 kHz and hands 48 kHz; the legacy MME path
+    accepts 16 kHz and converts with the old Windows resampler. A name match
+    keeps the choice of microphone exactly as the human made it.
+    """
+    import sounddevice as sd
+
+    if device_index is None:
+        device_index = sd.default.device[0]
+    try:
+        dev = sd.query_devices(device_index)
+    except Exception:  # noqa: BLE001 - an unknown index falls back to the old path
+        return device_index, SAMPLE_RATE
+    rate = float(dev.get("default_samplerate") or SAMPLE_RATE)
+    apis = sd.query_hostapis()
+    wasapi = next((i for i, a in enumerate(apis)
+                   if a.get("name") == "Windows WASAPI"), None)
+    if wasapi is not None and dev.get("hostapi") != wasapi:
+        for i in apis[wasapi].get("devices", []):
+            try:
+                cand = sd.query_devices(i)
+            except Exception:  # noqa: BLE001 - a stale index is not fatal
+                continue
+            if (cand.get("max_input_channels", 0) > 0
+                    and str(cand.get("name", "")).lower()
+                    == str(dev.get("name", "")).lower()):
+                return i, float(cand.get("default_samplerate") or rate)
+    return device_index, rate
+
+
 def load_wav_16k(path):
     """PCM WAV (16-bit, mono) -> float32 @ 16 kHz; resamples if needed.
 
@@ -37,10 +129,7 @@ def load_wav_16k(path):
     if channels != 1:
         raise RuntimeError(f"mono WAV required, channels={channels}")
     a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    if rate != SAMPLE_RATE:
-        x = np.arange(0, len(a), dtype=np.float32) * (SAMPLE_RATE / rate)
-        a = np.interp(x, np.arange(len(a), dtype=np.float32), a).astype(np.float32)
-    return a
+    return resample_16k(a, rate)
 
 
 class Recorder:
@@ -65,6 +154,9 @@ class Recorder:
         self._monitor = None
         self._stop_evt = threading.Event()
         self._overruns = 0
+        self._rate = SAMPLE_RATE
+        self._resampler = None
+        self._pending = np.zeros(0, dtype=np.float32)
         self._t_start = None
         self._t_last_voice = None
         self._has_speech = False
@@ -81,20 +173,45 @@ class Recorder:
 
     # -- lifecycle ---------------------------------------------------------
     def start(self, device_index=None):
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=FRAME,
-            device=device_index,
-            callback=self._callback,
-        )
-        self._stream.start()
+        dev, rate = capture_plan(device_index)
+        self._rate = rate
+        self._resampler = None if int(round(rate)) == SAMPLE_RATE else Resampler(rate)
+        self._pending = np.zeros(0, dtype=np.float32)
+        block = (FRAME if self._resampler is None
+                 else max(FRAME, int(round(rate * FRAME_MS / 1000))))
+        try:
+            self._stream = sd.InputStream(
+                samplerate=rate,
+                channels=1,
+                dtype="float32",
+                blocksize=block,
+                device=dev,
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception:
+            # Another app may hold the modern path: the old 16 kHz route stays
+            # as the fallback, so dictation never stops working.
+            self.log.warning(
+                "Capture at %s Hz on device %s failed; falling back to %s Hz",
+                rate, dev, SAMPLE_RATE, exc_info=True)
+            self._rate = SAMPLE_RATE
+            self._resampler = None
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                blocksize=FRAME,
+                device=device_index,
+                callback=self._callback,
+            )
+            self._stream.start()
         self._t_start = time.monotonic()
         self._stop_evt.clear()
         self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor.start()
-        self.log.info("Recording started: device=%s", device_index)
+        self.log.info("Recording started: device=%s (%s) rate=%s Hz",
+                      dev, device_index, self._rate)
 
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
@@ -128,8 +245,25 @@ class Recorder:
         if status:
             self._overruns += 1
         try:
-            self._q.put_nowait(indata.copy())
-        except queue.Full:
+            mono = indata[:, 0] if indata.ndim > 1 else indata
+            if self._resampler is not None:
+                mono = self._resampler.process(mono)
+            if not len(mono):
+                return
+            # The queue and the VAD take exact 16 kHz frames; the resampler's
+            # output length wobbles around 512, so the remainder waits here.
+            if len(self._pending):
+                self._pending = np.concatenate((self._pending, mono))
+            else:
+                self._pending = np.asarray(mono, dtype=np.float32)
+            while len(self._pending) >= FRAME:
+                chunk = self._pending[:FRAME].copy()
+                self._pending = self._pending[FRAME:]
+                try:
+                    self._q.put_nowait(chunk)
+                except queue.Full:
+                    self._overruns += 1
+        except Exception:  # noqa: BLE001 - the audio thread must never die
             self._overruns += 1
 
     def _monitor_loop(self):
