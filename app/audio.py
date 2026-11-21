@@ -205,9 +205,11 @@ class Recorder:
                 callback=self._callback,
             )
             stream.start()
-        except Exception:  # noqa: BLE001 - try the next plan, never raise here
-            self.log.debug("Capture %s Hz x%d on device %s failed",
-                           rate, channels, device, exc_info=True)
+        except Exception as e:  # noqa: BLE001 - try the next plan, never raise here
+            # One line, not a traceback: the reason is what matters when the
+            # modern path falls back.
+            self.log.info("Capture %s Hz x%d on device %s failed: %s",
+                          rate, channels, device, e)
             return False
         self._stream = stream
         self._rate = rate
@@ -218,10 +220,18 @@ class Recorder:
     def start(self, device_index=None):
         self._pending = np.zeros(0, dtype=np.float32)
         chosen = None
-        for dev, rate, channels in capture_plans(device_index):
+        for index, (dev, rate, channels) in enumerate(capture_plans(device_index)):
             if self._open(dev, rate, channels):
                 chosen = (dev, rate, channels)
                 break
+            # A driver that is re-enumerating the endpoint refuses one stream
+            # with a WDM IOCTL error and accepts the next: a short pause is
+            # cheaper than losing the clean path for the whole take.
+            if index == 0:
+                time.sleep(0.25)
+                if self._open(dev, rate, channels):
+                    chosen = (dev, rate, channels)
+                    break
         if chosen is None:
             raise RuntimeError("no capture device could be opened")
         self._t_start = time.monotonic()
