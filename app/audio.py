@@ -78,21 +78,27 @@ def resample_16k(audio, rate):
     return r.process(np.concatenate((a, tail)))
 
 
-def capture_plan(device_index=None):
-    """(device, rate): the same microphone on WASAPI at its native rate.
+def capture_plans(device_index=None):
+    """Ordered (device, rate, channels) attempts, best first.
 
-    WASAPI shared mode rejects 16 kHz and hands 48 kHz; the legacy MME path
-    accepts 16 kHz and converts with the old Windows resampler. A name match
-    keeps the choice of microphone exactly as the human made it.
+    WASAPI shared mode rejects 16 kHz and hands 48 kHz. Its driver can refuse
+    a stream once while the device is busy (a known WDM IOCTL error), so the
+    next attempts are: the same device in stereo, then the same microphone on
+    its original host API at its native rate, and only then the old 16 kHz
+    route. Every attempt above 16 kHz goes through Resampler, so even the
+    legacy host API no longer converts with the old Windows resampler.
     """
     import sounddevice as sd
 
     if device_index is None:
         device_index = sd.default.device[0]
+    plans = []
+    wasapi_dev = None
+    wasapi_rate = None
     try:
         dev = sd.query_devices(device_index)
     except Exception:  # noqa: BLE001 - an unknown index falls back to the old path
-        return device_index, SAMPLE_RATE
+        return [(device_index, SAMPLE_RATE, 1)]
     rate = float(dev.get("default_samplerate") or SAMPLE_RATE)
     apis = sd.query_hostapis()
     wasapi = next((i for i, a in enumerate(apis)
@@ -106,8 +112,21 @@ def capture_plan(device_index=None):
             if (cand.get("max_input_channels", 0) > 0
                     and str(cand.get("name", "")).lower()
                     == str(dev.get("name", "")).lower()):
-                return i, float(cand.get("default_samplerate") or rate)
-    return device_index, rate
+                wasapi_dev = i
+                wasapi_rate = float(cand.get("default_samplerate") or rate)
+                break
+    if wasapi_dev is not None:
+        plans.append((wasapi_dev, wasapi_rate, 1))
+        if wasapi_rate >= 32000:
+            plans.append((wasapi_dev, wasapi_rate, 2))
+    plans.append((device_index, rate, 1))
+    plans.append((device_index, SAMPLE_RATE, 1))
+    seen, out = set(), []
+    for plan in plans:
+        if plan not in seen:
+            seen.add(plan)
+            out.append(plan)
+    return out
 
 
 def load_wav_16k(path):
@@ -172,46 +191,45 @@ class Recorder:
         return self.level, self.vad_p, time.monotonic() - self._t_start
 
     # -- lifecycle ---------------------------------------------------------
-    def start(self, device_index=None):
-        dev, rate = capture_plan(device_index)
-        self._rate = rate
-        self._resampler = None if int(round(rate)) == SAMPLE_RATE else Resampler(rate)
-        self._pending = np.zeros(0, dtype=np.float32)
-        block = (FRAME if self._resampler is None
+    def _open(self, device, rate, channels):
+        """One capture attempt; on success the stream and the filter are set."""
+        block = (FRAME if int(round(rate)) == SAMPLE_RATE
                  else max(FRAME, int(round(rate * FRAME_MS / 1000))))
         try:
-            self._stream = sd.InputStream(
+            stream = sd.InputStream(
                 samplerate=rate,
-                channels=1,
+                channels=channels,
                 dtype="float32",
                 blocksize=block,
-                device=dev,
+                device=device,
                 callback=self._callback,
             )
-            self._stream.start()
-        except Exception:
-            # Another app may hold the modern path: the old 16 kHz route stays
-            # as the fallback, so dictation never stops working.
-            self.log.warning(
-                "Capture at %s Hz on device %s failed; falling back to %s Hz",
-                rate, dev, SAMPLE_RATE, exc_info=True)
-            self._rate = SAMPLE_RATE
-            self._resampler = None
-            self._stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                blocksize=FRAME,
-                device=device_index,
-                callback=self._callback,
-            )
-            self._stream.start()
+            stream.start()
+        except Exception:  # noqa: BLE001 - try the next plan, never raise here
+            self.log.debug("Capture %s Hz x%d on device %s failed",
+                           rate, channels, device, exc_info=True)
+            return False
+        self._stream = stream
+        self._rate = rate
+        self._resampler = (None if int(round(rate)) == SAMPLE_RATE
+                           else Resampler(rate))
+        return True
+
+    def start(self, device_index=None):
+        self._pending = np.zeros(0, dtype=np.float32)
+        chosen = None
+        for dev, rate, channels in capture_plans(device_index):
+            if self._open(dev, rate, channels):
+                chosen = (dev, rate, channels)
+                break
+        if chosen is None:
+            raise RuntimeError("no capture device could be opened")
         self._t_start = time.monotonic()
         self._stop_evt.clear()
         self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor.start()
-        self.log.info("Recording started: device=%s (%s) rate=%s Hz",
-                      dev, device_index, self._rate)
+        self.log.info("Recording started: device=%s (%s) rate=%s Hz x%d",
+                      chosen[0], device_index, chosen[1], chosen[2])
 
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
@@ -245,7 +263,13 @@ class Recorder:
         if status:
             self._overruns += 1
         try:
-            mono = indata[:, 0] if indata.ndim > 1 else indata
+            # A stereo attempt is averaged down: the VAD and the model are mono.
+            if indata.ndim > 1 and indata.shape[1] > 1:
+                mono = indata.mean(axis=1)
+            elif indata.ndim > 1:
+                mono = indata[:, 0]
+            else:
+                mono = indata
             if self._resampler is not None:
                 mono = self._resampler.process(mono)
             if not len(mono):
