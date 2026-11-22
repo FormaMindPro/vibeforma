@@ -12,7 +12,6 @@ the model.
 Русская версия этого описания: [README.ru.md](README.ru.md).
 
 [![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Quick start
 
@@ -54,6 +53,24 @@ downloaded it stops with the reason and never falls back to the main branch.
 Other ways to install (the setup without Python, a release zip, a git
 clone), every flag and uninstall — [Install](#install).
 
+## Updating
+
+The service checks GitHub releases in the background (every 2 h by default;
+the switch and the interval live in Settings). When a newer release is
+found, a blue **Update** button appears on the monitoring panel and in the
+tray. One click runs the same installer as the quick start, keeps the model,
+dictionary, history and `config.json`, and restarts the service.
+
+To update by hand, close VibeForma from the tray and run the quick-start
+command again. If the app lives outside the default folder, add `-Target`:
+
+```powershell
+iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Target "D:\VibeForma"
+```
+
+The update is the same GitHub release zip as the first installation; nothing
+else is downloaded and no extra step is required.
+
 ## Features
 
 - Hotkey `Ctrl+Alt+Space` (remappable): start speaking, the phrase closes on a
@@ -64,7 +81,13 @@ clone), every flag and uninstall — [Install](#install).
 - Interface: English and Russian out of the box; add a JSON file to
   `app/locales/` to translate it into anything else
 - Monitoring panel: mic level, VAD indicator, recognized text streaming
-  near-real-time while you speak
+  near-real-time while you speak, an Update button when a release is
+  pending, a microphone button, and ‹ › arrows to flip through saved
+  dictations (with history on): press the microphone and the recognized
+  text waits in the panel with **Edit**, **Copy**, **Insert at the cursor**
+  and **Cancel** underneath — no separate popup, nothing is pasted into a
+  window you did not pick. While the model is still recognizing, the panel
+  dims and a fast percentage with a thin running line crosses it
 - Layout-independent pasting (Shift+Insert) that never steals the focus: if
   the window changed during dictation, it offers "paste here / copy /
   cancel" instead of pasting into a stranger. The old clipboard is restored
@@ -80,10 +103,13 @@ clone), every flag and uninstall — [Install](#install).
   import/export as JSON and a preview that shows exactly what a sample text
   becomes
 - **History (off by default)**: the last 100 dictations stay on this computer
-  in `history.jsonl`, with copy, paste again, delete and clear. Turning it off
-  deletes the file; the dictated text never goes to the log. "Undo last
-  insert" sends Ctrl+Z only to the same window within 30 s, otherwise it warns
-  instead; "Restore clipboard" puts the pre-dictation clipboard back
+  in `history.jsonl`, shown as a full-width table with when / chars /
+  application / text columns and a phrase search. Select rows to copy, paste
+  again or delete (several at once), use the actions above the table; the
+  history switches stay below it. Turning it off deletes the file; the
+  dictated text never goes to the log. "Undo last insert" sends Ctrl+Z only
+  to the same window within 30 s, otherwise it warns instead; "Restore
+  clipboard" puts the pre-dictation clipboard back
 - Models: pick one during install (a choice dialog with sizes and blurbs),
   then switch anytime in settings or the tray menu — the new model downloads
   first, the service reloads without a restart, and the previous model is
@@ -92,13 +118,12 @@ clone), every flag and uninstall — [Install](#install).
   language, history and "undo last insert", diagnostics, logs folder
 - Auto-update: the service checks GitHub releases in the background (default
   every 2 h; the interval and the on/off switch live in settings, plus a
-  "Check now" button). A newer release is offered, not forced: the tray shows
-  Update / Later, and only the explicit "install automatically" opt-in skips
-  the question. The notification carries a short excerpt of the release
-  notes, and the tray adds "What's new in …" with a link to the release
-  page. The release manifest is signed (minisign/Ed25519); the updater
-  verifies the signature, the zip hash and the file list before running the
-  installer, keeps a backup and restores the previous version on failure.
+  "Check now" button). A newer release is offered, not forced: the panel and
+  the tray show an Update button and Later, and only the explicit "install
+  automatically" opt-in skips the question. The notification carries a short
+  excerpt of the release notes, and the tray adds "What's new in …" with a
+  link to the release page. One click runs the same GitHub installation
+  command as [Updating](#updating).
 - Autostart with Windows, desktop shortcut, single-instance lock, rotating logs
 
 ## Install
@@ -126,17 +151,10 @@ iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/ins
 
 (from `cmd.exe`: `powershell -c "irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex"`)
 
-**Option A — Windows setup (no Python, optional):** the one-command install
-above is the main path, but it needs Python. When a signed setup is published,
-`VibeForma-Setup-<version>.exe` from [Releases](../../releases) installs the
-packed app for the current user: no administrator rights, no Python.
-SmartScreen, signature verification, the data folder and upgrades —
-[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
-
-**Option B — release zip:** grab `VibeForma-<version>.zip` from
+**Option A — release zip:** grab `VibeForma-<version>.zip` from
 [Releases](../../releases), unzip, double-click `install.cmd`.
 
-**Option C — git:**
+**Option B — git:**
 
 ```bat
 git clone https://github.com/FormaMindPro/vibeforma.git
@@ -303,6 +321,25 @@ a token, and accepts `POST /transcribe` with the header
 `{"text": "..."}`; the uploaded audio is written to a temporary file and
 deleted in any case.
 
+## Command line and external hook
+
+The installed copy answers three flags from the command line:
+`VibeForma.exe --toggle` starts recording or stops it when it is running,
+`--cancel` drops the current recording or the panel draft, and `--status`
+prints the running instance's `status.json` (`state`, `version`, `pid`, `ts`)
+as JSON. The flags talk to the instance that is already running: with no
+instance, or when the status is older than 60 s, the exit code is 1; on
+success it is 0.
+
+The hook is opt-in and off while `"hook_command"` is empty. Set it in
+settings → System (or in `config.json` next to `"hook_timeout_s"`, default 5):
+the recognized text is written to the command's stdin as UTF-8. The command
+runs without a shell, so `&`, `|` and `>` in the text are plain characters;
+the timeout is kept inside 1–30 s. A failure or a timeout is logged as a
+status only — the text never reaches the log — and never affects insertion.
+The hook runs in parallel, after the text is inserted or shown as a panel
+draft.
+
 ## Repository layout
 
 ```
@@ -382,7 +419,3 @@ faster-whisper). Read app/*.py, install.py and find:
 5) simplifications that would break a fresh clone's installation.
 Answer as a list: file:line — problem — how to fix. Do not rewrite the code.
 ```
-
-## License
-
-MIT — see [LICENSE](LICENSE).

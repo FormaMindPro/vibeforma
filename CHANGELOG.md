@@ -3,6 +3,114 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.2.4 — 2026-11-22
+
+### Added
+- **Recognition overlay.** While the model turns a phrase into text, the
+  panel dims and a fast percentage runs across it, with a thin ice-to-cyan
+  line underneath. The counter rises quickly, holds below 100% while the
+  model is still busy, and jumps to 100% only when the text is ready (the
+  recognizer reports no measured percentage, so the number is an animated
+  estimate). The overlay fades out as the recognized text appears.
+- **Settings history is a table.** The History section fills the right side
+  with a sortable-by-time table (when / chars / application / text), a phrase
+  search, row selection (several at once), Delete via the button or key, and
+  the actions above the table. The two history switches stay below it; the
+  settings window now sits above the monitoring panel so the table is not
+  covered.
+- **Panel dictation.** The monitoring panel has a microphone button again.
+  Press it and the recognized text stays in the panel, with **Edit**,
+  **Copy**, **Insert at the cursor** and **Cancel** buttons underneath — no
+  separate popup. Insert pastes into the window you focus after the draft
+  appears and keeps a maximized window maximized; if no window is picked,
+  the text goes to the clipboard. The **‹ ›** arrows in the panel header
+  flip through saved dictations when history is on, and the same action
+  row works on the shown record. The panel keeps its top edge and grows
+  downward, so the header and the arrows stay in place. With the panel
+  focused, the hotkey starts a new panel draft and clears the history view.
+  The hotkey flow from other windows is unchanged.
+- **Snippets.** A spoken trigger becomes prepared text after recognition:
+  the match is literal, case-insensitive and respects word boundaries, the
+  longest trigger wins, one pass runs, and the text keeps its line breaks.
+  The section has add / update / remove, import and export as JSON, and a
+  preview of what a sample phrase becomes; up to 500 pairs.
+- **Local statistics.** A Statistics section counts dictations, words,
+  characters and seconds per day in `stats.json` beside `config.json`.
+  Only numbers are stored, never the text; the table can be reset.
+- **Dictionary learning.** The panel draft, history and the dictionary
+  dialog turn a correction into a pair "as heard -> as needed"; when the
+  same replacement repeats, the settings window offers it as a suggestion.
+  A pair enters the dictionary only after an explicit confirmation, and the
+  small corrections file stays on this computer.
+- **Text rules (off by default).** A spoken correction ("no, more precisely",
+  "I mean") replaces the abandoned phrase from its start with the new
+  wording, or drops it when nothing follows; spoken enumerators become a
+  numbered list. Deterministic and offline, no model.
+- **Hold to talk.** The hotkey can work as a hold key: press, speak, release
+  to stop, instead of the press-to-start / press-to-stop toggle.
+- **Esc cancels a dictation.** The listener exists only while a dictation is
+  in flight, so Esc keeps its ordinary meaning everywhere else.
+- **External hook (off by default).** The recognized text goes to the user's
+  command on stdin, UTF-8, without a shell; the timeout is kept inside
+  1-30 s. A failure or a timeout is a status line in the log, never the text,
+  and it never breaks the insertion.
+- **Command line.** `--toggle`, `--cancel` and `--status`: the last one reads
+  `status.json`, which the service writes on every state change, and refuses
+  an answer older than 60 s.
+- **A local API for forms.** `GET /health` says whether the service is up,
+  which model is loaded and whether it is idle; `POST /transcribe` takes a
+  16 kHz mono WAV (up to 10 MB, one call per second, idle only) and deletes
+  the temporary file. The settings switch starts and stops the listener live,
+  and the key is minted and saved on the first start, so a hand-written
+  config with the switch on still works.
+
+### Fixed
+- **Microphones that only open at 44.1 or 48 kHz.** Capture follows the
+  device: WASAPI at the device rate in mono, then in stereo when the device
+  offers it, the legacy host API at its native rate, and 16 kHz only as the
+  last resort. A rate above 16 kHz is converted by a windowed-sinc resampler
+  with a real stopband instead of linear interpolation, so speech no longer
+  picks up aliasing from the rate conversion.
+- **A failed device open is retried once** through the clean path, and the
+  log names the one-line reason for the fallback.
+
+## 0.2.3 — 2026-11-20
+
+### Removed
+- **The microphone icon is gone from the monitoring panel.** It could not
+  place the cursor or insert text reliably; dictation is started with the
+  hotkey only.
+
+### Added
+- **Update button on the panel.** When a newer release is found, a blue
+  **Update** button appears on the monitoring panel next to the close icon.
+  It installs the release through the same GitHub bootstrap as the README
+  and restarts the service.
+- **Updating section in the README (en/ru).** The manual command is spelled
+  out, including `-Target` for an install outside the default folder.
+
+### Changed
+- **Updates are the plain GitHub installation.** The Update button and the
+  automatic check use the same command as the README: the release zip from
+  GitHub, no extra secrets and no extra install step.
+
+### Removed
+- **The separate Windows setup and its build tooling are gone.** The release
+  is a plain zip with `SHA256SUMS`; the release workflow needs no secrets,
+  and the packed-setup docs were removed with it.
+
+## 0.2.2 — 2026-11-20
+
+### Changed
+- **Settings got a redesign.** A sidebar with six sections replaces the tab
+  strip: every section has a heading and a one-line description, rows are
+  grouped with hairlines, boolean options are switch-style toggles, and the
+  footer with Save / Cancel stays pinned at the bottom. `Ctrl+F` focuses the
+  search, `Ctrl+S` saves, `Esc` closes.
+- **Rounded, dark window chrome.** The settings window and the model-switch
+  dialog use the Windows 11 rounded corners and a dark title bar; the
+  borderless monitoring panel is clipped to rounded corners as well.
+
 ## 0.2.1 — 2026-11-20
 
 ### Fixed
@@ -30,40 +138,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the one-command PowerShell install (`irm .../install.ps1 | iex`), what it
   does, where it installs, and the bootstrap options `-Model`, `-Cpu`,
   `-DryRun`, `-NoRun`, plus an honest note that only released builds are
-  installed. `docs/INSTALL-WINDOWS.md` links that section and lists the
-  source installer flags from `install.py --help`.
+  installed, and the source installer flags from `install.py --help`.
 - **A support report and a troubleshooting guide.** `--doctor`
-  (`run.cmd --doctor`, `VibeForma.exe --doctor`, tray → **Diagnostics…**,
+  (`run.cmd --doctor`, tray → **Diagnostics…**,
   Settings → **System** → **Diagnostics…**) checks Python and the service
   dependencies, the model on disk, the CUDA/CPU profile, the microphone,
   the hotkey, update settings, disk space and the privacy switches, prints
   `OK` / `WARN` / `FAIL` and exits 0 or 1. The Tk window has a
-  **Copy report** button; a packed exe also writes the report to
-  `%TEMP%\vibeforma-doctor.txt`. The report is read-only and never contains
+  **Copy report** button. The report is read-only and never contains
   dictated text, window titles, `hotwords`, the dictionary, the history or
   the HTTP token. `docs/TROUBLESHOOTING.md` covers the microphone, a busy
-  HTTP port, disk space, SmartScreen and signature checks, model loading,
-  the hotkey, insertion and updates; README (en/ru) and
-  `docs/INSTALL-WINDOWS.md` link it and answer "where the audio goes" and
+  HTTP port, disk space, model loading, the hotkey, insertion and updates;
+  README (en/ru) links it and answers "where the audio goes" and
   "what stays on disk".
 - **Release notes at update time.** The update notification carries a short
   plain-text excerpt of the release notes, and the tray adds **What's new
   in …** that opens the https release page only. A release without a page
   keeps the plain notification.
-- **A packed Windows setup, signed and fail-closed.** `tools/build_installer.py`
-  builds a one-folder PyInstaller application (no Python on the target) and a
-  per-user Inno Setup installer: English or Russian wizard, Start menu, an
-  optional desktop shortcut and logon start, an in-place upgrade and an
-  uninstaller that keeps settings and models unless asked. The packed app
-  keeps user data in `%LOCALAPPDATA%\VibeForma`, so an upgrade replaces the
-  program only; a packed installation upgrades through the next signed setup
-  (or winget) and the zip updater refuses instead of touching its own files.
-  The build runs the exe's own `--bundle-check`, signs with signtool when
-  `VIBEFORMA_CERT_*` is set and stops instead of shipping an unsigned file;
-  the release workflow builds and signs the setup and adds its hash to the
-  signed release manifest. `--winget` writes the four winget manifests with
-  the real hash. `docs/INSTALL-WINDOWS.md` covers SmartScreen, signature
-  verification, the data folder and upgrades.
 - **An error catalog, a Russian installer, calmer settings.** Every UI
   error — microphone, model download or load, recognition, a bad dictionary
   file — now comes from `app/errors.py`: a plain message plus a next action,
@@ -109,17 +200,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   0.1.9 are a recorded ceiling; any new finding fails CI, while fixing the
   old ones stays a separate cleanup task.
 - README badges and a local test command.
-- **Verified, consent-based updates.** A release now ships a signed
-  `release-manifest.json` (minisign / Ed25519) and `SHA256SUMS`; the updater
-  checks the signature, the zip hash and a signed file whitelist before any
-  installer code runs, and refuses an unsigned release. `auto_update` defaults
-  to `notify`: the tray offers Update / Later, and only an explicit opt-in
-  installs without asking. The new `updating` state blocks the hotkey and
-  recording. Before replacing files the updater backs them up and restores the
-  previous version if the installer fails.
+- **Consent-based updates.** A release ships `SHA256SUMS` next to the zip;
+  `auto_update` defaults to `notify`: the tray offers Update / Later, and
+  only an explicit opt-in installs without asking. The `updating` state
+  blocks the hotkey and recording.
 - `tools/build_release.py` and `.github/workflows/release.yml`: build the zip
-  with `test_ru.wav`, write the manifest and `SHA256SUMS`, sign the manifest in
-  CI, and fail closed when the signing secret is absent.
+  with `test_ru.wav` and write `SHA256SUMS`.
 - `test_ru.wav` is now part of the repository and the release; `install.py`
   copies it and gained `--selftest`.
 - **A CPU profile: the installer fits the machine.** Base dependencies come
@@ -150,11 +236,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `onboarding_done` flag (default `false`) remembers that it ran.
 
 ### Changed
-- **The one-command install from GitHub is the main path.** The README and
-  `docs/INSTALL-WINDOWS.md` say so explicitly: the bootstrap command installs
-  the latest release into the user's Python environment, and the packed setup
-  is the optional path for machines without Python (no certificate or release
-  signing is required to distribute by the command).
+- **The one-command install from GitHub is the main path.** The README says
+  so explicitly: the bootstrap command installs the latest release into the
+  user's Python environment.
 - **Code hygiene: the service package, typed modules, blocked lint, pinned
   dependencies.** `app/main.py` is a 46-line entry shim over the new
   `vibeforma` package (`service`, `actions`, `settings_ops`, `update_ops`,
@@ -235,13 +319,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   text are hidden, the mic level stays, and the status line disappears 30 s
   after it was set. `hud_privacy: true` starts the panel in this mode.
 - README (en/ru) gained "What stays on disk" and the HTTP API contract.
-
-### Note
-- The production signing key is not embedded yet (`RELEASE_PUBLIC_KEY` is
-  empty), so real updates are refused until a maintainer adds the public key
-  and `MINISIGN_SECRET_KEY` to the repository secrets. This is deliberate:
-  no unsigned update is applied.
-
 
 ## 0.1.9 — 2026-11-20
 

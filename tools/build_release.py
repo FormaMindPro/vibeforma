@@ -1,13 +1,10 @@
 #!/usr/bin/env python
-"""Build the release zip, SHA256SUMS and the signed manifest payload.
+"""Build the release zip and its SHA256SUMS.
 
-The manifest lists every file in the archive; the updater refuses anything
-not listed and checks the zip hash before unpacking. Signing is a separate
-step (release workflow, minisign) so the private key never enters the repo.
+The release is a plain GitHub zip plus the checksum file next to it.
 """
 import argparse
 import hashlib
-import json
 import os
 import re
 import sys
@@ -47,7 +44,8 @@ def app_files():
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
         for name in sorted(files):
             path = os.path.join(base, name)
-            if name.endswith(SKIP_SUFFIX) or name == "config.json":
+            if (name.endswith(SKIP_SUFFIX)
+                    or name in ("config.json", "stats.json")):
                 continue
             rel = os.path.relpath(path, ROOT).replace("\\", "/")
             result.append(rel)
@@ -82,20 +80,7 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def installer_entry(path, version):
-    """The setup exe named by the signed manifest, when one was built."""
-    if not path:
-        return None
-    name = f"VibeForma-Setup-{version}.exe"
-    if os.path.basename(path) != name:
-        raise SystemExit(f"build: installer name must be {name}")
-    if not os.path.isfile(path):
-        raise SystemExit(f"build: no installer at {path}")
-    return {"name": name, "sha256": sha256_file(path),
-            "size": os.path.getsize(path)}
-
-
-def build(version, files, out_dir, installer=None):
+def build(version, files, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     prefix = f"VibeForma-{version}"
     zip_name = prefix + ".zip"
@@ -105,24 +90,10 @@ def build(version, files, out_dir, installer=None):
         for rel in files:
             archive.write(os.path.join(ROOT, rel), arc_prefix + rel)
     digest = sha256_file(zip_path)
-    names = [arc_prefix + rel for rel in files]
-    manifest = {
-        "version": version,
-        "zip": zip_name,
-        "sha256": digest,
-        "size": os.path.getsize(zip_path),
-        "files": sorted(names),
-    }
-    if installer:
-        manifest["installer"] = installer
-    manifest_path = os.path.join(out_dir, "release-manifest.json")
-    with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(manifest, f, ensure_ascii=True, indent=2)
-        f.write("\n")
     sums_path = os.path.join(out_dir, "SHA256SUMS")
     with open(sums_path, "w", encoding="ascii", newline="\n") as f:
         f.write(f"{digest}  {zip_name}\n")
-    return zip_path, manifest_path, sums_path, digest
+    return zip_path, sums_path, digest
 
 
 def main():
@@ -130,8 +101,6 @@ def main():
     parser.add_argument("--out", default=os.path.join(ROOT, "dist"))
     parser.add_argument("--check", action="store_true",
                         help="validate inputs without writing an archive")
-    parser.add_argument("--installer", default=None,
-                        help="the built setup exe to include in the manifest")
     args = parser.parse_args()
 
     version = read_version()
@@ -139,11 +108,9 @@ def main():
     if args.check:
         print(f"build: {len(files)} files, version {version}, inputs OK")
         return 0
-    installer = installer_entry(args.installer, version)
-    zip_path, manifest_path, sums_path, digest = build(
-        version, files, os.path.abspath(args.out), installer)
+    zip_path, sums_path, digest = build(
+        version, files, os.path.abspath(args.out))
     print(f"build: {zip_path}")
-    print(f"build: {manifest_path}")
     print(f"build: {sums_path}")
     print(f"build: sha256 {digest}, {len(files)} files")
     return 0

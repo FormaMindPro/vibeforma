@@ -128,7 +128,7 @@ def cleanup_fresh(target, created):
 def copy_app(target):
     shutil.copytree(
         APP_DIR, target, dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "stats.json"))
 
 
 def copy_test_wav(target):

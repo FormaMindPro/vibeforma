@@ -3,10 +3,8 @@
 Start with the built-in report: it lists every check with `OK`, `WARN` or
 `FAIL` and never includes dictated text or window titles.
 
-- Source install: `run.cmd --doctor` (exit code 0 — nothing failed, 1 — a
+- Command line: `run.cmd --doctor` (exit code 0 — nothing failed, 1 — a
   check failed).
-- Packed build: `VibeForma.exe --doctor`; because the exe has no console the
-  report is also written to `%TEMP%\vibeforma-doctor.txt`.
 - Running app: tray menu → **Diagnostics…**, or Settings → **System** →
   **Diagnostics**; the window has a **Copy report** button for a support post.
 
@@ -46,20 +44,12 @@ The installer needs the program plus a first model. Models: `small` 0.5 GB,
 prints free space on the data drive. A model in the shared Hugging Face
 cache is not downloaded again.
 
-## Windows SmartScreen warns about the setup
+## Windows warns about the install command
 
-The packed setup is signed in CI; SmartScreen may still show "Windows
-protected your PC" until a file earns reputation. Before installing, check
-the signature in PowerShell:
-
-```powershell
-Get-AuthenticodeSignature .\VibeForma-Setup-<version>.exe | Format-List Status, StatusMessage, SignerCertificate
-```
-
-`Status: Valid` and a publisher certificate mean the file is intact and
-signed. Do not install a setup whose signature is invalid. The one-command
-install from the README does not need the setup at all. Details:
-[INSTALL-WINDOWS.md](INSTALL-WINDOWS.md).
+The one-command install from the README downloads the release zip from
+GitHub and runs `install.py` from it. SmartScreen or the PowerShell policy
+may ask for confirmation; that is the normal warning for any script
+downloaded from the internet. Nothing else is downloaded.
 
 ## The model does not load
 
@@ -87,12 +77,9 @@ Pasting defaults to Shift+Insert, which is layout-independent.
 
 ## The update is not applied
 
-- Updates are verify-first: the release manifest is signed and checked
-  before any file is replaced; a release without a valid signature is
-  refused and the log names the reason.
+- An update runs the same GitHub installation command as the README. When
+  it fails, the log shows the command's exit code and the tail of its
+  output; the current version keeps working.
 - `auto_update` defaults to `notify`: the tray offers **Update to …** and
   **What's new in …** (release notes). Only an explicit opt-in installs
   without asking.
-- A packed installation updates through the next signed setup or winget,
-  not through the zip updater — the app says so instead of replacing its
-  own files.
