@@ -3,7 +3,7 @@ import contextlib
 import json
 import os
 
-VERSION = "0.2.1"
+VERSION = "0.2.3"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Where the user's data lives. A source install keeps it beside the code; the
@@ -58,6 +58,7 @@ LANG_NAMES = {
 
 DEFAULTS = {
     "hotkey": "ctrl+alt+space",
+    "hold_to_talk": False,              # hotkey held while talking, released to stop
     "input_device": "",                 # substring of the device name
     "model": "large-v3-turbo",
     "device": "cuda",
@@ -66,6 +67,8 @@ DEFAULTS = {
     "locale": "auto",                   # UI language: auto = follow Windows
     "hotwords": "",                     # terms appended to the prompt (user-local)
     "dictionary": [],                   # {"from", "to"} pairs, post-ASR replacements
+    "snippets": [],                     # {"trigger", "text"} pairs, post-ASR expansion
+    "text_rules": False,                # backtrack and spoken lists (opt-in)
     "history": False,                   # keep a local dictation history (opt-in)
     "history_app": False,               # remember the target app in the history
     "auto_stop": True,
@@ -88,6 +91,8 @@ DEFAULTS = {
     "http_api": False,                  # optional: POST 127.0.0.1:8787/transcribe
     "http_port": 8787,
     "http_token": "",                   # required when http_api is on
+    "hook_command": "",                 # external command: text on stdin (opt-in)
+    "hook_timeout_s": 5,                # hook run limit, kept inside 1-30 s
 
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks

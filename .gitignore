@@ -6,6 +6,7 @@ models/
 logs/
 service.lock
 config.json
+stats.json
 *.tmp
 .pytest_cache/
 .ruff_cache/

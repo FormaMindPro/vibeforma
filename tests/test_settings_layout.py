@@ -7,11 +7,13 @@ def test_minimum_size_wins_over_small_content():
 
 
 def test_content_larger_than_minimum_is_kept():
-    assert wl.fit_size(800, 600, 1920, 1080) == (800, 600)
+    width = wl.MIN_W + 100
+    assert wl.fit_size(width, 600, 1920, 1080) == (width, 600)
 
 
 def test_tall_content_stops_at_the_preferred_height():
-    assert wl.fit_size(800, 3000, 1920, 1080) == (800, wl.PREFERRED_H)
+    width = wl.MIN_W + 100
+    assert wl.fit_size(width, 3000, 1920, 1080) == (width, wl.PREFERRED_H)
 
 
 def test_oversized_content_is_clamped_to_the_screen():

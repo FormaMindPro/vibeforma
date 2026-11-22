@@ -3,9 +3,9 @@
 Pure helpers (no Tk): the dialog is sized to the tallest tab once, clamped
 to the screen so nothing is cut, and centred on the monitor.
 """
-MIN_W = 620
-MIN_H = 480
-PREFERRED_H = 680
+MIN_W = 900
+MIN_H = 520
+PREFERRED_H = 720
 SCREEN_MARGIN_X = 40
 SCREEN_MARGIN_Y = 80
 

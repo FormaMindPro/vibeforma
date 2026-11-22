@@ -87,7 +87,7 @@ class FakeStore:
     def __init__(self):
         self.calls = []
 
-    def add(self, text, app=""):
+    def add(self, text, app="", way="insert"):
         self.calls.append((text, app))
 
     def load(self):

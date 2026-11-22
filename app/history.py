@@ -1,10 +1,12 @@
 """Local dictation history: a capped JSONL ring, opt-in, never in the log.
 
-One record per line: {"ts": epoch, "text": ..., "chars": n, "app": name}.
-The file lives next to config.json and is written atomically. The text is
-deliberately never logged: this module keeps no logger at all.
+One record per line: {"ts": epoch, "text": ..., "chars": n, "app": name,
+"way": "insert" or "copy"}. The file lives next to config.json and is
+written atomically. The text is deliberately never logged: this module
+keeps no logger at all.
 """
 import contextlib
+import datetime
 import json
 import os
 import threading
@@ -12,6 +14,8 @@ import time
 
 MAX_RECORDS = 100
 UNDO_WINDOW_S = 30
+WAY_INSERT = "insert"
+WAY_COPY = "copy"
 
 
 def history_path(service_dir):
@@ -29,6 +33,69 @@ def undo_allowed(last, now, hwnd):
     return "ok"
 
 
+def normalize_way(way):
+    """One of the two directions; anything but "copy" reads as insert."""
+    return WAY_COPY if str(way or "") == WAY_COPY else WAY_INSERT
+
+
+def record_way(record):
+    """The direction of one entry; old entries without the field are inserts."""
+    return normalize_way((record or {}).get("way"))
+
+
+def _local_date(stamp):
+    """The calendar date of an epoch stamp on this machine, or None."""
+    try:
+        return datetime.date(*time.localtime(float(stamp))[:3])
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def history_filters(record, query="", app="", days=0, way="", now=None):
+    """True when one entry passes the phrase and the three list filters.
+
+    Pure: no Tk, no files. ``query`` is a case-insensitive phrase in the
+    text or in the application name (the same rule as the settings table);
+    ``app`` is an exact match on the stored name, empty for all; ``days``
+    counts calendar days back from today (1 = today, 7 = today and the six
+    days before, 0 = no limit); ``way`` is insert, copy or empty for both.
+    ``now`` fixes the clock for the tests.
+    """
+    entry = record or {}
+    phrase = str(query or "").strip().casefold()
+    if phrase:
+        text = str(entry.get("text") or "").casefold()
+        name = str(entry.get("app") or "").casefold()
+        if phrase not in text and phrase not in name:
+            return False
+    wanted_app = str(app or "")
+    if wanted_app and str(entry.get("app") or "") != wanted_app:
+        return False
+    wanted_way = str(way or "")
+    if wanted_way and record_way(entry) != wanted_way:
+        return False
+    try:
+        span = int(days or 0)
+    except (TypeError, ValueError):
+        span = 0
+    if span > 0:
+        when = _local_date(entry.get("ts"))
+        today = _local_date(time.time() if now is None else now)
+        if when is None or today is None:
+            return False
+        cutoff = today - datetime.timedelta(days=span - 1)
+        if when < cutoff or when > today:
+            return False
+    return True
+
+
+def records_matching(records, query="", app="", days=0, way="", now=None):
+    """The entries passing the filters, in their original order."""
+    return [record for record in (records or [])
+            if history_filters(record, query=query, app=app, days=days,
+                               way=way, now=now)]
+
+
 class History:
     """Thread-safe writer; readers get a snapshot, never a live list."""
 
@@ -41,11 +108,12 @@ class History:
         with self._lock:
             return list(self._read())
 
-    def add(self, text, app=""):
+    def add(self, text, app="", way=WAY_INSERT):
         text = (text or "").strip()
         if not text:
             return
-        record = {"ts": time.time(), "text": text, "chars": len(text)}
+        record = {"ts": time.time(), "text": text, "chars": len(text),
+                  "way": normalize_way(way)}
         if app:
             record["app"] = str(app)[:80]
         with self._lock:
