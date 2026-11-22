@@ -82,10 +82,6 @@ class Tray:
                     lambda *a: service.dismiss_pending_update(),
                     visible=lambda item: service.pending_update is not None),
                 pystray.MenuItem(
-                    lambda item: service.tr("tray.restart_update"),
-                    lambda *a: service.restart_for_update(),
-                    visible=lambda item: service.restart_pending is not None),
-                pystray.MenuItem(
                     lambda item: (service.tr("tray.resume")
                                   if service.state == "paused"
                                   else service.tr("tray.pause")),

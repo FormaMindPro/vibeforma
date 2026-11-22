@@ -9,8 +9,6 @@ RELEASE = {
     "tag": "v9.9.9",
     "version": (9, 9, 9),
     "zip": "https://test/z",
-    "manifest": "https://test/m",
-    "signature": "https://test/s",
 }
 
 

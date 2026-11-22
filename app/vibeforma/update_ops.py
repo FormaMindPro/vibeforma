@@ -66,7 +66,11 @@ class UpdateActions(ServiceHost):
         self.check_updates(notify_latest)
 
     def apply_pending_update(self) -> bool:
-        """Install the pending release after consent (tray) or explicit opt-in."""
+        """Install the pending release after consent (panel, tray, opt-in).
+
+        The update runs the same plain GitHub installation command as the
+        README.
+        """
         rel = self.pending_update
         if not rel or self._update_busy:
             return False
@@ -74,40 +78,52 @@ class UpdateActions(ServiceHost):
             if self.tray:
                 self.tray.notify(self.tr("notify.update_later", ver=rel["tag"]))
             return False
+        return self._install_via_bootstrap()
+
+    def _install_via_bootstrap(self) -> bool:
+        """Run the README installation command and restart into the new build."""
+        rel = self.pending_update
+        if not rel or self._update_busy or self.state != STATE_IDLE:
+            return False
         self._update_busy = True
+        tag = rel["tag"]
 
         def _work() -> None:
             import updater
             self._set_state(STATE_UPDATING)
             if self.tray:
-                self.tray.notify(self.tr("notify.update_applying",
-                                         ver=rel["tag"]))
-            ok, reason = updater.apply(rel, SERVICE_DIR, self.log)
-            self._update_busy = False
+                self.tray.notify(self.tr("notify.update_applying", ver=tag))
+            ok = False
+            try:
+                env = os.environ.copy()
+                env[updater.UPDATE_TARGET_ENV] = SERVICE_DIR
+                result = subprocess.run(  # noqa: S603 - fixed argv, target via env
+                    updater.github_install_command(),
+                    cwd=SERVICE_DIR, env=env, capture_output=True, text=True,
+                    timeout=1800,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                ok = result.returncode == 0
+                tail = (result.stdout or result.stderr or "")[-800:].strip()
+                if ok:
+                    self.log.info("Update %s installed by the bootstrap", tag)
+                else:
+                    self.log.warning("Update bootstrap exit %s: %s",
+                                     result.returncode, tail)
+            except Exception as e:  # noqa: BLE001 - the worker must report, not crash
+                self.log.warning("Update bootstrap failed: %s", e)
             self.pending_update = None
             self._set_state(STATE_IDLE)
+            self._update_busy = False
             if ok:
-                self.restart_pending = rel["tag"]
-                if self.cfg.get("auto_update") == "auto":
-                    self._restart_after_update(rel["tag"])
-                elif self.tray:
-                    self.tray.notify(self.tr("notify.update_installed",
-                                             ver=rel["tag"]))
+                self._restart_after_update(tag)
             elif self.tray:
-                self.log.warning("Update was not applied: %s", reason)
-                self.tray.notify(self.tr("notify.update_refused"))
+                self.tray.notify(self.tr("notify.update_install_fail", ver=tag))
 
         threading.Thread(target=_work, daemon=True).start()
         return True
 
     def dismiss_pending_update(self) -> None:
         self.pending_update = None
-
-    def restart_for_update(self) -> None:
-        tag = self.restart_pending
-        self.restart_pending = None
-        if tag:
-            self._restart_after_update(tag)
 
     def check_updates_now(self) -> None:
         """Settings button: manual check with a visible result."""

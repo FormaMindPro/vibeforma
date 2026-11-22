@@ -343,3 +343,58 @@ def test_copy_text_writes_the_clipboard():
     insert.copy_text("hello")
 
     assert pyperclip.clip == "hello"
+
+
+class FakeFunc:
+    def __init__(self, impl):
+        self._impl = impl
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        return self._impl(*args)
+
+
+class FakeUser32:
+    def __init__(self):
+        self.iconic = 0
+        self.calls = []
+        self.GetForegroundWindow = FakeFunc(lambda: TARGET)
+        self.ShowWindow = FakeFunc(
+            lambda hwnd, command: self.calls.append(("show", command)) or 1)
+        self.SetForegroundWindow = FakeFunc(
+            lambda hwnd: self.calls.append(("fg", hwnd)) or 1)
+        self.IsIconic = FakeFunc(lambda hwnd: self.iconic)
+
+
+def _fake_ctypes(user32):
+    return types.SimpleNamespace(
+        windll=types.SimpleNamespace(user32=user32),
+        c_void_p=lambda value: value,
+        c_int=int,
+        c_uint=int,
+        c_ulong=int,
+    )
+
+
+def test_activate_window_does_not_unmaximize(monkeypatch):
+    user32 = FakeUser32()
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(user32))
+    monkeypatch.setattr(insert.time, "sleep", lambda _seconds: None)
+
+    assert insert.activate_window(TARGET) is True
+
+    assert ("show", 9) not in user32.calls
+    assert ("fg", TARGET) in user32.calls
+
+
+def test_activate_window_restores_a_minimized_window(monkeypatch):
+    user32 = FakeUser32()
+    user32.iconic = 1
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(user32))
+    monkeypatch.setattr(insert.time, "sleep", lambda _seconds: None)
+
+    assert insert.activate_window(TARGET) is True
+
+    assert ("show", 9) in user32.calls
+    assert ("fg", TARGET) in user32.calls

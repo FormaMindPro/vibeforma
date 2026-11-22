@@ -53,9 +53,10 @@ def make_service(text="hello"):
                 "level": 0.0, "test_text": "", "test_state": ""}
     svc.state = main.STATE_PROCESSING
     svc._state_lock = threading.Lock()
+    svc._cancel_evt = threading.Event()
+    svc.cancel_watcher = None
     svc.tray = None
     svc.pending_update = None
-    svc.restart_pending = None
     svc._update_busy = False
     svc._running = True
     svc._test_mode = True

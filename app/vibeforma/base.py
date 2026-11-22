@@ -22,14 +22,21 @@ class ServiceHost:
     recorder: Any
     live: dict[str, Any]
     history: Any
+    stats: Any
     pending_update: dict[str, Any] | None
-    restart_pending: str | None
     _state_lock: threading.Lock
     _running: bool
     _partial_busy: bool
     _update_busy: bool
     _test_mode: bool
+    _panel_mode: bool
+    _draft_busy: bool
+    _history_cursor: int | None
+    _history_saved: str
+    _history_total: int
     _last_insert: dict[str, Any] | None
+    _record_started: float
+    _record_seconds: float
     _target_hwnd: int | None
     _target_title: str
 
@@ -48,6 +55,10 @@ class ServiceHost:
         def stop_recording(self, reason: str) -> None: ...
 
         def on_hotkey(self) -> None: ...
+
+        def on_hotkey_press(self) -> None: ...
+
+        def on_hotkey_release(self) -> None: ...
 
         def shutdown(self) -> None: ...
 

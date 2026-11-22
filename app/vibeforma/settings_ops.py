@@ -26,6 +26,7 @@ class SettingsOps(ServiceHost):
     def apply_settings(self, new_cfg: dict[str, Any]) -> None:
         """Save and apply to the live service; called from the HUD thread."""
         old_hotkey = self.cfg.get("hotkey")
+        old_hold = bool(self.cfg.get("hold_to_talk", False))
         old_dev = self.cfg.get("input_device")
         old_api = bool(self.cfg.get("http_api"))
         old_port = int(self.cfg.get("http_port") or 8787)
@@ -39,10 +40,14 @@ class SettingsOps(ServiceHost):
                       self.cfg.get("locale"))
         self.set_last(self.tr("notify.saved"))
         ensure_autostart(bool(self.cfg.get("autostart", True)))
-        if self.cfg["hotkey"] != old_hotkey and self.hotkey:
+        if ((self.cfg["hotkey"] != old_hotkey
+             or bool(self.cfg.get("hold_to_talk", False)) != old_hold)
+                and self.hotkey):
             import hotkey as hotkey_mod
-            new_hotkey = hotkey_mod.Hotkey(self.cfg["hotkey"],
-                                           self.on_hotkey, self.log)
+            new_hotkey = hotkey_mod.make_hotkey(
+                self.cfg["hotkey"], bool(self.cfg.get("hold_to_talk", False)),
+                self.on_hotkey, self.on_hotkey_press, self.on_hotkey_release,
+                self.log)
             try:
                 # The new listener starts first: a failed start leaves the
                 # old hotkey alive instead of leaving none.
@@ -51,6 +56,7 @@ class SettingsOps(ServiceHost):
                 self.log.exception("Hotkey %s did not start - keeping %s",
                                    self.cfg["hotkey"], old_hotkey)
                 self.cfg["hotkey"] = old_hotkey
+                self.cfg["hold_to_talk"] = old_hold
                 save(self.cfg)
                 if self.tray:
                     self.tray.notify(self.tr("notify.hotkey_failed",

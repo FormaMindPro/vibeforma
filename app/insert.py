@@ -8,6 +8,7 @@ not changed it in the meantime (GetClipboardSequenceNumber).
 """
 import contextlib
 import logging
+import os
 import sys
 import threading
 import time
@@ -71,6 +72,54 @@ def get_foreground_hwnd():
         return user32.GetForegroundWindow()
     except Exception:  # noqa: BLE001 - no ctypes means no foreground window
         return None
+
+
+def window_process_id(hwnd) -> int:
+    """Process id that owns the window; 0 when it cannot be read."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetWindowThreadProcessId.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd),
+                                        ctypes.byref(pid))
+        return int(pid.value)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+
+
+def is_own_window(hwnd) -> bool:
+    """True for a window of this process: the panel, settings, dialogs."""
+    return bool(hwnd) and window_process_id(hwnd) == os.getpid()
+
+
+def activate_window(hwnd) -> bool:
+    """Bring the picked window forward before a panel-approved paste.
+
+    The monitoring panel is always on top: after a click on one of its
+    buttons the panel owns the foreground, while the text has to land in
+    the window the user picked. Only a minimized window is restored:
+    SW_RESTORE on a maximized window would un-maximize it, which reads as
+    the window suddenly shrinking. Returns False when the window refuses
+    to come forward (an elevated app, for example).
+    """
+    if not hwnd:
+        return False
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+        user32.IsIconic.argtypes = [ctypes.c_void_p]
+        user32.IsIconic.restype = ctypes.c_int
+        if user32.IsIconic(ctypes.c_void_p(hwnd)):
+            user32.ShowWindow(ctypes.c_void_p(hwnd), 9)  # SW_RESTORE
+        user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+        time.sleep(0.15)
+        return get_foreground_hwnd() == hwnd
+    except Exception:  # noqa: BLE001 - activation is best-effort, paste may still work
+        return False
 
 
 def clipboard_sequence() -> int:
@@ -261,8 +310,13 @@ def _restore(prev, own_seq, pasted, log):
     _restore_now(prev, True, own_seq, pasted, log)
 
 
-def ask_focus_change(cfg=None) -> str:
-    """Ask where the text should go when the target window lost the focus."""
+def ask_focus_change(cfg=None, text=None) -> str:
+    """Ask where the text should go when the target window lost the focus.
+
+    text, when given, enables the "To dictionary" button: it opens the
+    "as heard -> as needed" pair dialog over this one, and the choice stays
+    open afterwards - the person may still pick where the text goes.
+    """
     try:
         import tkinter as tk
 
@@ -270,9 +324,9 @@ def ask_focus_change(cfg=None) -> str:
     except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         return RESULT_COPIED
 
-    def tr(key):
+    def tr(key, **kw):
         try:
-            return i18n.t(cfg, key)
+            return i18n.t(cfg, key, **kw)
         except Exception:  # noqa: BLE001 - fall back to the key itself
             return key
 
@@ -288,6 +342,12 @@ def ask_focus_change(cfg=None) -> str:
             answer["value"] = value
             root.quit()
 
+        def open_pair_dialog():
+            # A failed dialog must not block the choice.
+            with contextlib.suppress(Exception):
+                import dictlearn
+                dictlearn.pair_dialog(root, tr, text, cfg)
+
         body = tk.Frame(root, padx=18, pady=14)
         body.pack()
         tk.Label(body, text=tr("focus.changed"), wraplength=380,
@@ -299,6 +359,9 @@ def ask_focus_change(cfg=None) -> str:
         tk.Button(buttons, text=tr("focus.copy"),
                   command=lambda: choose(RESULT_COPIED)).pack(side="left",
                                                              padx=8)
+        if text:
+            tk.Button(buttons, text=tr("focus.to_dictionary"),
+                      command=open_pair_dialog).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text=tr("focus.cancel"),
                   command=lambda: choose(RESULT_CANCELLED)).pack(side="left")
         root.after(int(FOCUS_TIMEOUT_S * 1000),

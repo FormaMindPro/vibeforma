@@ -15,13 +15,13 @@ from .base import ServiceHost
 
 class HistoryActions(ServiceHost):
     # -- dictionary / history ----------------------------------------------
-    def _remember(self, text: str) -> None:
+    def _remember(self, text: str, way: str = history.WAY_INSERT) -> None:
         """Write the dictation to the local history when the user opted in."""
         if not self.cfg.get("history", False):
             return
         app = self._target_title if self.cfg.get("history_app", False) else ""
         try:
-            self.history.add(text, app=app)
+            self.history.add(text, app=app, way=way)
         except Exception as e:  # noqa: BLE001 - a broken history file must not break dictation
             self.log.warning("History write failed: %s", e)
 
@@ -142,6 +142,7 @@ class HistoryActions(ServiceHost):
         self.live["test_text"] = ""
         self.live["test_state"] = "recording"
         self._test_mode = True
+        self._panel_mode = False
         self.start_recording()
         if self._test_mode and self.state == STATE_RECORDING:
             import onboarding

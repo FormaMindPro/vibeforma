@@ -19,6 +19,15 @@ def test_panel_height_respects_dpi_scaled_values():
     assert got == 285 + 3 * 30
 
 
+def test_panel_height_includes_the_action_row():
+    got = hud.panel_height(hud.BASE_H, hud.BASE_TEXT_LINES,
+                           extra_h=hud.ACTION_ROW_H)
+    assert got == hud.BASE_H + hud.ACTION_ROW_H
+    got = hud.panel_height(hud.BASE_H, hud.BASE_TEXT_LINES + 2,
+                           extra_h=hud.ACTION_ROW_H)
+    assert got == hud.BASE_H + hud.ACTION_ROW_H + 2 * hud.LINE_H
+
+
 def test_placeholder_keeps_the_base_height():
     assert hud.panel_lines("\u2026") == hud.BASE_TEXT_LINES
     assert hud.panel_lines("") == hud.BASE_TEXT_LINES
@@ -40,3 +49,59 @@ def test_wrapped_lines_counts_real_wrapping():
 def test_short_phrase_stays_at_base():
     assert hud.panel_lines("\u041f\u0440\u0438\u0432\u0435\u0442, \u043c\u0438\u0440") \
         == hud.BASE_TEXT_LINES
+
+
+def test_draft_minimum_sits_between_base_and_cap():
+    assert hud.DRAFT_MIN_LINES == 6
+    assert hud.BASE_TEXT_LINES < hud.DRAFT_MIN_LINES < hud.MAX_TEXT_LINES
+
+
+def test_draft_short_text_reserves_the_minimum():
+    assert hud.panel_lines("hi", minimum=hud.DRAFT_MIN_LINES) \
+        == hud.DRAFT_MIN_LINES
+    assert hud.panel_lines("", minimum=hud.DRAFT_MIN_LINES) \
+        == hud.DRAFT_MIN_LINES
+
+
+def test_draft_medium_text_grows_line_by_line():
+    assert hud.panel_lines("\n" * 7, minimum=hud.DRAFT_MIN_LINES) == 8
+
+
+def test_draft_long_text_still_stops_at_the_cap():
+    assert hud.panel_lines("word " * 500, minimum=hud.DRAFT_MIN_LINES) \
+        == hud.MAX_TEXT_LINES
+
+
+def test_panel_height_honours_the_draft_minimum():
+    got = hud.panel_height(hud.BASE_H, hud.BASE_TEXT_LINES,
+                           minimum=hud.DRAFT_MIN_LINES)
+    assert got == hud.BASE_H \
+        + (hud.DRAFT_MIN_LINES - hud.BASE_TEXT_LINES) * hud.LINE_H
+
+
+def test_progress_starts_at_zero_and_runs_fast():
+    assert hud.progress_percent(0) == 0
+    assert hud.progress_percent(-1) == 0
+    assert hud.progress_percent(0.2) >= 60
+    assert hud.progress_percent(0.5) >= 85
+
+
+def test_progress_never_reaches_hundred_on_its_own():
+    values = [hud.progress_percent(t) for t in (0.1, 0.3, 0.6, 1, 2, 10, 1e6)]
+    assert values == sorted(values)
+    assert values[-1] <= hud.PROG_CAP
+    assert values[-1] < 100
+
+
+def test_progress_cap_is_respected():
+    assert hud.progress_percent(1e6, cap=80) == 80
+    assert hud.progress_percent(0.5, cap=50) == 50
+
+
+def test_progress_ramp_controls_the_start():
+    assert hud.progress_percent(0.2, ramp=0.5) < hud.progress_percent(0.2)
+    assert hud.progress_percent(0.2, ramp=0.01) > 85
+    assert hud.progress_percent(0.2, ramp=hud.PROG_RAMP_S) \
+        == hud.progress_percent(0.2)
+
+

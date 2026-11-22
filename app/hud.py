@@ -4,10 +4,18 @@ Tk runs in its own daemon thread; only that thread touches the widgets.
 The state dict is written by service threads — single reads are GIL-safe.
 The eye button switches the privacy mode: the text is hidden, the level
 stays. The status line disappears LAST_TTL_S seconds after it was set.
+The mic button records a phrase and leaves the text in the panel with the
+Insert / Edit / Cancel row underneath, for the case when no text field was
+focused before the click.
 """
 import contextlib
+import math
+import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
+
+import winfx
 
 STATE_COLORS = {
     "loading": "#F39C12",
@@ -21,13 +29,43 @@ STATE_COLORS = {
 BG = "#16181D"
 FG = "#D5D9E0"
 DIM = "#7A8290"
+ACCENT = "#2E86DE"
 
 W = 380
 BASE_TEXT_LINES = 4
+DRAFT_MIN_LINES = 6   # a draft is read and edited, not glanced at: never a tiny panel
 MAX_TEXT_LINES = 12
 LINE_H = 20
 BASE_H = 190
 LAST_TTL_S = 30
+ACTION_ROW_H = 68   # insert button + edit/cancel row, at 100% scaling
+
+# Recognition overlay: the panel turns into a short "preloader" while the
+# model turns speech into text. There is no measured percentage in the
+# recognizer, so the counter is an animated estimate: it runs fast to ~90%
+# within half a second, creeps to the cap, and only reaches 100 when the
+# text is actually ready.
+PROG_BG = "#04060A"
+PROG_NUM = "#EEF2F7"
+PROG_DIM = "#7A8290"
+PROG_COOL = "#5BE9FF"
+PROG_TRACK = "#20242B"
+PROG_ALPHA = 0.92
+PROG_TICK_MS = 40
+PROG_RAMP_S = 0.16
+PROG_CAP = 96.0
+PROG_DONE_MS = 120
+PROG_HOLD_MS = 140
+PROG_FADE_MS = 170
+
+
+def progress_percent(elapsed, ramp=PROG_RAMP_S, cap=PROG_CAP):
+    """Animated recognition progress: fast at first, never 100 on its own."""
+    if elapsed <= 0:
+        return 0.0
+    fast = 90.0 * (1.0 - math.exp(-elapsed / ramp))
+    creep = (cap - 90.0) * (1.0 - math.exp(-elapsed / 1.1))
+    return max(0.0, min(cap, fast + creep))
 
 
 def wrapped_lines(text, cpl=46):
@@ -38,14 +76,19 @@ def wrapped_lines(text, cpl=46):
     return total
 
 
-def panel_lines(text, base=BASE_TEXT_LINES, cap=MAX_TEXT_LINES, cpl=46):
-    """Visible text lines to reserve: never below the base, never above the cap."""
-    return max(base, min(cap, wrapped_lines(text, cpl)))
+def panel_lines(text, base=BASE_TEXT_LINES, cap=MAX_TEXT_LINES, cpl=46,
+                minimum=BASE_TEXT_LINES):
+    """Visible text lines to reserve: never below the base, never above the cap.
+
+    ``minimum`` raises the floor for a draft: that text is shown to be read.
+    """
+    return max(base, minimum, min(cap, wrapped_lines(text, cpl)))
 
 
-def panel_height(base_h, want, base=BASE_TEXT_LINES, line_h=LINE_H):
+def panel_height(base_h, want, base=BASE_TEXT_LINES, line_h=LINE_H,
+                 extra_h=0, minimum=BASE_TEXT_LINES):
     """Window height from the base, never from the previous height."""
-    return base_h + (want - base) * line_h
+    return base_h + extra_h + (max(want, minimum) - base) * line_h
 
 
 def dpi_factor(win):
@@ -67,6 +110,21 @@ class Hud:
         self._onboarding = None
         self._doctor = None
         self._root_h = BASE_H
+        self._want = BASE_TEXT_LINES
+        self._extra_h = 0
+        self._actions_visible = False
+        self._draft_rev = 0
+        self._draft_active = False
+        self._draft_edit = False
+        self._draft_text = ""
+        self._last_foreign_hwnd = None
+        # recognition overlay state (created only while the model is busy)
+        self._prog = None
+        self._prog_canvas = None
+        self._prog_job = None
+        self._prog_t0 = 0.0
+        self._prog_value = 0.0
+        self._prog_closing = False
 
         self.root = tk.Tk()
         px = self._px = lambda n: int(round(n * dpi_factor(self.root)))
@@ -81,8 +139,10 @@ class Hud:
         self.root.overrideredirect(True)   # borderless
         self.root.configure(bg=BG)
         self.root.attributes("-alpha", float(self.cfg.get("hud_alpha", 0.94)))
+        winfx.round_region(self.root, px(12))
+        winfx.keep_round_region(self.root, px(12))
 
-        # -- header: [⚙]  status …  |  [🎤] [✕] ----------------------------
+        # -- header: [⚙]  status …  |  [update] [✕] ------------------------
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x", padx=px(12), pady=(px(10), px(2)))
         gear = tk.Label(top, text="⚙", font=("Segoe UI", 12), fg=FG, bg=BG,
@@ -91,25 +151,38 @@ class Hud:
         gear.bind("<Button-1>", lambda e: self._open_settings())
         self.eye = tk.Label(top, text="👁", font=("Segoe UI", 11), fg=FG,
                             bg=BG, cursor="hand2")
-        self.eye.pack(side="left", padx=(px(8), 0))
+        self.eye.pack(side="left", padx=(px(4), 0))
         self.eye.bind("<Button-1>", lambda e: self._toggle_privacy())
+        self.mic = tk.Label(top, text="🎤", font=("Segoe UI", 12), fg=FG,
+                            bg=BG, cursor="hand2")
+        self.mic.pack(side="left", padx=(px(4), 0))
+        self.mic.bind("<Button-1>", lambda e: self._on_mic())
         self.dot = tk.Canvas(top, width=px(14), height=px(14), bg=BG,
                              highlightthickness=0)
-        self.dot.pack(side="left", padx=(px(10), px(4)))
-        self.lbl = tk.Label(top, text="…", font=("Segoe UI", 11, "bold"),
+        self.dot.pack(side="left", padx=(px(6), px(4)))
+        self.lbl = tk.Label(top, text="…", font=("Segoe UI", 10, "bold"),
                             fg=FG, bg=BG, anchor="w")
-        self.lbl.pack(side="left")
-        # record button: click = the same state-guarded toggle as the hotkey
-        self.mic = tk.Label(top, text="🎤", font=("Segoe UI", 13), fg=FG,
-                            bg=BG, cursor="hand2", padx=px(6))
-        self.mic.bind("<Button-1>", lambda e: self._on_mic())
         xlab = tk.Label(top, text="✕", font=("Segoe UI", 11), fg=DIM, bg=BG,
                         cursor="hand2")
-        xlab.bind("<Button-1>", lambda e: self.root.withdraw())
+        xlab.bind("<Button-1>", lambda e: self._hide_panel())
         sep = tk.Frame(top, width=px(1), height=px(16), bg="#3A4048")
         xlab.pack(side="right")
         sep.pack(side="right", padx=(px(4), px(8)))
-        self.mic.pack(side="right")
+        self.next_hist = tk.Label(top, text="›", font=("Segoe UI", 14),
+                                  fg=FG, bg=BG, cursor="hand2", padx=px(3))
+        self.next_hist.pack(side="right", padx=(0, px(6)))
+        self.next_hist.bind("<Button-1>", lambda e: self._browse_history(1))
+        self.prev_hist = tk.Label(top, text="‹", font=("Segoe UI", 14),
+                                  fg=FG, bg=BG, cursor="hand2", padx=px(3))
+        self.prev_hist.pack(side="right", padx=(px(6), px(2)))
+        self.prev_hist.bind("<Button-1>", lambda e: self._browse_history(-1))
+        # shown only while a newer release is pending; packed in _tick
+        self.upd = tk.Label(top, text="", font=("Segoe UI", 9, "bold"),
+                            fg="#FFFFFF", bg=ACCENT, cursor="hand2",
+                            padx=px(10), pady=px(2))
+        self.upd.bind("<Button-1>", lambda e: self._on_update())
+        # the status label takes what is left, so the buttons never clip
+        self.lbl.pack(side="left")
         self._bind_drag(self.dot)
         self._bind_drag(self.lbl)
         self._bind_drag(top)
@@ -142,7 +215,48 @@ class Hud:
         self.last.pack(fill="x", padx=px(12), pady=(0, px(8)))
         self._bind_drag(self.last)
 
-        self.root.bind("<Escape>", lambda e: self.root.withdraw())
+        # -- draft actions: shown under the panel after a panel dictation ----
+        self.actions = tk.Frame(self.root, bg=BG)
+        self.insert_btn = tk.Button(
+            self.actions, text=self.svc.tr("draft.insert"),
+            command=self._insert_draft, font=("Segoe UI", 9, "bold"),
+            fg="#FFFFFF", bg=ACCENT, activebackground="#2472B8",
+            activeforeground="#FFFFFF", relief="flat", bd=0,
+            cursor="hand2", padx=px(8), pady=px(5))
+        self.insert_btn.pack(fill="x", padx=px(12), pady=(0, px(4)))
+        row = tk.Frame(self.actions, bg=BG)
+        row.pack(fill="x", padx=px(12), pady=(0, px(8)))
+        self.edit_btn = tk.Button(
+            row, text=self.svc.tr("draft.edit"), command=self._toggle_edit,
+            font=("Segoe UI", 9), fg=FG, bg="#2A2F38",
+            activebackground="#3A4048", activeforeground="#FFFFFF",
+            relief="flat", bd=0, cursor="hand2", padx=px(6), pady=px(5))
+        self.edit_btn.pack(side="left")
+        self.copy_btn = tk.Button(
+            row, text=self.svc.tr("draft.copy"), command=self._copy_draft,
+            font=("Segoe UI", 9), fg=FG, bg="#2A2F38",
+            activebackground="#3A4048", activeforeground="#FFFFFF",
+            relief="flat", bd=0, cursor="hand2", padx=px(6), pady=px(5))
+        self.copy_btn.pack(side="left", padx=(px(6), 0))
+        self.dict_btn = tk.Button(
+            row, text=self.svc.tr("draft.to_dictionary"),
+            command=self._dictionary_draft, font=("Segoe UI", 9), fg=FG,
+            bg="#2A2F38", activebackground="#3A4048", activeforeground="#FFFFFF",
+            relief="flat", bd=0, cursor="hand2", padx=px(6), pady=px(5))
+        self.dict_btn.pack(side="left", padx=(px(6), 0))
+        self.cancel_btn = tk.Button(
+            row, text=self.svc.tr("draft.cancel"), command=self._cancel_draft,
+            font=("Segoe UI", 9), fg=FG, bg="#2A2F38",
+            activebackground="#3A4048", activeforeground="#FFFFFF",
+            relief="flat", bd=0, cursor="hand2", padx=px(6), pady=px(5))
+        self.cancel_btn.pack(side="right")
+        for widget in (self.actions, self.insert_btn, self.edit_btn,
+                       self.copy_btn, self.dict_btn, self.cancel_btn):
+            widget.bind("<Enter>", lambda e: self._track_foreign_window(),
+                        add="+")
+
+        self.root.bind("<Escape>", self._on_escape)
+        self.text.bind("<Control-Return>", self._on_ctrl_enter)
         self.root.after(120, self._tick)
 
     # -- layout / drag -----------------------------------------------------
@@ -150,8 +264,15 @@ class Hud:
         try:
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
+            # Reserve the tallest panel (text + action row): the top stays
+            # put and the panel grows downward while the history is flipped.
+            if self.cfg.get("hud_autogrow", True):
+                max_h = base_h + (MAX_TEXT_LINES - BASE_TEXT_LINES) * self._line_h
+            else:
+                max_h = base_h
+            max_h += self._px(ACTION_ROW_H)
             return self._W, base_h, sw - self._W - self._px(28), \
-                sh - base_h - self._px(72)
+                max(self._px(28), sh - max_h - self._px(72))
         except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             return self._W, base_h, 100, 100
 
@@ -172,6 +293,12 @@ class Hud:
             self.root.deiconify()
             self.root.lift()
 
+    def _hide_panel(self):
+        """The close icon and Escape: the overlay must never outlive the panel."""
+        self._destroy_progress()
+        with contextlib.suppress(Exception):
+            self.root.withdraw()
+
     def _open_settings(self):
         self.state["open_settings"] = True
         with contextlib.suppress(Exception):
@@ -182,18 +309,387 @@ class Hud:
         label = self.svc.tr(f"states.{key}", hotkey=self.cfg.get("hotkey", ""))
         return key if label == f"states.{key}" else label
 
-    def _on_mic(self):
-        """Record button: the same state-guarded toggle as the hotkey."""
+    def _on_update(self):
+        """Install the pending release through the same bootstrap as README."""
         try:
-            self.svc.on_hotkey()
+            self.svc.apply_pending_update()
         except Exception as e:  # noqa: BLE001 - the HUD thread must survive any Tk failure
-            self.log.warning("HUD mic button: %s", e)
+            self.log.warning("HUD update button: %s", e)
+
+    def _sync_update_button(self):
+        rel = self.svc.pending_update
+        if rel:
+            text = self.svc.tr("hud.update_to")
+            if str(self.upd.cget("text")) != text:
+                self.upd.configure(text=text)
+            if not self.upd.winfo_ismapped():
+                self.upd.pack(side="right", padx=(0, self._px(6)),
+                              before=self.lbl)
+        elif self.upd.winfo_ismapped():
+            self.upd.pack_forget()
 
     def _toggle_privacy(self):
         """Hide or show the text; the level bar stays either way."""
         self.state["privacy"] = not bool(self.state.get("privacy"))
         self.log.info("HUD privacy: %s",
                       "on" if self.state["privacy"] else "off")
+
+    # -- panel dictation ---------------------------------------------------
+    def _on_mic(self):
+        """Mic button: start a panel dictation or stop the running one."""
+        with contextlib.suppress(Exception):
+            # The panel has no title bar; force the focus so the click does
+            # not leave the previous app as a silent paste target.
+            self.root.focus_force()
+        threading.Thread(target=self.svc.on_panel_mic, daemon=True).start()
+
+    def _browse_history(self, step):
+        """Arrows in the header: -1 older, +1 newer saved dictation."""
+        with contextlib.suppress(Exception):
+            self.root.focus_force()
+        threading.Thread(target=self.svc.browse_history, args=(step,),
+                         daemon=True).start()
+
+    def _sync_mic(self, key):
+        if key == "recording":
+            text, color = "⏹", STATE_COLORS["recording"]
+        elif key in ("processing", "loading", "updating"):
+            text, color = "🎤", DIM
+        else:
+            text, color = "🎤", FG
+        if str(self.mic.cget("text")) != text:
+            self.mic.configure(text=text)
+        if str(self.mic.cget("fg")) != color:
+            self.mic.configure(fg=color)
+
+    def _track_foreign_window(self):
+        """Remember the last window that is not ours: the insert target."""
+        try:
+            import insert as insert_mod
+            hwnd = insert_mod.get_foreground_hwnd()
+            if hwnd and not insert_mod.is_own_window(hwnd):
+                self._last_foreign_hwnd = hwnd
+        except Exception as e:  # noqa: BLE001 - tracking must not stop the HUD
+            self.log.debug("HUD foreground tracking: %s", e)
+
+    def _on_ctrl_enter(self, _event=None):
+        self._insert_draft()
+        return "break"
+
+    def _on_escape(self, _event=None):
+        if self._draft_edit:
+            self._save_edit()
+        else:
+            self._hide_panel()
+        return "break"
+
+    def _sync_draft(self, st):
+        rev = int(st.get("draft_rev") or 0)
+        if rev == self._draft_rev:
+            return
+        self._draft_rev = rev
+        text = st.get("draft") or ""
+        if text:
+            self._show_draft(text)
+        else:
+            self._clear_draft()
+
+    def _show_draft(self, text):
+        """Show the recognized text read-only with the action row below."""
+        self._draft_active = True
+        self._draft_edit = False
+        self._draft_text = text
+        # The target is whatever the user focuses after the draft appears;
+        # a window picked before it is not "the specified place".
+        self._last_foreign_hwnd = None
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", text)
+        self.text.configure(state="disabled")
+        self._set_edit_label(False)
+        self._set_actions_enabled(True)
+        self._show_actions()
+        self._autogrow(text, draft=True)
+
+    def _clear_draft(self):
+        self._draft_active = False
+        self._draft_edit = False
+        self._draft_text = ""
+        self._last_foreign_hwnd = None
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "…")
+        self.text.configure(state="disabled")
+        self._set_edit_label(False)
+        self._hide_actions()
+        self._autogrow("…")
+
+    def _show_actions(self):
+        if self._actions_visible:
+            return
+        self._actions_visible = True
+        self._extra_h = self._px(ACTION_ROW_H)
+        self.actions.pack(fill="x")
+        self._apply_height()
+
+    def _hide_actions(self):
+        if not self._actions_visible:
+            return
+        self._actions_visible = False
+        self._extra_h = 0
+        self.actions.pack_forget()
+        self._apply_height()
+
+    def _set_actions_enabled(self, enabled):
+        state = "normal" if enabled else "disabled"
+        for button in (self.insert_btn, self.edit_btn, self.copy_btn,
+                       self.dict_btn, self.cancel_btn):
+            button.configure(state=state)
+
+    def _set_edit_label(self, editing):
+        label = self.svc.tr("draft.done" if editing else "draft.edit")
+        if str(self.edit_btn.cget("text")) != label:
+            self.edit_btn.configure(text=label)
+
+    def _toggle_edit(self):
+        """Switch the draft between read-only and editable."""
+        if not self._draft_active:
+            return
+        if self._draft_edit:
+            self._save_edit()
+            return
+        self._draft_edit = True
+        self.text.configure(state="normal")
+        self._set_edit_label(True)
+        with contextlib.suppress(Exception):
+            self.root.focus_force()
+            self.text.focus_set()
+            self.text.mark_set("insert", "end-1c")
+            self.text.see("end")
+
+    def _save_edit(self):
+        if self._draft_edit:
+            self._draft_text = self._read_draft()
+        self._draft_edit = False
+        self.text.configure(state="disabled")
+        self._set_edit_label(False)
+
+    def _read_draft(self):
+        try:
+            return self.text.get("1.0", "end-1c")
+        except Exception:  # noqa: BLE001 - the cached text stands
+            return self._draft_text
+
+    def _insert_draft(self):
+        """Paste the reviewed text into the window the user picked last."""
+        if not self._draft_active:
+            return
+        self._save_edit()
+        text = self._draft_text.strip()
+        if not text:
+            self._cancel_draft()
+            return
+        self._set_actions_enabled(False)
+        self._track_foreign_window()
+        self.svc.insert_draft(text, self._last_foreign_hwnd)
+
+    def _copy_draft(self):
+        """Put the reviewed text into the clipboard and close the draft."""
+        if not self._draft_active:
+            return
+        self._save_edit()
+        text = self._draft_text.strip()
+        if not text:
+            self._cancel_draft()
+            return
+        self._set_actions_enabled(False)
+        self.svc.copy_draft(text)
+
+    def _dictionary_draft(self):
+        """Offer the reviewed draft as a dictionary pair; the draft stays."""
+        if not self._draft_active:
+            return
+        self._save_edit()
+        text = self._draft_text.strip()
+        if not text:
+            return
+        import dictlearn
+        dictlearn.pair_dialog(self.root, self.svc.tr, text, self.svc.cfg)
+
+    def _cancel_draft(self):
+        if not self._draft_active:
+            return
+        self._clear_draft()
+        self.svc.cancel_draft()
+
+    # -- recognition overlay -----------------------------------------------
+    def _start_progress(self):
+        """Cover the panel with the fast percentage while the model works."""
+        if self._prog is not None:
+            self._destroy_progress()
+        if not self.root.winfo_viewable():
+            return
+        try:
+            ov = tk.Toplevel(self.root)
+            ov.withdraw()
+            ov.overrideredirect(True)
+            ov.configure(bg=PROG_BG)
+            ov.attributes("-topmost", True)
+            ov.attributes("-alpha", PROG_ALPHA)
+            cv = tk.Canvas(ov, bg=PROG_BG, highlightthickness=0)
+            cv.pack(fill="both", expand=True)
+            self._prog = ov
+            self._prog_canvas = cv
+            self._prog_num_font = tkfont.Font(family="Segoe UI Light", size=58)
+            self._prog_pct_font = tkfont.Font(family="Consolas", size=11)
+            self._prog_label_font = tkfont.Font(family="Consolas", size=8)
+            cv.bind("<Configure>",
+                    lambda e: self._paint_progress(self._prog_value))
+            self._place_progress()
+            ov.deiconify()
+            ov.update_idletasks()
+            winfx.round_region(ov, self._px(12))
+            winfx.keep_round_region(ov, self._px(12))
+            ov.lift()
+            self._prog_t0 = time.time()
+            self._prog_value = 0.0
+            self._prog_closing = False
+            self._paint_progress(0.0)
+            self._prog_job = self.root.after(PROG_TICK_MS, self._tick_progress)
+        except Exception as e:  # noqa: BLE001 - the HUD thread must survive any Tk failure
+            self.log.warning("HUD recognition overlay: %s", e)
+            self._destroy_progress()
+
+    def _place_progress(self):
+        """The overlay sits exactly on the panel, even after an autogrow."""
+        if self._prog is None:
+            return
+        self.root.update_idletasks()
+        x = self.root.winfo_rootx()
+        y = self.root.winfo_rooty()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        self._prog.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _paint_progress(self, value):
+        cv = self._prog_canvas
+        if cv is None:
+            return
+        cv.delete("all")
+        w = cv.winfo_width()
+        h = cv.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        px = self._px
+        num = f"{max(0, min(100, int(round(value)))):02d}"
+        left = px(18)
+        baseline = h - px(34)
+        # canvas text anchors sit on the box bottom, so the descent is added
+        # to put the number, the percent sign and the label on one baseline
+        cv.create_text(left, baseline + self._prog_num_font.metrics("descent"),
+                       text=num, anchor="sw",
+                       font=self._prog_num_font, fill=PROG_NUM)
+        num_w = self._prog_num_font.measure(num)
+        cv.create_text(left + num_w + px(3),
+                       baseline + self._prog_pct_font.metrics("descent"),
+                       text="%", anchor="sw",
+                       font=self._prog_pct_font, fill=PROG_DIM)
+        label = self.svc.tr("hud.recognizing")
+        if label != "hud.recognizing":
+            cv.create_text(w - left,
+                           baseline + self._prog_label_font.metrics("descent"),
+                           text=label, anchor="se",
+                           font=self._prog_label_font, fill=PROG_DIM)
+        # the running line: ice -> cyan, like the site preloader
+        track_y = h - px(14)
+        cv.create_rectangle(left, track_y, w - left, track_y + px(2),
+                            fill=PROG_TRACK, outline="")
+        fill = int((w - left * 2) * max(0.0, min(100.0, value)) / 100.0)
+        seg = max(1, px(1))
+        for i in range(0, fill, seg):
+            t = i / max(1, fill)
+            r = int(0xEE + (0x5B - 0xEE) * t)
+            g = int(0xF2 + (0xE9 - 0xF2) * t)
+            b = int(0xF7 + (0xFF - 0xF7) * t)
+            cv.create_rectangle(left + i, track_y - px(1),
+                                left + min(fill, i + seg), track_y + px(3),
+                                fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
+        if fill > 0:
+            cv.create_oval(left + fill - px(2), track_y - px(1),
+                           left + fill + px(2), track_y + px(3),
+                           fill=PROG_COOL, outline="")
+
+    def _tick_progress(self):
+        self._prog_job = None
+        if self._prog is None or self._prog_closing:
+            return
+        if self.state.get("state") != "processing":
+            self._finish_progress()
+            return
+        if not self.root.winfo_viewable():
+            self._destroy_progress()
+            return
+        self._prog_value = progress_percent(time.time() - self._prog_t0)
+        self._place_progress()
+        self._paint_progress(self._prog_value)
+        self._prog_job = self.root.after(PROG_TICK_MS, self._tick_progress)
+
+    def _finish_progress(self):
+        """The text is ready: jump to 100, hold, then fade the overlay out."""
+        if self._prog is None or self._prog_closing:
+            return
+        self._prog_closing = True
+        if self._prog_job is not None:
+            with contextlib.suppress(Exception):
+                self.root.after_cancel(self._prog_job)
+            self._prog_job = None
+        start = self._prog_value
+        steps = max(1, PROG_DONE_MS // PROG_TICK_MS)
+        self._prog_step = 0
+        self._prog_from = start
+        self._prog_steps = steps
+        self._finish_progress_step()
+
+    def _finish_progress_step(self):
+        if self._prog is None:
+            return
+        self._prog_step += 1
+        value = self._prog_from + (100.0 - self._prog_from) * min(
+            1.0, self._prog_step / self._prog_steps)
+        self._prog_value = value
+        self._place_progress()
+        self._paint_progress(value)
+        if self._prog_step < self._prog_steps:
+            self._prog_job = self.root.after(PROG_TICK_MS,
+                                             self._finish_progress_step)
+        else:
+            self._prog_job = self.root.after(PROG_HOLD_MS, self._fade_progress)
+
+    def _fade_progress(self, step=0):
+        if self._prog is None:
+            return
+        self._place_progress()
+        alpha = PROG_ALPHA * (1.0 - step * PROG_TICK_MS / PROG_FADE_MS)
+        if alpha <= 0.02:
+            self._destroy_progress()
+            return
+        with contextlib.suppress(Exception):
+            self._prog.attributes("-alpha", alpha)
+        self._prog_job = self.root.after(PROG_TICK_MS,
+                                         self._fade_progress, step + 1)
+
+    def _destroy_progress(self):
+        if self._prog_job is not None:
+            with contextlib.suppress(Exception):
+                self.root.after_cancel(self._prog_job)
+            self._prog_job = None
+        prog, self._prog = self._prog, None
+        self._prog_canvas = None
+        self._prog_closing = False
+        self._prog_value = 0.0
+        if prog is not None:
+            with contextlib.suppress(Exception):
+                prog.destroy()
 
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
@@ -215,10 +711,15 @@ class Hud:
             key = st.get("state", "idle")
             color = STATE_COLORS.get(key, "#2E86DE")
             self.lbl.configure(text=self._state_label(key), fg=color)
-            if key == "recording":
-                self.mic.configure(text="⏹", fg="#E74C3C")
-            else:
-                self.mic.configure(text="🎤", fg=FG)
+            self._sync_update_button()
+            self._sync_mic(key)
+            if key == "processing":
+                if self._prog is None or self._prog_closing:
+                    self._start_progress()
+            elif self._prog is not None and not self._prog_closing:
+                self._finish_progress()
+            self._track_foreign_window()
+            self._sync_draft(st)
             self._paint_dot(color)
             level = min(1.0, float(st.get("level", 0.0)) * 12.0)  # rms ~0..0.08
             self._paint_bar(level)
@@ -229,13 +730,14 @@ class Hud:
 
             privacy = bool(st.get("privacy"))
             self.eye.configure(text="🙈" if privacy else "👁")
-            partial = (self.svc.tr("hud.privacy_hint") if privacy
-                       else (st.get("partial") or "…"))
-            self.text.configure(state="normal")
-            self.text.delete("1.0", "end")
-            self.text.insert("1.0", partial)
-            self.text.configure(state="disabled")
-            self._autogrow(partial)
+            if not self._draft_active:
+                partial = (self.svc.tr("hud.privacy_hint") if privacy
+                           else (st.get("partial") or "…"))
+                self.text.configure(state="normal")
+                self.text.delete("1.0", "end")
+                self.text.insert("1.0", partial)
+                self.text.configure(state="disabled")
+                self._autogrow(partial)
 
             last = st.get("last") or ""
             age = time.time() - float(st.get("last_ts") or 0)
@@ -257,13 +759,28 @@ class Hud:
         except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
             alive = False
         if alive:
+            with contextlib.suppress(Exception):
+                # The settings table needs the right part of the screen;
+                # a topmost panel would cover it.
+                self.root.attributes("-topmost", False)
             self._settings.win.deiconify()
+            self._settings.win.lift()
             if tab:
                 self._settings.select_tab(tab)
             return
         import settings_window
+        with contextlib.suppress(Exception):
+            self.root.attributes("-topmost", False)
         self._settings = settings_window.SettingsWindow(
             self.root, self.svc, self.log, tab=tab)
+        self._settings.win.bind("<Destroy>", self._settings_closed, add="+")
+
+    def _settings_closed(self, event=None):
+        if (event is not None
+                and event.widget is not getattr(self._settings, "win", None)):
+            return
+        with contextlib.suppress(Exception):
+            self.root.attributes("-topmost", True)
 
     def _open_doctor_window(self):
         try:
@@ -306,28 +823,44 @@ class Hud:
         except Exception:  # noqa: BLE001 - the char estimate stands
             return 0
 
-    def _autogrow(self, partial: str):
-        """Grow the panel with the text, keeping its bottom edge in place."""
+    def _autogrow(self, text: str, draft: bool = False):
+        """Grow the panel with the text, keeping its bottom edge in place.
+
+        A draft panel reserves DRAFT_MIN_LINES: the text is there to be read.
+        """
         with contextlib.suppress(Exception):
+            minimum = DRAFT_MIN_LINES if draft else BASE_TEXT_LINES
             if not self.cfg.get("hud_autogrow", True):
-                want = BASE_TEXT_LINES
+                want = minimum
             else:
-                want = panel_lines(partial)
+                want = panel_lines(text, minimum=minimum)
                 shown = self._display_lines()
                 if shown:
-                    want = max(BASE_TEXT_LINES, min(MAX_TEXT_LINES, shown))
+                    want = max(minimum, min(MAX_TEXT_LINES, shown))
+            self._want = want
             if want != int(self.text.cget("height")):
                 self.text.configure(height=want)
-                h = panel_height(self._base_h, want, base=BASE_TEXT_LINES,
-                                 line_h=self._line_h)
-                screen_h = self.root.winfo_screenheight()
-                h = min(h, max(self._base_h, screen_h - self._px(80)))
-                if h != self._root_h:
-                    bottom = self.root.winfo_y() + self._root_h
-                    self._root_h = h
-                    x = self.root.winfo_x()
-                    y = max(0, bottom - h)
-                    self.root.geometry(f"{self._W}x{h}+{x}+{y}")
+            self._apply_height()
+
+    def _apply_height(self):
+        """Height from the text lines and the visible action row; top stays put."""
+        with contextlib.suppress(Exception):
+            minimum = DRAFT_MIN_LINES if self._draft_active else BASE_TEXT_LINES
+            h = panel_height(self._base_h + self._extra_h, self._want,
+                             base=BASE_TEXT_LINES, line_h=self._line_h,
+                             minimum=minimum)
+            screen_h = self.root.winfo_screenheight()
+            available = max(self._base_h + self._extra_h,
+                            screen_h - self.root.winfo_y() - self._px(28))
+            h = min(h, available)
+            if h != self._root_h:
+                # Apply the previous geometry first: two size changes in one
+                # tick would read stale coordinates and shift the panel.
+                self.root.update_idletasks()
+                x = self.root.winfo_x()
+                y = self.root.winfo_y()
+                self._root_h = h
+                self.root.geometry(f"{self._W}x{h}+{x}+{y}")
 
     def _paint_dot(self, color):
         self.dot.delete("all")
