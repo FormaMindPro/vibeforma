@@ -246,9 +246,8 @@ def insert_text(text: str, restore_clipboard: bool = True,
     kb = Controller()
     time.sleep(PASTE_DELAY_S)
     if paste_method == "shift_insert":
-        # Layout-independent: Ctrl+V under a Russian layout resolves to
-        # Ctrl+"м" and never pastes (measured 2026-11-19); Shift+Insert works
-        # on every layout.
+        # Layout-independent: Ctrl+V with a Russian keyboard layout never
+        # pastes (measured 2026-11-19); Shift+Insert works on every layout.
         with kb.pressed(Key.shift):
             kb.press(Key.insert)
             kb.release(Key.insert)

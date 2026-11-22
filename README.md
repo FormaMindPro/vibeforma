@@ -9,7 +9,7 @@ and understands **~99 languages** — the same downloaded model serves them all.
 Nothing leaves your computer; the network is used exactly once, to download
 the model.
 
-Русская версия этого описания: [README.ru.md](README.ru.md).
+Russian version: [README.ru.md](README.ru.md).
 
 [![CI](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml/badge.svg)](https://github.com/FormaMindPro/vibeforma/actions/workflows/ci.yml)
 
@@ -268,8 +268,8 @@ share of non-scaling stages); the gap widens on longer audio.
   what you set is what is recognized. A per-language prompt preset improves
   punctuation for the major languages; personal terms belong to
   `config.json → "hotwords"`.
-- **Menu naming**: every language is written in its own language —
-  English, Русский, Українська, Deutsch, 日本語…
+- **Menu naming**: every language is written in its own script —
+  English, Russian, Ukrainian, German, Japanese…
 - **Interface**: English and Russian ship in `app/locales/*.json`. To add
   yours — copy `en.json`, translate the values, save as `app/locales/<code>.json`;
   the language then appears in settings automatically.
@@ -401,6 +401,14 @@ python -m venv .venv
 
 `tools/ruff_gate.py` runs the same selection as CI and fails on any finding:
 the 164 findings recorded in 0.1.9 were cleaned up, so `ruff` is blocking.
+
+### Language of the repository
+
+The repository is English-only outside localization resources: code,
+comments, logs, the changelog and commit messages are written in English.
+Cyrillic is allowed only in `app/locales/*.json`, the installer's Russian
+texts, the ru/uk ASR prompts and `README.ru.md`. `tests/test_english_only.py`
+enforces the rule, so a stray Cyrillic character fails the suite.
 
 ## Reviewing the code with an AI assistant
 

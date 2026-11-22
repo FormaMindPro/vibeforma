@@ -91,6 +91,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   out, including `-Target` for an install outside the default folder.
 
 ### Changed
+- **The repository is English-only outside localization resources.** Code,
+  comments, logs, the changelog and commit messages are English; Cyrillic is
+  allowed only in `app/locales/*.json`, the installer's Russian texts, the
+  ru/uk ASR prompts and `README.ru.md`. A test (`tests/test_english_only.py`)
+  enforces the rule.
 - **Updates are the plain GitHub installation.** The Update button and the
   automatic check use the same command as the README: the release zip from
   GitHub, no extra secrets and no extra install step.
@@ -333,7 +338,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   starts and stops dictation — the same state-guarded toggle as the hotkey.
 
 ### Fixed
-- The status line shows the actual hotkey ("Готов — Ctrl+Alt+Space")
+- The status line shows the actual hotkey ("Ready — Ctrl+Alt+Space")
   instead of the raw "{hotkey}" placeholder — in the panel and the tray
   tooltip alike.
 
@@ -418,8 +423,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Languages in the tray and settings are written as endonyms — every
-  language in its own language (English, Русский, Українська, Deutsch,
-  日本語…). Codes are still stored in config.json.
+  language in its own script (English, Russian, Ukrainian, German,
+  Japanese…). Codes are still stored in config.json.
 
 ## 0.1.1 — 2026-11-20
 
