@@ -1,0 +1,33 @@
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature for VibeForma. Describe the problem first, the solution second.
+        Предложения на русском тоже принимаются — пишите на удобном языке.
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: What feature would you like?
+      description: One or two sentences about what VibeForma should do.
+      placeholder: Transcribe a recorded meeting file from the tray menu.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What task does it solve?
+      description: The workflow that is slow or impossible today.
+      placeholder: I record calls and retype them by hand because dictation only listens to the microphone.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you tried
+      description: Other tools, workarounds, or existing features you use instead.
+    validations:
+      required: false
