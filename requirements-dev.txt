@@ -4,3 +4,5 @@ pytest==8.4.2
 pytest-cov==7.0.0
 mypy==2.4.1
 radon==6.0.1
+# Imported by the hotkey and cancel tests; pinned like the service requirements.
+pynput==1.8.2

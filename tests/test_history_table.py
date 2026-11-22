@@ -1,5 +1,11 @@
 """History table: row cells and phrase filtering."""
+import sys
 import time
+
+import pytest
+
+if sys.platform != "win32":
+    pytest.skip("settings_window uses Windows APIs", allow_module_level=True)
 
 import settings_window
 
