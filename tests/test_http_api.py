@@ -1,6 +1,7 @@
 """HTTP API guards: loopback, token, content type, size, rate, temp file."""
 import http.client
 import json
+import socket
 import sys
 import time
 import types
@@ -82,8 +83,74 @@ def _post(httpd, path="/transcribe", body=b"RIFF", token=TOKEN,
         conn.close()
 
 
+def _get(httpd, path="/health", token=TOKEN):
+    port = httpd.server_address[1]
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    headers = {}
+    if token is not None:
+        headers[main.HTTP_TOKEN_HEADER] = token
+    try:
+        conn.request("GET", path, headers=headers)
+        response = conn.getresponse()
+        return response.status, response.read()
+    finally:
+        conn.close()
+
+
 def test_listens_on_loopback_only(server):
     assert server.server_address[0] == "127.0.0.1"
+
+
+def test_health_identifies_the_app_and_actual_port(server):
+    status, body = _get(server)
+
+    assert status == 200
+    health = json.loads(body)
+    assert health["ok"] is True
+    assert health["app"] == "vibeforma"
+    assert health["api"] == 1
+    assert health["port"] == server.server_address[1]
+
+
+def test_api_falls_back_to_a_free_port_when_the_preferred_one_is_busy(service):
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    busy = blocker.getsockname()[1]
+    httpd = None
+    try:
+        httpd = main.start_http_api(
+            {"http_port": busy, "http_token": TOKEN}, service, FakeLog())
+        assert httpd is not None
+        assert httpd.server_address[1] != busy
+        status, body = _get(httpd)
+        assert status == 200
+        assert json.loads(body)["port"] == httpd.server_address[1]
+    finally:
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
+        blocker.close()
+
+
+def test_location_file_names_the_config_and_actual_port(tmp_path, monkeypatch):
+    import vibeforma.http_api as http_api
+
+    target = tmp_path / "VibeForma" / "location.json"
+    monkeypatch.setattr(http_api, "location_path", lambda: str(target))
+    monkeypatch.setattr(http_api, "CONFIG_PATH", str(tmp_path / "config.json"))
+
+    http_api.publish_location(None, port=49321, api="on")
+
+    location = json.loads(target.read_text(encoding="utf-8"))
+    assert location["schema"] == 1
+    assert location["app"] == "vibeforma"
+    assert location["version"]
+    assert location["config"] == str(tmp_path / "config.json")
+    assert location["port"] == 49321
+    assert location["api"] == "on"
+    assert "http_token" not in location
+    assert "token" not in location
 
 
 def test_transcribe_returns_json(server):

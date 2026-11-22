@@ -10,6 +10,7 @@ from config import save
 
 from . import STATE_ERROR, STATE_IDLE, STATE_LOADING, STATE_RECORDING
 from .base import ServiceHost
+from .http_api import publish_location, start_http_api
 from .util import ensure_autostart
 
 
@@ -89,19 +90,26 @@ class SettingsOps(ServiceHost):
                 self.http_server.server_close()
                 self.http_server = None
                 self.log.info("HTTP API: stopped")
+            publish_location(self.log, port=port, api="off")
             return
         if not str(self.cfg.get("http_token") or "").strip():
             self.cfg["http_token"] = secrets.token_urlsafe(24)
             save(self.cfg)
             self.log.info("HTTP API: token generated")
         if self.http_server is not None and old_api and port == old_port:
+            publish_location(self.log,
+                             port=int(self.http_server.server_address[1]),
+                             api="on")
             return
         if self.http_server is not None:
             self.http_server.shutdown()
             self.http_server.server_close()
             self.http_server = None
-        from .http_api import start_http_api
         self.http_server = start_http_api(self.cfg, self, self.log)
+        actual = (int(self.http_server.server_address[1])
+                  if self.http_server is not None else port)
+        publish_location(self.log, port=actual,
+                         api="on" if self.http_server is not None else "error")
         if self.http_server is None and self.tray:
             self.tray.notify(self.tr("notify.http_api_failed", port=port))
 

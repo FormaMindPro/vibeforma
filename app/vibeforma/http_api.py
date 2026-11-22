@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hmac
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -12,13 +14,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from config import CONFIG_PATH, LOG_DIR, VERSION
+from config import CONFIG_PATH, DATA_DIR, LOG_DIR, VERSION
 
 from . import STATE_IDLE, STATE_PROCESSING
 
 HTTP_MAX_BODY = 10 * 1000 * 1000   # bytes accepted for one request
 HTTP_MIN_INTERVAL_S = 1.0          # one request per second
 HTTP_TOKEN_HEADER = "X-VibeForma-Token"  # noqa: S105 - a header name
+
+
+class _LoopbackServer(ThreadingHTTPServer):
+    """A loopback listener that reports a busy port instead of sharing it.
+
+    Windows SO_REUSEADDR lets a second socket bind a port that is already
+    listening, and the first listener keeps receiving the traffic. Disabling
+    it makes EADDRINUSE real, which is what the free-port fallback needs.
+    """
+    allow_reuse_address = sys.platform != "win32"
 
 
 def location_path() -> str:
@@ -40,25 +52,47 @@ def location_path() -> str:
     return str(target)
 
 
-def publish_location(log: Any = None) -> None:
-    """Write the config path for external tools (forms, scripts).
+def publish_location(log: Any = None, *, port: int | None = None,
+                     api: str | None = None) -> None:
+    """Write the config path and the actual API endpoint for external tools.
 
     Carries no secret: the token stays in config.json alone. A source install
-    is found through this file exactly like a packed one.
+    is found through this file exactly like a packed one. ``port`` is the port
+    the listener actually bound (a busy preferred port falls back to a free
+    one), and ``api`` is ``on``, ``off`` or ``error``.
     """
     target = location_path()
     if not target:
         return
+    payload: dict[str, Any] = {
+        "schema": 1,
+        "app": "vibeforma",
+        "version": VERSION,
+        "config": CONFIG_PATH,
+        "app_dir": DATA_DIR,
+        "pid": os.getpid(),
+        "updated": int(time.time()),
+    }
+    if port is not None:
+        payload["port"] = int(port)
+    if api is not None:
+        payload["api"] = str(api)
     try:
         path = Path(target)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps({"config": CONFIG_PATH}, ensure_ascii=False),
+        tmp.write_text(json.dumps(payload, ensure_ascii=False),
                        encoding="utf-8")
         tmp.replace(path)
     except OSError as e:
         if log:
             log.debug("location.json not written: %s", e)
+
+
+def _is_addr_in_use(error: OSError) -> bool:
+    """Windows reports WSAEADDRINUSE (10048); POSIX reports errno.EADDRINUSE."""
+    return getattr(error, "winerror", None) == 10048 or error.errno in (
+        errno.EADDRINUSE, 10048)
 
 
 def start_http_api(cfg: dict[str, Any], svc: Any,
@@ -127,6 +161,9 @@ def start_http_api(cfg: dict[str, Any], svc: Any,
                 return
             self._json(200, {
                 "ok": True,
+                "app": "vibeforma",
+                "api": 1,
+                "port": int(self.server.server_address[1]),
                 "version": VERSION,
                 "model": str(cfg.get("model") or ""),
                 "language": str(cfg.get("language") or ""),
@@ -204,13 +241,29 @@ def start_http_api(cfg: dict[str, Any], svc: Any,
         def log_message(self, fmt: str, *args: Any) -> None:
             log.debug("HTTP: " + fmt % args)
 
+    raw_port = cfg.get("http_port")
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", int(cfg["http_port"])),
-                                     Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        log.info("HTTP API: http://127.0.0.1:%d/transcribe (token required)",
-                 cfg["http_port"])
-        return server
+        preferred = 8787 if raw_port in (None, "") else int(raw_port)
+    except (TypeError, ValueError):
+        preferred = 8787
+    try:
+        server = _LoopbackServer(("127.0.0.1", preferred), Handler)
     except OSError as e:
-        log.warning("HTTP API not started: %s", e)
-        return None
+        if not _is_addr_in_use(e):
+            log.warning("HTTP API not started: %s", e)
+            return None
+        # A fixed default port collides with another local tool on a user's
+        # machine: the form still needs an endpoint, so bind a free one and
+        # publish the actual port in location.json.
+        log.warning("HTTP API: port %d is busy, choosing a free port",
+                    preferred)
+        try:
+            server = _LoopbackServer(("127.0.0.1", 0), Handler)
+        except OSError as fallback_error:
+            log.warning("HTTP API not started: %s", fallback_error)
+            return None
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = int(server.server_address[1])
+    log.info("HTTP API: http://127.0.0.1:%d/transcribe (token required)",
+             port)
+    return server

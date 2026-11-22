@@ -951,8 +951,14 @@ class SettingsWindow:
         self._head(f, self.tr("settings.g_voice_forms"))
         self.v_http = tk.BooleanVar(value=bool(c.get("http_api", False)))
         self._bind(f, self.v_http, self.tr("settings.http_api"))
-        self._note(f, self.tr("settings.note_http_api",
-                              port=int(c.get("http_port", 8787))))
+        api_port = int(c.get("http_port", 8787))
+        server = getattr(self.svc, "http_server", None)
+        if server is not None:
+            try:
+                api_port = int(server.server_address[1])
+            except (AttributeError, IndexError, TypeError, ValueError):
+                pass
+        self._note(f, self.tr("settings.note_http_api", port=api_port))
         self._head(f, self.tr("settings.g_hook"))
         self.v_hook = tk.StringVar(value=str(c.get("hook_command", "")))
         self._row(f, self.tr("settings.hook_command"),

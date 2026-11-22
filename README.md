@@ -313,13 +313,22 @@ share of non-scaling stages); the gap widens on longer audio.
 
 ## Local HTTP API (off by default)
 
-Set `"http_api": true` and a random `"http_token": "<secret>"` in
-`config.json`. The API listens on `127.0.0.1` only, refuses to start without
-a token, and accepts `POST /transcribe` with the header
-`X-VibeForma-Token: <secret>`, `Content-Type: audio/wav` and a WAV body up to
-10 MB; one request per second; the service must be idle. The answer is
+Turn it on in Settings → **Voice for external forms** → **Allow the local API
+for forms**. The key is minted and saved automatically. The API listens on
+`127.0.0.1` only and answers `GET /health` and `POST /transcribe` with the
+header `X-VibeForma-Token: <secret>`. `/health` returns `ok`, `app`
+(`vibeforma`), `api`, the actual `port`, `version`, `model`, `language` and
+`state`; `/transcribe` takes `Content-Type: audio/wav`, a WAV body up to
+10 MB, one request per second, only while the service is idle, and answers
 `{"text": "..."}`; the uploaded audio is written to a temporary file and
 deleted in any case.
+
+The service publishes `%LOCALAPPDATA%\VibeForma\location.json` with
+`schema`, `app`, `version`, `config`, `api` (`on`, `off` or `error`) and the
+actual `port`. If the configured port (`8787` by default) is busy, the
+service binds a free loopback port and writes that port here, so a form reads
+the endpoint from this file instead of hardcoding a port. The file carries no
+secret: the token stays in `config.json`.
 
 ## Command line and external hook
 

@@ -106,8 +106,8 @@ def _settings_items(cfg, config_mod):
         if str(cfg.get("http_token") or "").strip():
             items.append((OK, "http api", "on, token set (value hidden)"))
         else:
-            items.append((FAIL, "http api",
-                          "on without http_token - the server refuses to start"))
+            items.append((WARN, "http api",
+                          "on; the key is created on the first start"))
     else:
         items.append((OK, "http api", "off"))
     items.append((OK, "history",

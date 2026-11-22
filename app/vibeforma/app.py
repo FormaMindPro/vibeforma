@@ -176,10 +176,18 @@ def main() -> None:
     svc.attach_cancel_watcher(watcher)
 
     # A form finds this install through LOCALAPPDATA\VibeForma\location.json;
-    # the file carries the config path only, never the token.
-    publish_location(log)
+    # the file carries the config path, the actual API port and whether the
+    # listener is on, never the token.
+    api_port = int(cfg.get("http_port") or 8787)
+    api_state = "off"
     if cfg.get("http_api"):
         svc.http_server = start_http_api(cfg, svc, log)
+        if svc.http_server is not None:
+            api_port = int(svc.http_server.server_address[1])
+            api_state = "on"
+        else:
+            api_state = "error"
+    publish_location(log, port=api_port, api=api_state)
 
     start_update_checker(cfg, svc, log)
 

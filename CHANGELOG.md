@@ -64,6 +64,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the temporary file. The settings switch starts and stops the listener live,
   and the key is minted and saved on the first start, so a hand-written
   config with the switch on still works.
+- **Automatic API port and discovery.** If the configured port (8787 by
+  default) is busy, the service binds a free loopback port instead of
+  silently losing the API. It publishes
+  `%LOCALAPPDATA%\VibeForma\location.json` with the config path, the actual
+  port and the API state, so a form reads the endpoint from one file and
+  never hardcodes a port. `/health` now identifies the app and names the
+  actual port.
 
 ### Fixed
 - **Microphones that only open at 44.1 or 48 kHz.** Capture follows the
