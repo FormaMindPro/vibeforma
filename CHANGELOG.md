@@ -14,10 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   estimate). The overlay fades out as the recognized text appears.
 - **Settings history is a table.** The History section fills the right side
   with a sortable-by-time table (when / chars / application / text), a phrase
-  search, row selection (several at once), Delete via the button or key, and
-  the actions above the table. The two history switches stay below it; the
-  settings window now sits above the monitoring panel so the table is not
-  covered.
+  search, and three filters — application, date (today, 7 or 30 days) and
+  direction (inserted or copied). Rows are selected (several at once), Delete
+  works via the button or key, and the actions sit above the table. The two
+  history switches stay below it; the settings window now sits above the
+  monitoring panel so the table is not covered.
 - **Panel dictation.** The monitoring panel has a microphone button again.
   Press it and the recognized text stays in the panel, with **Edit**,
   **Copy**, **Insert at the cursor** and **Cancel** buttons underneath — no
