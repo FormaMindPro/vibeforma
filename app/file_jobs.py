@@ -563,18 +563,28 @@ class FileJobs:
 
         The call returns as soon as the cancellation is recorded: the file in
         flight stops between segments. A finished or cancelled batch answers
-        False, so a repeated cancel is idempotent.
+        False, so a repeated cancel is idempotent. The children are marked
+        under the same lock that guards their completion: True therefore
+        means at least one file could no longer finish, never that the batch
+        was taken after the last file had already been written.
         """
+        now = self.clock()
         with self._lock:
             batch = self._batches.get(batch_id)
             if batch is None or batch.state in (DONE, CANCELLED):
                 return False
-            batch.cancelled = True
             children = [self._jobs[cid] for cid in batch.children
                         if cid in self._jobs
                         and self._jobs[cid].state in (QUEUED, RUNNING, PAUSED)]
+            if not children:
+                return False
+            batch.cancelled = True
+            for job in children:
+                job.state = CANCELLED
+                job.finished_at = now
+                self.log.info("File job %s cancelled", job.id)
         for job in children:
-            self.cancel(job.id)
+            self._emit(job)
         self._wake.set()
         self._refresh_batch(batch)
         self.log.info("Batch %s cancelled", batch_id)
