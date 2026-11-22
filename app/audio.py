@@ -107,7 +107,7 @@ def capture_plans(device_index=None):
         for i in apis[wasapi].get("devices", []):
             try:
                 cand = sd.query_devices(i)
-            except Exception:  # noqa: BLE001 - a stale index is not fatal
+            except Exception:  # noqa: BLE001, S112 - a stale index is not fatal
                 continue
             if (cand.get("max_input_channels", 0) > 0
                     and str(cand.get("name", "")).lower()

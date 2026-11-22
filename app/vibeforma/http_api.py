@@ -76,6 +76,7 @@ def start_http_api(cfg: dict[str, Any], svc: Any,
         # The switch can be on in a config written by hand or by an older build:
         # the key is minted here and saved once, so the form can read it.
         import secrets
+
         from config import save
         token = secrets.token_urlsafe(24)
         cfg["http_token"] = token
