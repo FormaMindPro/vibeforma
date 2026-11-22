@@ -59,6 +59,10 @@ def _drive_type(path: str) -> int:
 
 
 def _is_local(path: str) -> bool:
+    # The product is Windows-only; the Linux CI runs the pure queue tests on
+    # temporary folders, where a Windows drive type does not exist.
+    if os.name != "nt":
+        return os.path.isabs(path)
     return _drive_type(path) in (DRIVE_FIXED, DRIVE_REMOVABLE)
 
 
