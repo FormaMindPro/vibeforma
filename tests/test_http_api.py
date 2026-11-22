@@ -143,7 +143,7 @@ def test_location_file_names_the_config_and_actual_port(tmp_path, monkeypatch):
     http_api.publish_location(None, port=49321, api="on")
 
     location = json.loads(target.read_text(encoding="utf-8"))
-    assert location["schema"] == 1
+    assert location["schema"] == 2
     assert location["app"] == "vibeforma"
     assert location["version"]
     assert location["config"] == str(tmp_path / "config.json")

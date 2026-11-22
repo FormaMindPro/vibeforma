@@ -3,6 +3,97 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+## 0.4.0 — 2026-11-22
+
+### Added
+- **Batch folder transcription and a visible progress strip.** Pick
+  **Transcribe folder…** in the tray or call `--transcribe-folder <dir>`:
+  every supported audio and video file in the folder (top level by default,
+  `--recursive` for subfolders) joins the same queue and the same engine, one
+  file at a time. Outputs land beside each source or mirror the tree under
+  `--out`; an existing output is skipped unless `--force`; two sources with
+  the same stem make the second one a recorded failure, not a stopped batch.
+  One bad file is recorded and the rest continue. Dictation keeps priority: a
+  batch pauses between segments and resumes on the same file. Cancel stops
+  the current file and the queue. The CLI answers with a JSON summary and
+  exit codes 0/1/2/3/4 (4 = nothing to transcribe). The HUD now shows a real
+  bottom strip for a single file and a batch: a moving bar, the current file
+  name, its percent, the batch counter `N/M — P%`, distinct
+  queued/running/paused/done/error states, the error of one file while the
+  batch goes on, and a result that hides 8 s after the end. The dictation
+  overlay, the hotkey and drag behaviour stay untouched.
+
+### Changed
+- **Batched file transcription for long files.** File jobs at or above 60 s
+  now run through `faster_whisper.BatchedInferencePipeline` on the same loaded
+  model, in 600 s blocks, with the same language, VAD, prompt and
+  anti-hallucination settings; short files and dictation stay sequential. If
+  the batched path is unavailable or fails mid-file, the job falls back to the
+  sequential path without duplicates. New keys: `file_batched` (default true)
+  and `file_batch_size` (default 8, kept within 1-16). Measured on
+  `long_ru.mp4` (660 s, large-v3-turbo, cuda float16): 5.21x against the
+  sequential run (103.6 s vs 19.9 s median), CER 0.79 % on `long_ru.mp4` and
+  0 % on `test_ru.wav`, peak RSS 1.00x.
+
+### Fixed
+- **No popup when the target window changed.** A hotkey dictation that
+  finishes in another window no longer asks where to paste: with
+  `confirm_focus_change` on, the text waits in the panel draft with its
+  insert, correct, copy, dictionary and cancel actions; with it off, the
+  text goes to the clipboard as before. The Tk focus dialog, its
+  `ask_focus_change` helper and the `focus.*` locale keys are gone.
+
+## 0.3.0 — 2026-11-22
+
+### Added
+- **File transcription.** The same faster-whisper engine now takes audio and
+  video files (mp4, mkv, mov, webm, mp3, wav, m4a) in addition to the
+  microphone. PyAV decodes the file to 16 kHz mono float32 with a decoder of
+  our own: faster-whisper 1.2.1 passes `metadata_errors` to `av.open`, which
+  av 19.0.2 rejects, so a path handed to `transcribe` raised TypeError.
+  Recognition yields segments with start and end times; no ffmpeg binary is
+  needed.
+- **TXT, JSON, SRT and VTT output.** Results land beside the source file by
+  default (`--out` overrides); an existing file is not overwritten without
+  `--force`. JSON carries the text, language, model, duration and the
+  segments with their timestamps.
+- **File job queue with dictation priority.** One queue, one worker, one
+  running job. A dictation that starts while a file is being transcribed
+  pauses the job between segments and resumes it when the service is idle
+  again; cancel is cooperative; progress is measured against the file
+  duration.
+- **Tray action and HUD progress.** Tray -> **Transcribe file...** opens a
+  file dialog and queues the job; the panel shows its own line
+  ("Transcribing: 42%") without touching the dictation number; a finished
+  job offers **Open result folder**.
+- **OpenAI-compatible endpoint.** `POST /v1/audio/transcriptions` takes
+  multipart form data (`file`, `model`, `language`, `response_format`,
+  `prompt`, `temperature`), accepts `Authorization: Bearer` and
+  `X-VibeForma-Token`, answers `json`, `text`, `srt`, `vtt` and
+  `verbose_json`, and refuses a file longer than `file_max_sync_s` (900 s)
+  with 413 pointing at `/jobs`.
+- **Job API.** `POST /jobs`, `GET /jobs/<id>`, `DELETE /jobs/<id>` and
+  `GET /jobs/<id>/result?format=...` for long files, plus
+  `GET /capabilities` and new `file_mode`, `jobs_running` and `jobs_queued`
+  fields in `GET /health`.
+- **CLI over a named pipe.** `--transcribe` asks the running service over
+  the current user's pipe (`VibeForma-<user>` under the pipe namespace,
+  owner-only DACL), needs no port and no token, prints progress to stderr and
+  the result to stdout (`--json` for a machine-readable answer). Exit codes:
+  0 success, 1 service or job error, 2 bad arguments, 3 cancelled. `--help`
+  prints the whole contract.
+- **Launcher and discovery.** `run.cmd` without arguments still starts the
+  panel with `pythonw.exe`; with arguments it forwards them to
+  `python.exe main.py`, so stdout, stderr and the exit code reach the caller.
+  `location.json` is now schema 2 and publishes `launcher`, `python`,
+  `entry`, `pipe`, `formats`, `languages` and the limits, written atomically
+  and without secrets.
+- **Config and limits.** `file_roots`, `file_max_mb`, `file_max_s`,
+  `file_max_sync_s`, `job_keep_s` and `file_word_timestamps` join the
+  defaults; an existing `config.json` keeps working.
+
 ## 0.2.4 — 2026-11-22
 
 ### Added

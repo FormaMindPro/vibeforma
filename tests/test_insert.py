@@ -155,85 +155,20 @@ def test_unreadable_clipboard_still_pastes(monkeypatch):
 def test_focus_change_copies_instead_of_pasting(monkeypatch):
     monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
 
-    result = insert.insert_text(
-        "hello", restore_clipboard=True, target_hwnd=TARGET,
-        confirm_focus=lambda: insert.RESULT_COPIED)
+    result = insert.insert_text("hello", restore_clipboard=True,
+                                target_hwnd=TARGET)
 
     assert result == insert.RESULT_COPIED
     assert Controller.last is None
     assert pyperclip.clip == "hello"   # left for the user to paste
 
 
-def test_focus_change_without_dialog_copies(monkeypatch):
-    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
-
-    result = insert.insert_text("hello", target_hwnd=TARGET)
-
-    assert result == insert.RESULT_COPIED
-    assert Controller.last is None
-    assert pyperclip.clip == "hello"
-
-
-def test_focus_dialog_failure_copies(monkeypatch):
-    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
-
-    def broken():
-        raise RuntimeError("no display")
-
-    result = insert.insert_text("hello", target_hwnd=TARGET,
-                                confirm_focus=broken)
-
-    assert result == insert.RESULT_COPIED
-    assert Controller.last is None
-
-
-def test_focus_change_unknown_answer_copies(monkeypatch):
-    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
-
-    result = insert.insert_text("hello", target_hwnd=TARGET,
-                                confirm_focus=lambda: "timeout")
-
-    assert result == insert.RESULT_COPIED
-    assert Controller.last is None
-
-
-def test_focus_change_pastes_into_current_on_request(monkeypatch):
-    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
-    monkeypatch.setattr(insert.threading, "Thread", ImmediateThread)
-
-    result = insert.insert_text(
-        "hello", restore_clipboard=True, target_hwnd=TARGET,
-        confirm_focus=lambda: insert.RESULT_PASTED)
+def test_same_window_pastes_directly(monkeypatch):
+    result = insert.insert_text("hello", restore_clipboard=False,
+                                target_hwnd=TARGET)
 
     assert result == insert.RESULT_PASTED
     assert Controller.last.events
-    assert pyperclip.clip == "old"
-
-
-def test_focus_change_cancel_restores_the_clipboard(monkeypatch):
-    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
-
-    result = insert.insert_text(
-        "hello", restore_clipboard=True, target_hwnd=TARGET,
-        confirm_focus=lambda: insert.RESULT_CANCELLED)
-
-    assert result == insert.RESULT_CANCELLED
-    assert Controller.last is None
-    assert pyperclip.clip == "old"
-
-
-def test_same_window_does_not_ask(monkeypatch):
-    asked = []
-
-    def confirm():
-        asked.append(1)
-        return insert.RESULT_CANCELLED
-
-    result = insert.insert_text("hello", restore_clipboard=False,
-                                target_hwnd=TARGET, confirm_focus=confirm)
-
-    assert result == insert.RESULT_PASTED
-    assert asked == []
 
 
 def test_user_copy_during_delay_is_kept(monkeypatch):

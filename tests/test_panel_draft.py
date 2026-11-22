@@ -63,6 +63,45 @@ def test_panel_recording_leaves_the_text_in_the_draft():
     assert svc._panel_mode is False
 
 
+def test_focus_change_keeps_the_text_in_the_panel(monkeypatch):
+    svc = make_service()
+    svc.asr = FakeASR()
+    svc.state = "processing"
+    svc._target_hwnd = 7
+    calls = []
+    fake = types.ModuleType("insert")
+    fake.get_foreground_hwnd = lambda: 8
+    fake.insert_text = lambda *args, **kwargs: calls.append("insert_text")
+    monkeypatch.setitem(sys.modules, "insert", fake)
+
+    svc._transcribe_worker(object(), FakeRecorder())
+
+    assert svc.live["draft"] == "hello panel"
+    assert svc.live["draft_rev"] == 1
+    assert svc.live["state"] == "idle"
+    assert calls == []
+
+
+def test_focus_change_with_confirmation_off_copies_instead(monkeypatch):
+    svc = make_service()
+    svc.asr = FakeASR()
+    svc.state = "processing"
+    svc._target_hwnd = 7
+    svc.cfg["confirm_focus_change"] = False
+    calls = []
+    fake = types.ModuleType("insert")
+    fake.get_foreground_hwnd = lambda: 8
+    fake.RESULT_COPIED = "copied"
+    fake.insert_text = lambda *args, **kwargs: (
+        calls.append(kwargs.get("target_hwnd")) or "copied")
+    monkeypatch.setitem(sys.modules, "insert", fake)
+
+    svc._transcribe_worker(object(), FakeRecorder())
+
+    assert calls == [7]
+    assert svc.live["draft"] == ""
+
+
 def test_mic_button_marks_the_next_recording_as_a_panel_one():
     svc = make_service()
     svc.state = "idle"

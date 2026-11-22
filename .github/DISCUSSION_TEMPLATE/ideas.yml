@@ -4,7 +4,7 @@ body:
     attributes:
       value: |
         Thanks for suggesting a feature for VibeForma. Describe the problem first, the solution second.
-        Предложения на русском тоже принимаются — пишите на удобном языке.
+        Suggestions in Russian are also accepted - write in the language you prefer.
 
   - type: textarea
     id: feature

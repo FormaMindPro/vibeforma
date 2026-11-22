@@ -1,10 +1,10 @@
 """Insert text into the focused field: clipboard + paste, optional restore.
 
 The dictated text is pasted only into the window that was active when the
-recording started. If the focus moved, the user is asked where the text
-should go (current window / clipboard / cancel) — never a silent paste into
-a foreign window. The previous clipboard is restored only when the user has
-not changed it in the meantime (GetClipboardSequenceNumber).
+recording started. If the focus moved, the text is left in the clipboard —
+never a silent paste into a foreign window; the caller decides whether to
+offer it as a panel draft instead. The previous clipboard is restored only
+when the user has not changed it in the meantime (GetClipboardSequenceNumber).
 """
 import contextlib
 import logging
@@ -19,7 +19,6 @@ from pynput.keyboard import Controller, Key, KeyCode
 PASTE_DELAY_S = 0.03   # before the paste, let the clipboard settle
 AFTER_DELAY_S = 0.06   # after the paste so slow apps register it
 RESTORE_DELAY_S = 1.0  # give the target app time to read the clipboard
-FOCUS_TIMEOUT_S = 30   # the focus dialog closes as "copy" when unanswered
 UNDO_VK = 0x5A         # VK_Z: layout-independent Ctrl+Z
 
 RESULT_PASTED = "pasted"
@@ -201,17 +200,15 @@ def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
 
 def insert_text(text: str, restore_clipboard: bool = True,
                 log: logging.Logger | None = None, target_hwnd=None,
-                paste_method: str = "shift_insert", confirm_focus=None,
+                paste_method: str = "shift_insert",
                 exclude_history: bool = True, log_title: bool = False,
                 undo_state: dict | None = None) -> str:
     """Paste text into the target window; returns one of the RESULT_* values.
 
-    confirm_focus is called only when the foreground window differs from
-    target_hwnd; it returns RESULT_PASTED (paste into the current window),
-    RESULT_COPIED (leave the text in the clipboard) or RESULT_CANCELLED
-    (restore the clipboard). Without a callable the text is copied, never
-    pasted into a foreign window. undo_state, when given, receives the
-    previous clipboard ("prev") and whether it was readable ("prev_known").
+    When the foreground window differs from target_hwnd the text stays in
+    the clipboard and RESULT_COPIED is returned — never a paste into a
+    foreign window. undo_state, when given, receives the previous clipboard
+    ("prev") and whether it was readable ("prev_known").
     """
     prev = None
     prev_known = False
@@ -231,17 +228,9 @@ def insert_text(text: str, restore_clipboard: bool = True,
 
     target = foreground_window() if log_title else None
     if target_hwnd and get_foreground_hwnd() != target_hwnd:
-        choice = _ask_focus_change(confirm_focus, log)
-        if choice == RESULT_COPIED:
-            if log:
-                log.info("Target window changed — the text is in the clipboard")
-            return RESULT_COPIED
-        if choice != RESULT_PASTED:
-            _restore_now(prev, prev_known, own_seq, text, log)
-            if log:
-                log.info("Target window changed — insertion cancelled")
-            return RESULT_CANCELLED
-        time.sleep(0.15)  # let the closed dialog hand the focus back
+        if log:
+            log.info("Target window changed — the text is in the clipboard")
+        return RESULT_COPIED
 
     kb = Controller()
     time.sleep(PASTE_DELAY_S)
@@ -266,20 +255,6 @@ def insert_text(text: str, restore_clipboard: bool = True,
         threading.Thread(target=_restore, args=(prev, own_seq, text, log),
                          daemon=True).start()
     return RESULT_PASTED
-
-
-def _ask_focus_change(confirm_focus, log) -> str:
-    if confirm_focus is None:
-        return RESULT_COPIED
-    try:
-        answer = confirm_focus()
-    except Exception as e:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
-        if log:
-            log.warning("Focus dialog failed: %s", e)
-        return RESULT_COPIED
-    if answer in (RESULT_PASTED, RESULT_COPIED, RESULT_CANCELLED):
-        return answer
-    return RESULT_COPIED
 
 
 def _clipboard_unchanged(own_seq: int, pasted: str) -> bool:
@@ -307,69 +282,3 @@ def _restore_now(prev, prev_known, own_seq, pasted, log):
 def _restore(prev, own_seq, pasted, log):
     time.sleep(RESTORE_DELAY_S)
     _restore_now(prev, True, own_seq, pasted, log)
-
-
-def ask_focus_change(cfg=None, text=None) -> str:
-    """Ask where the text should go when the target window lost the focus.
-
-    text, when given, enables the "To dictionary" button: it opens the
-    "as heard -> as needed" pair dialog over this one, and the choice stays
-    open afterwards - the person may still pick where the text goes.
-    """
-    try:
-        import tkinter as tk
-
-        import i18n
-    except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
-        return RESULT_COPIED
-
-    def tr(key, **kw):
-        try:
-            return i18n.t(cfg, key, **kw)
-        except Exception:  # noqa: BLE001 - fall back to the key itself
-            return key
-
-    root = None
-    try:
-        root = tk.Tk()
-        root.title("VibeForma")
-        root.attributes("-topmost", True)
-        root.resizable(False, False)
-        answer = {"value": RESULT_COPIED}
-
-        def choose(value):
-            answer["value"] = value
-            root.quit()
-
-        def open_pair_dialog():
-            # A failed dialog must not block the choice.
-            with contextlib.suppress(Exception):
-                import dictlearn
-                dictlearn.pair_dialog(root, tr, text, cfg)
-
-        body = tk.Frame(root, padx=18, pady=14)
-        body.pack()
-        tk.Label(body, text=tr("focus.changed"), wraplength=380,
-                 justify="left").pack(anchor="w")
-        buttons = tk.Frame(body)
-        buttons.pack(fill="x", pady=(12, 0))
-        tk.Button(buttons, text=tr("focus.paste_here"),
-                  command=lambda: choose(RESULT_PASTED)).pack(side="left")
-        tk.Button(buttons, text=tr("focus.copy"),
-                  command=lambda: choose(RESULT_COPIED)).pack(side="left",
-                                                             padx=8)
-        if text:
-            tk.Button(buttons, text=tr("focus.to_dictionary"),
-                      command=open_pair_dialog).pack(side="left", padx=(0, 8))
-        tk.Button(buttons, text=tr("focus.cancel"),
-                  command=lambda: choose(RESULT_CANCELLED)).pack(side="left")
-        root.after(int(FOCUS_TIMEOUT_S * 1000),
-                   lambda: choose(RESULT_COPIED))
-        root.mainloop()
-        return answer["value"]
-    except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
-        return RESULT_COPIED
-    finally:
-        if root is not None:
-            with contextlib.suppress(Exception):
-                root.destroy()

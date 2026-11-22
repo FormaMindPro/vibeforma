@@ -37,6 +37,67 @@ non-empty `"http_token"` and listens on `127.0.0.1` only.
 - **429** — one request per second.
 - **409** — the service is not idle (recording, recognizing or updating).
 
+## File transcription does not start
+
+A file job needs the service running: `run.cmd` starts it, and
+`run.cmd --status` shows whether it answers.
+
+- **`VibeForma is not running`** — the CLI asks the current user's named pipe
+  (`\\.\pipe\VibeForma-<user>`); start the panel from the tray or `run.cmd`
+  and retry. The exit code is 1.
+- **`path is outside the allowed roots`** — an agent-named path must sit
+  inside `file_roots` (an empty list means local fixed/removable disks only).
+  Network shares, UNC paths and device paths are refused with 403; the tray
+  dialog is not bound by this rule because the person picks the file.
+- **`file is larger than N MB` / `file is N s, longer than file_max_s=...`**
+  — raise `file_max_mb` or `file_max_s`. The duration cap is checked from
+  the container's declared duration before decoding, or as soon as an unknown
+  duration crosses it; a synchronous `/v1/audio/transcriptions` call is capped
+  by `file_max_sync_s` (900 s) and a longer file must go to `POST /jobs`.
+- **A dictation waits for a file block** — the file mode preprocesses audio
+  in blocks of at most 600 s (`FILE_CHUNK_S` in `app/asr.py`); a dictation
+  that starts mid-file waits for the block in flight, never for the whole
+  file. Over-long files are refused before decode, so they cannot occupy the
+  engine for hours.
+- **`the model is loading` (CLI exit 1)** — the service is up, the pipe
+  answers, and the first model load is still running. Retry in a few seconds;
+  `location.json` names the pipe only once it listens, and its `file_mode` is
+  `false` until then.
+- **`already exists; pass --force`** — the result file is not overwritten by
+  default; pass `--force` or choose another `--out`.
+- **Unsupported codec** — PyAV covers the usual containers (mp4, mkv, mov,
+  webm, mp3, wav, m4a); an exotic codec is reported as a job error with the
+  file name and no transcript text. No external ffmpeg is required or used.
+- **Exit code 2** — an option or format is wrong; `run.cmd --help` prints
+  the contract. **Exit code 3** — the job was cancelled.
+
+## Batch folder transcription
+
+- **Exit code 4 / `nothing to transcribe`** — the folder holds no supported
+  audio or video file at that level. Supported: mp4, mkv, mov, webm, mp3,
+  wav, m4a, m4b, ogg, flac. Add `--recursive` when the files are in
+  subfolders; an unsupported file is not an error, it is simply not found.
+- **`folder is outside the allowed roots`** — a CLI-named folder must sit
+  inside `file_roots` (an empty list means local fixed/removable disks only).
+  The tray dialog is not bound by `file_roots` because the person picked the
+  folder; network, UNC and device paths are refused in both cases.
+- **`duplicate output target: <path>`** — two sources in one folder have the
+  same stem (`a.mp4`, `a.mkv`), so both would write `a.srt`. Rename one or
+  put them in different folders; `--force` does not resolve this conflict,
+  it only allows overwriting files already on disk.
+- **A file is skipped** — its outputs already exist beside the source (or
+  under `--out`). This is a successful outcome and the code stays 0; pass
+  `--force` to overwrite.
+- **One file failed, the batch went on** — the summary names it in
+  `summary.files[]` with the state `error`; the rest of the batch finished.
+  The CLI exits 1 once the batch ends.
+- **Cancel a batch** — tray → **Cancel batch**, or `run.cmd --cancel-batch
+  [<batch-id>]`. The file in flight stops between segments; no partial output
+  is left behind. A second cancel answers 1 because nothing is left to stop.
+- **`the model is loading` / `VibeForma is not running`** — the same rules as
+  a single file: the service must be running, and the first model load makes
+  the CLI answer `the model is loading` with code 1.
+
 ## Not enough disk space
 
 The installer needs the program plus a first model. Models: `small` 0.5 GB,

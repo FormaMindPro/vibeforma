@@ -60,6 +60,20 @@ class Tray:
                     lambda item: service.tr("tray.show_panel"),
                     lambda *a: service.request_panel()),
                 pystray.MenuItem(
+                    lambda item: service.tr("tray.transcribe_file"),
+                    lambda *a: service.transcribe_file_dialog()),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.transcribe_folder"),
+                    lambda *a: service.transcribe_folder_dialog()),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.cancel_batch"),
+                    lambda *a: service.cancel_batch(),
+                    visible=lambda item: service.has_active_batch()),
+                pystray.MenuItem(
+                    lambda item: service.tr("tray.open_result"),
+                    lambda *a: service.open_last_file_folder(),
+                    visible=lambda item: bool(service.last_file_folder())),
+                pystray.MenuItem(
                     lambda item: service.tr("tray.onboarding"),
                     lambda *a: service.open_onboarding()),
                 pystray.MenuItem(

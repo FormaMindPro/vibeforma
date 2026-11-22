@@ -10,6 +10,7 @@ focused before the click.
 """
 import contextlib
 import math
+import os
 import threading
 import time
 import tkinter as tk
@@ -58,6 +59,13 @@ PROG_DONE_MS = 120
 PROG_HOLD_MS = 140
 PROG_FADE_MS = 170
 
+# The file progress strip: a real bottom panel, not hint text. It shows one
+# running file at a time, a moving bar while the queue has nothing in flight,
+# and the batch counter underneath. A finished result holds for HOLD seconds.
+FILE_PANEL_H = 46
+FILE_PANEL_HOLD_S = 8.0
+FILE_BAR_MS = 1200
+
 
 def progress_percent(elapsed, ramp=PROG_RAMP_S, cap=PROG_CAP):
     """Animated recognition progress: fast at first, never 100 on its own."""
@@ -91,6 +99,106 @@ def panel_height(base_h, want, base=BASE_TEXT_LINES, line_h=LINE_H,
     return base_h + extra_h + (max(want, minimum) - base) * line_h
 
 
+def _file_fresh(finished, now, hold_s):
+    """Whether a terminal file result is still inside its display hold."""
+    try:
+        return 0.0 <= now - float(finished or 0.0) < hold_s
+    except (TypeError, ValueError):
+        return False
+
+
+def file_progress_view(st, now=None, hold_s=FILE_PANEL_HOLD_S) -> dict:
+    """What the file strip shows; no Tk, no clock unless ``now`` is given.
+
+    The sources are a strict table: a live batch, a live single file, a
+    queued batch, a queued single file, a fresh batch result, a fresh single
+    result. A batch child is never shown on its own: the batch carries the
+    current name, so one panel speaks for the whole folder.
+    """
+    now = time.time() if now is None else now
+    batch = st.get("file_batch") or {}
+    job = st.get("file_job") or {}
+    batch_id = str(batch.get("id") or "")
+    job_id = str(job.get("id") or "")
+    batch_state = str(batch.get("state") or "")
+    job_state = str(job.get("state") or "")
+    child = bool(job.get("batch_id"))
+    terminal_states = ("done", "error", "cancelled")
+
+    view = {
+        "visible": False, "batch": False, "state": "", "title": "",
+        "percent": 0, "overall_percent": 0, "overall_text": "",
+        "complete": 0, "total": 0, "paused": False, "error": "",
+        "indeterminate": False, "terminal": False, "failed": 0,
+    }
+    chosen = ""
+    if batch_id and batch_state in ("running", "paused"):
+        chosen = "batch"
+    elif job_id and not child and job_state in ("running", "paused"):
+        chosen = "single"
+    elif batch_id and batch_state == "queued":
+        chosen = "batch"
+    elif job_id and not child and job_state == "queued":
+        chosen = "single"
+    elif (batch_id and batch_state in ("done", "cancelled")
+          and _file_fresh(batch.get("finished_at"), now, hold_s)):
+        chosen = "batch"
+    elif (job_id and not child
+          and job_state in ("done", "error", "cancelled")
+          and _file_fresh(job.get("finished_at"), now, hold_s)):
+        chosen = "single"
+    if not chosen:
+        return view
+    if chosen == "batch":
+        done = max(0, int(batch.get("done") or 0))
+        skipped = max(0, int(batch.get("skipped") or 0))
+        failed = max(0, int(batch.get("failed") or 0))
+        cancelled = max(0, int(batch.get("cancelled") or 0))
+        complete = done + skipped + failed + cancelled
+        total = max(0, int(batch.get("total") or 0))
+        state = batch_state
+        if state == "done" and failed > 0:
+            state = "error"
+        current = str(batch.get("current") or "")
+        percent = None
+        if current:
+            percent = int(round(max(0.0, min(
+                100.0, float(batch.get("current_progress") or 0.0)))))
+        view.update({
+            "visible": True, "batch": True, "state": state,
+            "title": str(batch.get("current_name") or ""),
+            "percent": percent,
+            "overall_percent": int(round(max(0.0, min(
+                100.0, float(batch.get("progress") or 0.0))))),
+            "overall_text": f"{complete}/{total}",
+            "complete": complete, "total": total,
+            "paused": state == "paused",
+            "error": str(batch.get("error") or ""),
+            "indeterminate": (state in ("queued", "running")
+                              and (percent is None or percent == 0)),
+            "terminal": state in terminal_states,
+            "failed": failed,
+        })
+        return view
+    terminal = job_state in terminal_states
+    percent = int(round(max(0.0, min(
+        100.0, float(job.get("progress") or 0.0)))))
+    view.update({
+        "visible": True, "batch": False, "state": job_state,
+        "title": str(job.get("name")
+                     or os.path.basename(str(job.get("source") or ""))),
+        "percent": percent, "overall_percent": percent, "overall_text": "",
+        "complete": 1 if terminal else 0, "total": 1,
+        "paused": job_state == "paused",
+        "error": str(job.get("error") or ""),
+        "indeterminate": (job_state == "queued"
+                          or (job_state == "running" and percent == 0)),
+        "terminal": terminal,
+        "failed": 1 if job_state == "error" else 0,
+    })
+    return view
+
+
 def dpi_factor(win):
     """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
     try:
@@ -112,6 +220,7 @@ class Hud:
         self._root_h = BASE_H
         self._want = BASE_TEXT_LINES
         self._extra_h = 0
+        self._file_h = 0
         self._actions_visible = False
         self._draft_rev = 0
         self._draft_active = False
@@ -255,6 +364,27 @@ class Hud:
             widget.bind("<Enter>", lambda e: self._track_foreign_window(),
                         add="+")
 
+        # -- file progress strip: the lowest line of the panel --------------
+        # Packed on demand with side="bottom", so it always sits under the
+        # text, the status line and the action row. takefocus=0 and no bind:
+        # the hotkey, the clicks and the drag keep working as before.
+        self.file_panel = tk.Frame(self.root, bg=BG, takefocus=0)
+        row1 = tk.Frame(self.file_panel, bg=BG)
+        row1.pack(fill="x")
+        self.file_title = tk.Label(row1, text="", font=("Segoe UI", 8),
+                                   fg=FG, bg=BG, anchor="w")
+        self.file_title.pack(side="left")
+        self.file_pct = tk.Label(row1, text="", font=("Consolas", 8),
+                                 fg=DIM, bg=BG, anchor="e")
+        self.file_pct.pack(side="right")
+        self.file_bar = tk.Canvas(self.file_panel, height=self._px(4), bg=BG,
+                                  highlightthickness=0, takefocus=0)
+        self.file_bar.pack(fill="x")
+        self.file_overall = tk.Label(self.file_panel, text="",
+                                     font=("Consolas", 8), fg=DIM, bg=BG,
+                                     anchor="w")
+        self.file_overall.pack(fill="x")
+
         self.root.bind("<Escape>", self._on_escape)
         self.text.bind("<Control-Return>", self._on_ctrl_enter)
         self.root.after(120, self._tick)
@@ -270,7 +400,7 @@ class Hud:
                 max_h = base_h + (MAX_TEXT_LINES - BASE_TEXT_LINES) * self._line_h
             else:
                 max_h = base_h
-            max_h += self._px(ACTION_ROW_H)
+            max_h += self._px(ACTION_ROW_H) + self._px(FILE_PANEL_H)
             return self._W, base_h, sw - self._W - self._px(28), \
                 max(self._px(28), sh - max_h - self._px(72))
         except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
@@ -691,6 +821,78 @@ class Hud:
             with contextlib.suppress(Exception):
                 prog.destroy()
 
+    # -- file progress strip -----------------------------------------------
+    def _sync_file_panel(self, st):
+        """Pack or hide the strip and keep its three lines current."""
+        with contextlib.suppress(Exception):
+            view = file_progress_view(st)
+            if not view["visible"]:
+                if self._file_h:
+                    self.file_panel.pack_forget()
+                    self._file_h = 0
+                    self._apply_height()
+                return
+            if self._file_h == 0:
+                self.file_panel.pack(side="bottom", fill="x",
+                                     padx=self._px(12),
+                                     pady=(0, self._px(8)))
+                self._file_h = self._px(FILE_PANEL_H)
+                self._apply_height()
+            state_word = self.svc.tr("hud.file_state_" + view["state"])
+            title = self.svc.tr("hud.file_panel_title", state=state_word,
+                                name=view["title"] or "\u2026")
+            if str(self.file_title.cget("text")) != title:
+                self.file_title.configure(text=title)
+            percent = "" if view["percent"] is None else f"{view['percent']}%"
+            if str(self.file_pct.cget("text")) != percent:
+                self.file_pct.configure(text=percent)
+            overall = ""
+            if view["batch"]:
+                overall = self.svc.tr("hud.file_batch", done=view["complete"],
+                                      total=view["total"],
+                                      pct=view["overall_percent"],
+                                      failed=view["failed"])
+            if view["error"]:
+                failure = self.svc.tr("notify.file_failed",
+                                      error=view["error"])
+                overall = f"{overall} \u00b7 {failure}" if overall else failure
+            color = STATE_COLORS["error"] if view["error"] else DIM
+            if str(self.file_overall.cget("text")) != overall:
+                self.file_overall.configure(text=overall)
+            if str(self.file_overall.cget("fg")) != color:
+                self.file_overall.configure(fg=color)
+            self._paint_file_bar(view)
+
+    def _paint_file_bar(self, view):
+        """Redraw the strip every tick: a sweeping segment or a real percent."""
+        bar = self.file_bar
+        bar.delete("all")
+        width = bar.winfo_width()
+        if width <= 1:
+            return
+        height = max(1, bar.winfo_height())
+        bar.create_rectangle(0, 0, width, height, fill=PROG_TRACK, outline="")
+        state = view["state"]
+        color = PROG_COOL if state in ("queued", "running", "done") else "#5D6D7E"
+        if state == "error":
+            color = STATE_COLORS["error"]
+        if view["indeterminate"]:
+            segment = max(self._px(28), width // 5)
+            phase = (time.time() * 1000.0 % FILE_BAR_MS) / FILE_BAR_MS
+            start = phase * (width + segment) - segment
+            left = max(0.0, min(float(width), start))
+            right = max(0.0, min(float(width), start + segment))
+            if right > left:
+                bar.create_rectangle(left, 0, right, height, fill=color,
+                                     outline="")
+            return
+        percent = view["percent"]
+        if percent is None:
+            percent = view["overall_percent"]
+        fill = width * max(0.0, min(100.0, float(percent))) / 100.0
+        if fill > 0:
+            bar.create_rectangle(0, 0, fill, height, fill=color, outline="")
+
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
         try:
@@ -708,6 +910,7 @@ class Hud:
                 self._open_onboarding_window()
             self._apply_alpha()
             st = dict(self.state)
+            self._sync_file_panel(st)
             key = st.get("state", "idle")
             color = STATE_COLORS.get(key, "#2E86DE")
             self.lbl.configure(text=self._state_label(key), fg=color)
@@ -726,6 +929,8 @@ class Hud:
             hint = self.svc.tr("hud.mic_hint", device=st.get("device") or "")
             if (key == "recording" and float(st.get("level", 0)) < 0.003):
                 hint += self.svc.tr("hud.silence_warn")
+            # The file progress lives in the strip below, never in this hint:
+            # the two percentages must not be read as one number.
             self.hint.configure(text=hint)
 
             privacy = bool(st.get("privacy"))
@@ -843,14 +1048,15 @@ class Hud:
             self._apply_height()
 
     def _apply_height(self):
-        """Height from the text lines and the visible action row; top stays put."""
+        """Height from the text lines and the visible extra rows; top stays put."""
         with contextlib.suppress(Exception):
             minimum = DRAFT_MIN_LINES if self._draft_active else BASE_TEXT_LINES
-            h = panel_height(self._base_h + self._extra_h, self._want,
+            extra = self._extra_h + self._file_h
+            h = panel_height(self._base_h + extra, self._want,
                              base=BASE_TEXT_LINES, line_h=self._line_h,
                              minimum=minimum)
             screen_h = self.root.winfo_screenheight()
-            available = max(self._base_h + self._extra_h,
+            available = max(self._base_h + extra,
                             screen_h - self.root.winfo_y() - self._px(28))
             h = min(h, available)
             if h != self._root_h:

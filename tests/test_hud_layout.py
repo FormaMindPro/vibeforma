@@ -33,6 +33,13 @@ def test_placeholder_keeps_the_base_height():
     assert hud.panel_lines("") == hud.BASE_TEXT_LINES
 
 
+def test_file_panel_adds_its_height_to_the_root():
+    assert hud.FILE_PANEL_H > 0
+    got = hud.panel_height(hud.BASE_H, hud.BASE_TEXT_LINES,
+                           extra_h=hud.FILE_PANEL_H)
+    assert got == hud.BASE_H + hud.FILE_PANEL_H
+
+
 def test_long_text_is_capped():
     assert hud.panel_lines("word " * 500) == hud.MAX_TEXT_LINES
     assert hud.panel_lines("\n" * 40) == hud.MAX_TEXT_LINES

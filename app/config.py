@@ -3,9 +3,27 @@ import contextlib
 import json
 import os
 
-VERSION = "0.2.4"
+VERSION = "0.4.0"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+# The service folder holds run.cmd and main.py both in a source checkout
+# (app/) and in an installed copy (app/ copied to the target root). The venv
+# sits beside it in a checkout and inside it after an install. A harness
+# reads these paths from location.json and never guesses the install folder.
+INSTALL_DIR = SERVICE_DIR
+LAUNCHER_PATH = os.path.join(INSTALL_DIR, "run.cmd")
+ENTRY_PATH = os.path.join(INSTALL_DIR, "main.py")
+
+
+def _venv_python() -> str:
+    for base in (INSTALL_DIR, os.path.dirname(INSTALL_DIR)):
+        candidate = os.path.join(base, ".venv", "Scripts", "python.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(INSTALL_DIR, ".venv", "Scripts", "python.exe")
+
+
+PYTHON_PATH = _venv_python()
 # Where the user's data lives. A source install keeps it beside the code; the
 # packed build sets VIBEFORMA_DATA_DIR (LOCALAPPDATA\VibeForma) so config,
 # models, logs and history survive an in-place upgrade and a reinstall.
@@ -93,6 +111,17 @@ DEFAULTS = {
     "http_token": "",                   # required when http_api is on
     "hook_command": "",                 # external command: text on stdin (opt-in)
     "hook_timeout_s": 5,                # hook run limit, kept inside 1-30 s
+
+    # File mode: the same engine takes a path, not a microphone.
+    "file_roots": [],                   # empty: every local fixed/removable disk
+    "file_max_mb": 4096,                # input file size limit
+    "file_max_s": 6 * 3600,             # input duration limit
+    "file_max_sync_s": 900,             # synchronous /v1/audio/transcriptions cap
+    "job_keep_s": 24 * 3600,            # how long finished jobs stay in memory
+    "file_word_timestamps": False,      # word-level timings (off: segments suffice)
+    "file_folder_recursive": False,     # tray folder dialog: include subfolders
+    "file_batched": True,               # long file jobs use BatchedInferencePipeline
+    "file_batch_size": 8,               # windows per batched pass, 1..16
 
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks

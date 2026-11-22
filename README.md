@@ -324,21 +324,179 @@ header `X-VibeForma-Token: <secret>`. `/health` returns `ok`, `app`
 deleted in any case.
 
 The service publishes `%LOCALAPPDATA%\VibeForma\location.json` with
-`schema`, `app`, `version`, `config`, `api` (`on`, `off` or `error`) and the
-actual `port`. If the configured port (`8787` by default) is busy, the
-service binds a free loopback port and writes that port here, so a form reads
-the endpoint from this file instead of hardcoding a port. The file carries no
-secret: the token stays in `config.json`.
+`schema` (2), `app`, `version`, `launcher`, `python`, `entry`, `install_dir`,
+`pipe`, `config`, `api` (`on`, `off` or `error`), `file_mode`, `formats`,
+`languages`, `max_file_mb`, `max_file_s` and the actual `port`. If the
+configured port (`8787` by default) is busy, the service binds a free
+loopback port and writes that port here, so a form reads the endpoint from
+this file instead of hardcoding a port. The file carries no secret: the pipe
+is protected by its own DACL and the token stays in `config.json`.
+
+The file mode adds three kinds of routes, all on `127.0.0.1` and all with the
+same token:
+
+- `GET /capabilities` - version, models, languages, formats, limits,
+  `file_mode`, `word_timestamps`, `dictation_priority`, the pipe and the
+  launcher;
+- `POST /v1/audio/transcriptions` - OpenAI-compatible multipart
+  (`file`, `model`, `language`, `response_format`, `prompt`, `temperature`);
+  `response_format` is `json`, `text`, `srt`, `vtt` or `verbose_json`;
+  synchronous up to `file_max_sync_s` (900 s), longer files get `413` with a
+  pointer to `/jobs`;
+- `POST /jobs`, `GET /jobs/<id>`, `DELETE /jobs/<id>` (cancel),
+  `GET /jobs/<id>/result?format=srt|vtt|txt|json` - the queue for long files;
+  the answer is `202` with `Location: /jobs/<id>`, and `409` until the result
+  is ready.
+
+`/health` keeps its old fields and adds `file_mode`, `jobs_running`,
+`jobs_queued` and `dictation_priority`. The old `/transcribe` keeps its
+contract: 10 MB, one request per second, idle only. A dictation always
+outranks a file job: the job pauses between segments and resumes when the
+service is idle.
+
+## File transcription
+
+Audio and video files go through the same engine as dictation: mp4, mkv,
+mov, webm, mp3, wav, m4a. PyAV decodes them (the dependency faster-whisper
+already brings), so no external ffmpeg is needed. The output is text with
+timestamps in TXT, JSON, SRT or VTT.
+
+Long file jobs (60 s and longer) are transcribed in batches: several 30-second
+windows go through the model in one pass (`BatchedInferencePipeline`) on the
+same loaded model, with the same language, VAD, prompt and anti-hallucination
+settings. Short files and dictation stay on the sequential path. If the
+batched path is unavailable or fails mid-file, the job falls back to the
+sequential path without duplicates. The keys are `file_batched` (on by
+default) and `file_batch_size` (8, kept within 1-16); the speed-up depends on
+the device, and the measured figure on the reference machine is in
+`CHANGELOG.md`.
+
+From the tray: **Transcribe file...**, pick a file, watch the progress in the
+panel, then use **Open result folder**. From the command line (the service
+must be running):
+
+```
+run.cmd --transcribe "D:\video\talk.mp4" --lang ru --format srt
+run.cmd --transcribe "D:\video\talk.mp4" --format all --json
+.venv\Scripts\python.exe main.py --transcribe talk.mp4 --out out\talk.srt
+```
+
+- `--lang` is the recognition language (the config value otherwise, English
+  as the last resort);
+- `--format` is `txt`, `json`, `srt`, `vtt` or `all` (default `srt`);
+- `--out` writes to a named file or folder; without it the result lands
+  beside the source with the same stem;
+- `--force` allows overwriting an existing result;
+- `--json` prints `{"ok": true, "job_id": ..., "out": [...], "segments": N,
+  "duration_s": ...}`; progress goes to stderr.
+
+Exit codes: `0` success, `1` the service is not running or the job failed,
+`2` bad arguments, `3` cancelled. While the service is still loading its
+first model the CLI answers `VibeForma: the model is loading` and exits 1;
+`VibeForma is not running` appears only when no channel listens. The request
+travels over the current user's named pipe (`\\.\pipe\VibeForma-<user>`), so the CLI never opens a
+port and never waits for the HTTP API.
+
+Limits: `file_max_mb` (4096), `file_max_s` (6 hours), `job_keep_s` (24 hours
+for a finished job), `file_roots` (empty = every local fixed or removable
+disk; network, UNC and device paths are refused). The input file is never
+copied or changed. No network is used for recognition or delivery.
+VibeForma produces SRT/VTT; burning subtitles into a video or translating
+them is a downstream tool, not this engine.
+
+## Batch folder transcription
+
+A whole folder goes through the same engine and the same queue as one file,
+one file at a time. From the tray choose **Transcribe folder…** and pick a
+folder; from the command line (the service must be running):
+
+```
+run.cmd --transcribe-folder "D:\media" --format all --json
+run.cmd --transcribe-folder "D:\media" --recursive --out D:\out
+.venv\Scripts\python.exe main.py --transcribe-folder media --lang ru
+```
+
+- the default is the top level of the folder; `--recursive` adds subfolders;
+- supported files: mp4, mkv, mov, webm, mp3, wav, m4a, m4b, ogg, flac; other
+  files are not picked up and are not an error;
+- without `--out` every result lands beside its source; with `--out` the
+  folder tree is mirrored (`D:\media\sub\b.mkv` becomes
+  `D:\out\sub\b.srt`);
+- an existing output is skipped, not overwritten; `--force` overwrites it;
+- two sources with the same stem (`a.mp4`, `a.mkv`) produce one target: the
+  second file is recorded as `duplicate output target` and the batch goes on;
+- one broken file is recorded and the rest continue; the batch ends with the
+  counters and a non-zero code when anything failed;
+- dictation outranks the batch: it starts at once, the batch pauses between
+  segments and resumes on the same file;
+- `--cancel-batch [<id>]` stops the current file and the queue;
+- `--json` prints one summary object with `total/done/skipped/failed/
+  cancelled/progress/files`; progress goes to stderr.
+
+The HUD shows a bottom strip while a file or a batch runs: a moving bar, the
+current file name, its percent, and the batch counter `Batch: N/M — P%`. The
+states are visibly different (queued, transcribing, paused for dictation,
+done, failed), the error of one file stays visible while the batch goes on,
+and the result hides 8 seconds after the end. The strip does not take focus
+and does not touch the dictation overlay or the hotkey.
+
+Exit codes: `0` every file done or skipped, `1` a file failed or the service
+is not running, `2` bad arguments or a refused folder, `3` cancelled, `4`
+nothing to transcribe in the folder. Network, UNC and device paths are
+refused; drag&drop is not a file entrance.
+
+## For agents and other harnesses
+
+Any harness - Forma Mind, Claude Code, Cursor, Codex, a PowerShell script or
+a Python process - uses the same OS-level contract; VibeForma does not know
+which one is calling.
+
+1. Read `%LOCALAPPDATA%\VibeForma\location.json`: `launcher`, `python`,
+   `entry` and `pipe`. No file means the service is not running.
+2. Call the launcher, or the venv python with the entry file, with
+   `--transcribe`:
+
+```powershell
+# PowerShell
+& "$env:LOCALAPPDATA\VibeForma\run.cmd" --transcribe "D:\video\talk.mp4" --lang ru --format srt --json
+# cmd.exe
+"%LOCALAPPDATA%\VibeForma\run.cmd" --transcribe "D:\video\talk.mp4" --format srt
+# Python
+subprocess.run([launcher, "--transcribe", path, "--format", "srt", "--json"], check=True)
+# Node.js
+spawnSync(launcher, ["--transcribe", path, "--format", "srt", "--json"])
+```
+
+3. With the local API on, `POST /v1/audio/transcriptions` (short files) or
+   `POST /jobs` (long files) do the same over HTTP; `GET /capabilities`
+   lists formats and limits.
+4. `run.cmd --help` prints the contract, so a harness needs no source file.
+
+Python without a shell can always use the second form:
+`.venv\Scripts\python.exe main.py --transcribe ...`.
 
 ## Command line and external hook
 
-The installed copy answers three flags from the command line:
-`VibeForma.exe --toggle` starts recording or stops it when it is running,
-`--cancel` drops the current recording or the panel draft, and `--status`
-prints the running instance's `status.json` (`state`, `version`, `pid`, `ts`)
-as JSON. The flags talk to the instance that is already running: with no
-instance, or when the status is older than 60 s, the exit code is 1; on
-success it is 0.
+The installed copy is a source copy: `run.cmd`, `main.py` and `.venv`
+beside them, with no packed `VibeForma.exe`. Without arguments `run.cmd`
+starts the panel through `pythonw.exe main.py`; with arguments it runs
+`python.exe main.py` with those arguments, so stdout, stderr and the exit
+code reach the caller. Both forms are equivalent:
+
+```
+run.cmd --toggle
+run.cmd --cancel
+run.cmd --status
+.venv\Scripts\python.exe main.py --status
+```
+
+`--toggle` starts recording or stops it when it is running, `--cancel` drops
+the current recording or the panel draft, and `--status` prints the running
+instance's `status.json` (`state`, `version`, `pid`, `ts`) as JSON. The flags
+talk to the instance that is already running: with no instance, or when the
+status is older than 60 s, the exit code is 1; on success it is 0.
+`--help` prints every command, and `--transcribe` is described under
+File transcription.
 
 The hook is opt-in and off while `"hook_command"` is empty. Set it in
 settings → System (or in `config.json` next to `"hook_timeout_s"`, default 5):
@@ -356,6 +514,8 @@ app/
   main.py              service: states, hotkey, record/recognize threads, selftest
   audio.py             16 kHz capture, level, Silero VAD, partial transcribes
   asr.py               faster-whisper: offline-first loading, transcription, model swap
+  asr.py + transcript.py  file mode: PyAV decode, segments, TXT/JSON/SRT/VTT
+  file_jobs.py         file job queue: dictation priority, pause, cancel, progress
   insert.py            text insertion (Shift+Insert/Ctrl+V), clipboard restore, focus
   hotkey.py            global hotkey (pynput)
   tray.py              tray icon and menu (pystray)
@@ -368,7 +528,7 @@ app/
   assets/              icon.png, icon.ico
   requirements.txt     base dependencies (no CUDA wheels)
   requirements-cuda.txt  base + CUDA wheels, used only on CUDA machines
-  run.cmd              launcher: pythonw main.py | --selftest | --doctor
+  run.cmd              launcher: no args -> pythonw main.py; args -> python.exe main.py
   uninstall.cmd        uninstaller entry point
   uninstall.py         uninstaller (stdlib): shortcuts, Settings > Apps, files
 install.cmd            one-click installer

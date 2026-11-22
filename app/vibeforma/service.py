@@ -1,6 +1,8 @@
 """The dictation service: recording, recognition, insertion into the field."""
 from __future__ import annotations
 
+import contextlib
+import os
 import threading
 import time
 from typing import Any
@@ -45,6 +47,9 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.vad = None
         self.recorder = None
         self.http_server = None
+        self.file_jobs = None
+        self.pipe = None
+        self._last_file_outputs: list[str] = []
         self._running = True
         self._partial_busy = False
         self._cancel_evt = threading.Event()
@@ -82,6 +87,8 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             "settings_tab": None,
             "test_text": "",
             "test_state": "",
+            "file_job": {},
+            "file_batch": {},
         }
         self.publish_status()
 
@@ -114,6 +121,12 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.live["state"] = state
         self.publish_status(state)
         self._sync_cancel_watcher(state)
+        jobs = getattr(self, "file_jobs", None)
+        if jobs is not None:
+            # A dictation outranks any file job: between segments the job
+            # pauses and resumes once the service is idle again.
+            jobs.dictation_active(
+                state in (STATE_RECORDING, STATE_PROCESSING))
         if self.tray:
             self.tray.set_state(state)
         if (state == STATE_IDLE and self.pending_update
@@ -396,13 +409,20 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 self._show_draft(text)
                 return
             import insert as insert_mod
+            target_hwnd = getattr(self, "_target_hwnd", None)
+            if (target_hwnd and self.cfg.get("confirm_focus_change", True)
+                    and insert_mod.get_foreground_hwnd() != target_hwnd):
+                # Dictation started in one window, the text is ready in
+                # another: never a silent paste and never a dialog — the text
+                # waits in the panel draft.
+                self.log.info("Target window changed — draft in the panel")
+                self._show_draft(text)
+                return
             undo_state: dict[str, Any] = {}
             result = insert_mod.insert_text(
                 text, restore_clipboard=self.cfg.get("restore_clipboard", True),
-                log=self.log, target_hwnd=getattr(self, "_target_hwnd", None),
+                log=self.log, target_hwnd=target_hwnd,
                 paste_method=self.cfg.get("paste_method", "shift_insert"),
-                confirm_focus=(lambda: insert_mod.ask_focus_change(self.cfg, text))
-                if self.cfg.get("confirm_focus_change", True) else None,
                 exclude_history=self.cfg.get("clipboard_exclude_history",
                                              True),
                 log_title=self.cfg.get("log_window_titles", False),
@@ -634,7 +654,6 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 text, restore_clipboard=self.cfg.get("restore_clipboard", True),
                 log=self.log, target_hwnd=target_hwnd,
                 paste_method=self.cfg.get("paste_method", "shift_insert"),
-                confirm_focus=None,   # the user already picked the window
                 exclude_history=self.cfg.get("clipboard_exclude_history", True),
                 log_title=self.cfg.get("log_window_titles", False),
                 undo_state=undo_state)
@@ -682,6 +701,457 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         except Exception as e:  # noqa: BLE001 - learning must not break insertion
             self.log.warning("Dictionary corrections: %s", e)
 
+    # -- file mode ---------------------------------------------------------
+    def start_pipe(self) -> bool:
+        """Start the CLI channel before the model load.
+
+        The pipe must answer during loading, when ``location.json`` already
+        names the running service: a caller gets a defined "loading" reply
+        instead of "VibeForma is not running". Returns whether it listens.
+        """
+        if self.pipe is not None:
+            return True
+        try:
+            from .pipe import PipeServer
+            server = PipeServer(self._pipe_request, self.log)
+            if server.start():
+                self.pipe = server
+                self.log.info("CLI pipe listening: %s", server.name)
+                return True
+            self.log.info("CLI pipe: not available on this platform")
+        except Exception as e:  # noqa: BLE001 - the pipe must not stop dictation
+            self.log.warning("CLI pipe not started: %s", e)
+        self.pipe = None
+        return False
+
+    def start_file_mode(self) -> None:
+        """Create the job queue once the model is ready; the pipe is older."""
+        if self.file_jobs is not None:
+            return
+        from file_jobs import FileJobs
+        self.file_jobs = FileJobs(self.cfg, self.asr, self.log,
+                                  on_event=self._on_file_event,
+                                  on_batch_event=self._on_batch_event)
+
+    def _on_file_event(self, job: Any) -> None:
+        """One live view for the HUD and the tray, never the transcript text."""
+        payload = {
+            "id": job.id,
+            "batch_id": job.batch_id,
+            "state": job.state,
+            "progress": round(float(job.progress), 1),
+            "segments": len(job.segments),
+            "name": os.path.basename(job.source),
+            "relative": job.relative,
+            "error": job.error or "",
+            "finished_at": float(job.finished_at or 0.0),
+        }
+        previous = self.live.get("file_job") or {}
+        previous_id = str(previous.get("id") or "")
+        previous_batch = str(previous.get("batch_id") or "")
+        previous_state = str(previous.get("state") or "")
+        previous_live_single = (bool(previous_id) and not previous_batch
+                                and previous_state in
+                                ("queued", "running", "paused"))
+        same = previous_id == job.id
+        if job.batch_id:
+            # A batch child never overwrites a live single-file slot: the
+            # batch snapshot carries the current name.
+            take = same or not previous_id or bool(previous_batch)
+        else:
+            take = (same or not previous_id or bool(previous_batch)
+                    or not previous_live_single
+                    or job.state in ("queued", "running", "paused"))
+        if take:
+            self.live["file_job"] = payload
+        if job.outputs:
+            self._last_file_outputs = list(job.outputs)
+        # A batch child reports through the batch: one notification, not one
+        # per file, so a folder of twenty files is not twenty popups.
+        if not job.batch_id and job.state in ("done", "error", "cancelled"):
+            if job.state == "done" and job.outputs:
+                self.set_last(self.tr("notify.file_done",
+                                      path=job.outputs[0]))
+                if self.tray:
+                    self.tray.notify(self.tr("notify.file_done",
+                                             path=job.outputs[0]))
+            elif job.state == "error":
+                self.set_last(self.tr("notify.file_failed",
+                                      error=job.error or ""))
+                if self.tray:
+                    self.tray.notify(self.tr("notify.file_failed",
+                                             error=job.error or ""))
+        if self.tray:
+            with contextlib.suppress(Exception):
+                self.tray.set_state(self.state)
+
+    def _on_batch_event(self, batch: Any) -> None:
+        """The batch snapshot the HUD panel reads; one notice at the end."""
+        previous = self.live.get("file_batch") or {}
+        counts = {"total": int(batch.total or 0), "done": 0, "skipped": 0,
+                  "failed": 0, "cancelled": 0, "pending": 0}
+        current_progress = 0.0
+        jobs = getattr(self, "file_jobs", None)
+        if jobs is not None:
+            with contextlib.suppress(Exception):
+                counts = jobs.counts(batch)
+            if batch.current:
+                with contextlib.suppress(Exception):
+                    current = jobs.get(batch.current)
+                    if current is not None:
+                        current_progress = float(current.progress)
+        payload = {
+            "id": batch.id,
+            "batch_id": batch.id,
+            "state": batch.state,
+            "total": int(counts["total"]),
+            "done": int(counts["done"]),
+            "skipped": int(counts["skipped"]),
+            "failed": int(counts["failed"]),
+            "cancelled": int(counts["cancelled"]),
+            "pending": int(counts["pending"]),
+            "progress": round(float(batch.progress), 1),
+            "current": batch.current,
+            "current_name": batch.current_name,
+            "current_progress": round(current_progress, 1),
+            "error": batch.error,
+            "finished_at": float(batch.finished_at or 0.0),
+        }
+        ended = batch.state in ("done", "cancelled")
+        was_ended = (previous.get("id") == batch.id
+                     and previous.get("state") in ("done", "cancelled"))
+
+        def _rank(state: str) -> int:
+            if state in ("running", "paused"):
+                return 2
+            if state == "queued":
+                return 1
+            return 0
+
+        same_id = previous.get("id") == batch.id
+        incoming_rank = _rank(batch.state)
+        previous_rank = _rank(str(previous.get("state") or ""))
+        take = (same_id or not previous.get("id")
+                or incoming_rank > previous_rank)
+        if not take and incoming_rank == previous_rank == 0:
+            take = (float(payload["finished_at"])
+                    >= float(previous.get("finished_at") or 0.0))
+        if take:
+            self.live["file_batch"] = payload
+        if ended and not was_ended:
+            if batch.cancelled:
+                message = self.tr("notify.batch_cancelled")
+            elif counts["failed"]:
+                message = self.tr("notify.batch_failed",
+                                  done=counts["done"],
+                                  skipped=counts["skipped"],
+                                  failed=counts["failed"])
+            else:
+                message = self.tr("notify.batch_done", done=counts["done"],
+                                  skipped=counts["skipped"],
+                                  failed=counts["failed"])
+            self.set_last(message)
+            if self.tray:
+                self.tray.notify(message)
+
+    def has_active_batch(self) -> bool:
+        jobs = self.file_jobs
+        if jobs is None:
+            return False
+        with contextlib.suppress(Exception):
+            return bool(jobs.active_batches())
+        return False
+
+    def cancel_batch(self) -> int:
+        """Tray: stop every unfinished batch; the number actually stopped."""
+        jobs = self.file_jobs
+        if jobs is None:
+            return 0
+        with contextlib.suppress(Exception):
+            return int(jobs.cancel_batches())
+        return 0
+
+    def transcribe_file_dialog(self) -> None:
+        """Tray: the person picks a file, then it joins the queue.
+
+        The dialog runs in its own thread with its own Tk root, so the HUD
+        loop and the hotkey stay free; the person's choice is consent and is
+        not bound by ``file_roots``.
+        """
+        threading.Thread(target=self._transcribe_file_dialog_worker,
+                         daemon=True).start()
+
+    def _transcribe_file_dialog_worker(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            from file_jobs import SUPPORTED_MEDIA
+            media = " ".join("*" + ext for ext in SUPPORTED_MEDIA)
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                path = filedialog.askopenfilename(
+                    title=self.tr("dialog.transcribe_file"),
+                    filetypes=[
+                        (self.tr("dialog.media"), media),
+                        (self.tr("dialog.all_files"), "*.*"),
+                    ])
+            finally:
+                root.destroy()
+        except Exception as e:  # noqa: BLE001 - a broken dialog must not kill the HUD
+            self.log.warning("File dialog failed: %s", e)
+            return
+        if not path:
+            return
+        if self.file_jobs is None:
+            self.set_last(self.tr("notify.file_not_ready"))
+            if self.tray:
+                self.tray.notify(self.tr("notify.file_not_ready"))
+            return
+        try:
+            self.file_jobs.submit(path, language=self.cfg.get("language") or "",
+                                  formats=["srt", "txt"], trusted=True)
+        except Exception as e:  # noqa: BLE001 - a refused path is a notice
+            self.log.warning("File job refused: %s", e)
+            self.set_last(self.tr("notify.file_failed", error=str(e)))
+            if self.tray:
+                self.tray.notify(self.tr("notify.file_failed", error=str(e)))
+
+    def transcribe_folder_dialog(self) -> None:
+        """Tray: the person picks a folder, then every media file joins.
+
+        The dialog runs in its own thread with its own Tk root, like the
+        single-file one; the person's choice is consent, so ``trusted`` is
+        set and ``file_roots`` does not apply. Locality still does.
+        """
+        threading.Thread(target=self._transcribe_folder_dialog_worker,
+                         daemon=True).start()
+
+    def _transcribe_folder_dialog_worker(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                folder = filedialog.askdirectory(
+                    mustexist=True,
+                    title=self.tr("dialog.transcribe_folder"))
+            finally:
+                root.destroy()
+        except Exception as e:  # noqa: BLE001 - a broken dialog must not kill the HUD
+            self.log.warning("Folder dialog failed: %s", e)
+            return
+        if not folder:
+            return
+        if self.file_jobs is None:
+            self.set_last(self.tr("notify.file_not_ready"))
+            if self.tray:
+                self.tray.notify(self.tr("notify.file_not_ready"))
+            return
+        from file_jobs import NoMediaFiles
+        try:
+            self.file_jobs.submit_folder(
+                folder,
+                language=self.cfg.get("language") or "",
+                formats=["srt", "txt"],
+                recursive=bool(self.cfg.get("file_folder_recursive", False)),
+                trusted=True)
+        except NoMediaFiles:
+            self.set_last(self.tr("notify.folder_empty"))
+            if self.tray:
+                self.tray.notify(self.tr("notify.folder_empty"))
+        except Exception as e:  # noqa: BLE001 - a refused folder is a notice
+            self.log.warning("Folder job refused: %s", e)
+            message = self.tr("notify.folder_failed", error=str(e))
+            self.set_last(message)
+            if self.tray:
+                self.tray.notify(message)
+
+    def last_file_folder(self) -> str:
+        """The folder of the last finished job, for the tray's open action."""
+        if not self._last_file_outputs:
+            return ""
+        return os.path.dirname(self._last_file_outputs[0])
+
+    def open_last_file_folder(self) -> None:
+        folder = self.last_file_folder()
+        if not folder:
+            return
+        with contextlib.suppress(Exception):
+            os.startfile(folder)  # noqa: S606 - the user asked to see the result
+
+    def _pipe_request(self, request: dict[str, Any],
+                      send: Any) -> dict[str, Any]:
+        """One CLI call over the pipe: submit, stream progress, answer."""
+        command = str(request.get("command") or "")
+        if command == "transcribe":
+            return self._transcribe_file_request(request, send)
+        if command == "transcribe_folder":
+            return self._transcribe_folder_request(request, send)
+        if command == "cancel_batch":
+            return self._cancel_batch_request(request)
+        return {"event": "error", "ok": False, "code": 2,
+                "error": "unknown command"}
+
+    def _transcribe_file_request(self, request: dict[str, Any],
+                                 send: Any) -> dict[str, Any]:
+        if self.file_jobs is None:
+            return {"event": "error", "ok": False, "code": 1, "loading": True,
+                    "error": "the model is loading"}
+        formats = [str(f).lower() for f in request.get("formats") or []]
+        import asr as asr_mod
+        from file_jobs import FilePathError
+        try:
+            job = self.file_jobs.submit(
+                str(request.get("path") or ""),
+                language=str(request.get("language") or ""),
+                model=str(request.get("model") or ""),
+                formats=formats,
+                out=str(request.get("out") or ""),
+                force=bool(request.get("force")),
+            )
+        except asr_mod.ModelNotInstalled as e:
+            self.log.warning("CLI file job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 2, "error": str(e)}
+        except FilePathError as e:
+            self.log.warning("CLI file job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 2, "error": str(e)}
+        except (OSError, ValueError) as e:
+            self.log.warning("CLI file job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 1, "error": str(e)}
+        while True:
+            send({"event": "progress", "job_id": job.id, "state": job.state,
+                  "progress": round(float(job.progress), 1)})
+            if job.state in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.3)
+        if job.state == "done":
+            return {"event": "done", "ok": True, "job_id": job.id,
+                    "out": list(job.outputs),
+                    "segments": len(job.segments),
+                    "duration_s": round(float(job.duration), 3)}
+        if job.state == "cancelled":
+            return {"event": "error", "ok": False, "cancelled": True,
+                    "job_id": job.id, "error": "cancelled"}
+        return {"event": "error", "ok": False, "job_id": job.id,
+                "error": job.error or job.state}
+
+    def _transcribe_folder_request(self, request: dict[str, Any],
+                                   send: Any) -> dict[str, Any]:
+        """Submit one folder, stream the batch counters, answer with a summary."""
+        if self.file_jobs is None:
+            return {"event": "error", "ok": False, "code": 1, "loading": True,
+                    "error": "the model is loading"}
+        import asr as asr_mod
+        from file_jobs import FilePathError, NoMediaFiles
+        formats = [str(f).lower() for f in request.get("formats") or []]
+        try:
+            batch = self.file_jobs.submit_folder(
+                str(request.get("folder") or ""),
+                language=str(request.get("language") or ""),
+                formats=formats,
+                out=str(request.get("out") or ""),
+                recursive=bool(request.get("recursive")),
+                force=bool(request.get("force")),
+            )
+        except NoMediaFiles as e:
+            self.log.warning("CLI folder job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 4,
+                    "error": str(e) or "nothing to transcribe"}
+        except (asr_mod.ModelNotInstalled, FilePathError) as e:
+            self.log.warning("CLI folder job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 2, "error": str(e)}
+        except (OSError, ValueError) as e:
+            self.log.warning("CLI folder job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 1, "error": str(e)}
+        last: tuple[Any, ...] | None = None
+        while True:
+            counts = self.file_jobs.counts(batch)
+            snapshot = (batch.state, counts["done"], counts["skipped"],
+                        counts["failed"], counts["cancelled"],
+                        int(round(float(batch.progress))))
+            if snapshot != last:
+                last = snapshot
+                file_progress = 0.0
+                if batch.current:
+                    with contextlib.suppress(Exception):
+                        current = self.file_jobs.get(batch.current)
+                        if current is not None:
+                            file_progress = float(current.progress)
+                send({"event": "progress", "batch_id": batch.id,
+                      "state": batch.state, "total": counts["total"],
+                      "done": counts["done"], "skipped": counts["skipped"],
+                      "failed": counts["failed"],
+                      "cancelled": counts["cancelled"],
+                      "pending": counts["pending"],
+                      "progress": round(float(batch.progress), 1),
+                      "current": batch.current,
+                      "file": batch.current_name,
+                      "file_progress": round(file_progress, 1)})
+            if batch.state in ("done", "cancelled"):
+                break
+            time.sleep(0.3)
+        summary = self._batch_summary(batch)
+        if batch.cancelled:
+            return {"event": "error", "ok": False, "cancelled": True,
+                    "batch_id": batch.id, "code": 3, "error": "cancelled",
+                    "summary": summary}
+        return {"event": "done", "ok": summary["ok"], "batch_id": batch.id,
+                "summary": summary}
+
+    def _batch_summary(self, batch: Any) -> dict[str, Any]:
+        """The JSON summary the CLI prints: every file, in walk order."""
+        jobs = self.file_jobs
+        counts = {"total": int(batch.total or 0), "done": 0, "skipped": 0,
+                  "failed": 0, "cancelled": 0, "pending": 0}
+        if jobs is not None:
+            with contextlib.suppress(Exception):
+                counts = jobs.counts(batch)
+        files: list[dict[str, Any]] = []
+        for child_id in batch.children:
+            job = None
+            if jobs is not None:
+                with contextlib.suppress(Exception):
+                    job = jobs.get(child_id)
+            if job is None:
+                continue
+            files.append({
+                "source": job.source,
+                "relative": job.relative,
+                "state": job.state,
+                "outputs": list(job.outputs),
+                "segments": len(job.segments),
+                "duration_s": round(float(job.duration), 3),
+                "error": job.error,
+            })
+        return {
+            "ok": counts["failed"] == 0 and counts["cancelled"] == 0,
+            "batch_id": batch.id,
+            "folder": batch.root,
+            "out": batch.out,
+            "recursive": bool(batch.recursive),
+            "total": int(counts["total"]),
+            "done": int(counts["done"]),
+            "skipped": int(counts["skipped"]),
+            "failed": int(counts["failed"]),
+            "cancelled": int(counts["cancelled"]),
+            "progress": round(float(batch.progress), 1),
+            "files": files,
+        }
+
+    def _cancel_batch_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.file_jobs is None:
+            return {"ok": False, "cancelled": 0, "code": 1,
+                    "error": "the model is loading"}
+        batch_id = str(request.get("batch_id") or "")
+        if batch_id:
+            stopped = 1 if self.file_jobs.cancel_batch(batch_id) else 0
+        else:
+            stopped = self.file_jobs.cancel_batches()
+        return {"ok": True, "cancelled": int(stopped)}
+
     # -- startup -----------------------------------------------------------
     def load_model_async(self) -> None:
         def _load() -> None:
@@ -696,6 +1166,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 import numpy as np
                 self.asr.transcribe(np.zeros((16000,), dtype=np.float32))
                 self.log.info("Warm-up done — service ready")
+                self.start_file_mode()
                 self._set_state(STATE_IDLE)
                 if self.tray:
                     self.tray.notify(self.tr(
@@ -711,6 +1182,12 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
     def shutdown(self) -> None:
         self._running = False
         self.live["exit"] = True
+        if self.pipe is not None:
+            with contextlib.suppress(Exception):
+                self.pipe.stop()
+        if self.file_jobs is not None:
+            with contextlib.suppress(Exception):
+                self.file_jobs.shutdown()
         if self.hotkey:
             try:
                 self.hotkey.stop()
