@@ -11,10 +11,12 @@ import time
 import wave
 from pathlib import Path
 
-import numpy as np
 import pytest
 import transcript
 from transcript import Segment, Word
+
+np = pytest.importorskip("numpy")
+pytest.importorskip("av")
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_WAV = ROOT / "test_ru.wav"
@@ -101,7 +103,7 @@ def test_unknown_format_is_refused():
 @pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
 def test_own_decoder_decodes_the_real_wav_without_faster_whisper():
     import asr
-    import faster_whisper.audio as fw_audio
+    fw_audio = pytest.importorskip("faster_whisper.audio")
 
     def _explode(*_args, **_kwargs):
         raise AssertionError("faster_whisper.audio.decode_audio must not run")

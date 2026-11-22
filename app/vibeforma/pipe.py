@@ -16,7 +16,7 @@ import os
 import threading
 from collections.abc import Callable
 from ctypes import wintypes
-from typing import Any
+from typing import Any, cast
 
 PIPE_PREFIX = "\\\\.\\pipe\\VibeForma-"
 # One batch summary of hundreds of files is one JSON line: the line limit is
@@ -128,14 +128,15 @@ def _write_line(handle: int, payload: dict[str, Any], kernel: Any) -> bool:
 class PipeServer:
     """One accept loop, one thread per client, JSON lines both ways."""
 
-    def __init__(self, handler: Callable[[dict[str, Any], Callable[[dict[str, Any]],
-                                                                   None]], dict[str, Any]],
+    def __init__(self, handler: Callable[
+            [dict[str, Any], Callable[[dict[str, Any]], Any]],
+            dict[str, Any]],
                  log: Any = None, name: str | None = None) -> None:
         self.handler = handler
         self.log = log
         self.name = name or pipe_name()
         self._running = False
-        self._thread = None
+        self._thread: threading.Thread | None = None
         self._current = 0
         self._ready = threading.Event()
         self._listening = False
@@ -251,7 +252,7 @@ def request(payload: dict[str, Any], *, name: str | None = None,
             # A command that answers at once (cancel_batch) has no terminal
             # event: a message without one is the answer itself.
             if event in ("done", "error") or event is None:
-                return message
+                return cast(dict[str, Any], message)
             if on_event is not None:
                 on_event(message)
     finally:

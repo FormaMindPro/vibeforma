@@ -162,6 +162,8 @@ def _parse_multipart(body: bytes, content_type: str) -> dict[str, tuple[str, byt
             continue
         filename = part.get_filename() or ""
         payload = part.get_payload(decode=True) or b""
+        if not isinstance(payload, bytes):
+            payload = b""
         fields[str(name)] = (str(filename), payload)
     return fields
 

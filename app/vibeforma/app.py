@@ -71,7 +71,7 @@ def transcribe_help() -> str:
 def cli_help() -> str:
     """Everything the command line offers, for --help without a command."""
     return (
-        "VibeForma " + VERSION + "\n"
+        "VibeForma " + str(VERSION) + "\n"
         "\n"
         "  run.cmd                      start the panel (pythonw, no console)\n"
         "  run.cmd --selftest           run the machine self-test\n"

@@ -48,7 +48,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.recorder = None
         self.http_server = None
         self.file_jobs = None
-        self.pipe = None
+        self.pipe: Any = None
         self._last_file_outputs: list[str] = []
         self._running = True
         self._partial_busy = False
