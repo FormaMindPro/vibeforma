@@ -17,6 +17,7 @@ class ServiceHost:
     state: str
     tray: Any
     hotkey: Any
+    http_server: Any
     asr: Any
     vad: Any
     recorder: Any
