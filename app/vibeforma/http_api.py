@@ -12,7 +12,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from config import CONFIG_PATH, DATA_DIR, LOG_DIR, VERSION
 
@@ -163,7 +163,8 @@ def start_http_api(cfg: dict[str, Any], svc: Any,
                 "ok": True,
                 "app": "vibeforma",
                 "api": 1,
-                "port": int(self.server.server_address[1]),
+                "port": int(cast(tuple[str, int],
+                                 self.server.server_address)[1]),
                 "version": VERSION,
                 "model": str(cfg.get("model") or ""),
                 "language": str(cfg.get("language") or ""),

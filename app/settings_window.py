@@ -1001,10 +1001,9 @@ class SettingsWindow:
         api_port = int(c.get("http_port", 8787))
         server = getattr(self.svc, "http_server", None)
         if server is not None:
-            try:
+            with contextlib.suppress(AttributeError, IndexError, TypeError,
+                                     ValueError):
                 api_port = int(server.server_address[1])
-            except (AttributeError, IndexError, TypeError, ValueError):
-                pass
         self._note(f, self.tr("settings.note_http_api", port=api_port))
         self._head(f, self.tr("settings.g_hook"))
         self.v_hook = tk.StringVar(value=str(c.get("hook_command", "")))
