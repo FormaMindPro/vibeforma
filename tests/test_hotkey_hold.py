@@ -433,13 +433,16 @@ def test_release_from_recording_stops_with_hold(monkeypatch):
 
 
 # -- settings surface -----------------------------------------------------
-def test_record_tab_carries_the_hold_switch():
+def test_keys_tab_carries_the_hold_switch():
     source = (ROOT / "app" / "settings_window.py").read_text(encoding="utf-8")
-    block = source[source.index("def _build_record_tab"):
+    block = source[source.index("def _build_keys_tab"):
                    source.index("def _build_model_tab")]
     assert "v_hold" in block
     assert "settings.hold_to_talk" in block
     assert "settings.note_hold_to_talk" in block
+    record = source[source.index("def _build_record_tab"):
+                    source.index("def _build_keys_tab")]
+    assert "v_hold" not in record
     save = source[source.index("def _save"):]
     assert 'c["hold_to_talk"]' in save
 

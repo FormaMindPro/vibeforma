@@ -296,6 +296,7 @@ class SettingsWindow:
         self._build_search()
         frames = self._create_panes()
         self._build_record_tab(frames["record"])
+        self._build_keys_tab(frames["keys"])
         self._build_model_tab(frames["model"])
         self._build_dictionary_tab(frames["dictionary"])
         self.snippets_tab = snippets_ui.build_snippets_tab(
@@ -411,7 +412,8 @@ class SettingsWindow:
         nav = tk.Frame(rail, bg=SIDE_BG)
         nav.pack(fill="x", pady=(self._px(12), 0))
         for key, title_key in (
-                ("record", "tabs.record"), ("model", "tabs.model"),
+                ("record", "tabs.record"), ("keys", "tabs.keys"),
+                ("model", "tabs.model"),
                 ("dictionary", "tabs.dictionary"),
                 ("snippets", "tabs.snippets"), ("history", "tabs.history"),
                 ("stats", "tabs.stats"),
@@ -424,8 +426,9 @@ class SettingsWindow:
         frames = {}
         self._scrolls = {}
         for key, _title in (
-                ("record", None), ("model", None), ("dictionary", None),
-                ("snippets", None), ("history", None), ("stats", None),
+                ("record", None), ("keys", None), ("model", None),
+                ("dictionary", None), ("snippets", None),
+                ("history", None), ("stats", None),
                 ("look", None), ("system", None)):
             if key in ("history", "stats"):
                 # The history and stats tables fill the pane; the page
@@ -598,9 +601,6 @@ class SettingsWindow:
         self._note(f, self.tr("settings.note_partial"))
         self.v_maxrec = tk.IntVar(value=int(c.get("max_record_s", 120)))
         self._row(f, self.tr("settings.maxrec"), self._scale(f, 30, 600, 30, self.v_maxrec))
-        self.v_hold = tk.BooleanVar(value=bool(c.get("hold_to_talk", False)))
-        self._bind(f, self.v_hold, self.tr("settings.hold_to_talk"))
-        self._note(f, self.tr("settings.note_hold_to_talk"))
         self._head(f, self.tr("settings.g_sound"))
         self.v_beep_on = tk.BooleanVar(value=bool(c.get("beep_on", True)))
         self._bind(f, self.v_beep_on, self.tr("settings.beep_on"))
@@ -610,6 +610,58 @@ class SettingsWindow:
         self.v_text_rules = tk.BooleanVar(value=bool(c.get("text_rules", False)))
         self._bind(f, self.v_text_rules, self.tr("settings.text_rules"))
         self._note(f, self.tr("settings.note_text_rules"))
+
+
+    def _build_keys_tab(self, f):
+        c = self.cfg
+        self._pane_heading(f, "tabs.keys", "settings.sub_keys")
+        # -- tab: hotkeys -----------------------------------------------------
+        self._head(f, self.tr("settings.g_keys_dictation"))
+        self.v_hotkey = tk.StringVar(value=c.get("hotkey", "ctrl+alt+space"))
+        self._row(f, self.tr("settings.hotkey"),
+                  tk.Entry(f, textvariable=self.v_hotkey, width=18,
+                           bg=FIELD_BG, fg=FG, insertbackground=FG,
+                           relief="flat"))
+        self._note(f, self.tr("settings.note_hotkey"))
+        self.v_hold = tk.BooleanVar(value=bool(c.get("hold_to_talk", False)))
+        self._bind(f, self.v_hold, self.tr("settings.hold_to_talk"))
+        self._note(f, self.tr("settings.note_hold_to_talk"))
+        self._head(f, self.tr("settings.g_keys_panel"))
+        self._key_row(f, "Esc", self.tr("keys.esc_cancel"))
+        self._key_row(f, "Esc", self.tr("keys.esc_panel"))
+        self._key_row(f, "Ctrl+Enter", self.tr("keys.ctrl_enter"))
+        self._head(f, self.tr("settings.g_keys_paste"))
+        self._key_row(f, "Shift+Insert", self.tr("keys.paste_shift_insert"))
+        self._key_row(f, "Ctrl+V", self.tr("keys.paste_ctrl_v"))
+        self._head(f, self.tr("settings.g_keys_settings"))
+        self._key_row(f, "Ctrl+F", self.tr("keys.ctrl_f"))
+        self._key_row(f, "Ctrl+S", self.tr("keys.ctrl_s"))
+        self._key_row(f, "Esc", self.tr("keys.esc_settings"))
+        self._head(f, self.tr("settings.g_keys_history"))
+        self._key_row(f, "Delete", self.tr("keys.delete_history"))
+        self._key_row(f, "Ctrl+A", self.tr("keys.ctrl_a_history"))
+        self._note(f, self.tr("keys.fixed_note"))
+
+
+    def _key_row(self, f, keys_text, action_text):
+        """A fixed key combination and what it does, the combo in bold mono."""
+        rows = self.rows
+        rows[f] = rows.get(f, 0)
+        row = tk.Frame(f, bg=BG)
+        row.grid(row=rows[f], column=0, columnspan=2, sticky="we",
+                 padx=self._px(18), pady=self._px(3))
+        combo = tk.Label(row, text=keys_text, font=("Consolas", 9, "bold"),
+                         fg=FG, bg=FIELD_BG, padx=self._px(6),
+                         pady=self._px(2), width=14, anchor="w")
+        combo.pack(side="left")
+        description = tk.Label(row, text=action_text, font=("Segoe UI", 9),
+                               fg=FG, bg=BG, justify="left",
+                               wraplength=self._px(560))
+        description.pack(side="left", padx=(self._px(12), 0))
+        rows[f] += 1
+        self._search_index.append(
+            (keys_text + " " + action_text, self._frame_key[f],
+             description, FG))
 
 
     def _build_model_tab(self, f):
@@ -920,11 +972,6 @@ class SettingsWindow:
             value=bool(c.get("notify_text", False)))
         self._bind(f, self.v_notify_text, self.tr("settings.notify_text"))
         self._head(f, self.tr("sys.g_startup"))
-        self.v_hotkey = tk.StringVar(value=c.get("hotkey", "ctrl+alt+space"))
-        self._row(f, self.tr("settings.hotkey"),
-            tk.Entry(f, textvariable=self.v_hotkey, width=18,
-                     bg=FIELD_BG, fg=FG, insertbackground=FG, relief="flat"))
-        self._note(f, self.tr("settings.note_hotkey"))
         names = self.svc.input_device_names() or []
         default_label = self.tr("settings.device_default")
         self._device_default = default_label
@@ -1028,7 +1075,7 @@ class SettingsWindow:
         """Size to the tallest section once, centred and clamped to the screen."""
         self.win.update_idletasks()
         values = tuple(frames[key] for key in
-                       ("record", "model", "dictionary", "snippets",
+                       ("record", "keys", "model", "dictionary", "snippets",
                         "history", "stats", "look", "system"))
         w = max(self._px(1060),
                 self._px(214 + 1) + max(f.winfo_reqwidth() for f in values)

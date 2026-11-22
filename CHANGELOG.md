@@ -71,6 +71,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   port and the API state, so a form reads the endpoint from one file and
   never hardcodes a port. `/health` now identifies the app and names the
   actual port.
+- **Hotkeys tab.** Settings lists every key the app listens for: the
+  dictation hotkey (toggle or hold-to-talk), Esc cancelling a phrase,
+  Ctrl+Enter inserting a panel draft, the paste keys, and the settings and
+  history shortcuts. Only the dictation hotkey is editable; the rest are
+  fixed and shown for reference.
 
 ### Fixed
 - **Microphones that only open at 44.1 or 48 kHz.** Capture follows the
