@@ -179,7 +179,9 @@ cffi==2.1.1 \
     --hash=sha256:f8ec5e643a9a937f64e1999eb9f75d072263751912dc5cd06d3c85f8f44be7c3 \
     --hash=sha256:fb92203a88b3d3053034db775110081c49d28be6551923805e039924093761e4 \
     --hash=sha256:fcd22650c908d7b7da162bbfaab594a1227a15d1643a98c68b122ac642fa2264
-    # via sounddevice
+    # via
+    #   soundcard
+    #   sounddevice
 click==8.5.1 \
     --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37 \
     --hash=sha256:9bbfada76703fd1d784b83eea012e3e8c6a001a876543ef104fa56aaaeb072b4
@@ -390,6 +392,7 @@ numpy==2.2.6 ; python_full_version < '3.11' \
     #   -r app/requirements.in
     #   ctranslate2
     #   onnxruntime
+    #   soundcard
 numpy==2.4.6 ; python_full_version == '3.11.*' \
     --hash=sha256:001fbb8e08d942dd57599e781f2472269ee7f2755fae407b4f67b2f0b17da3f1 \
     --hash=sha256:0280e0356c0829a18d9de1cb7eee50ec22ca639878d7240307ca0943d73cd2c4 \
@@ -467,6 +470,7 @@ numpy==2.4.6 ; python_full_version == '3.11.*' \
     #   -r app/requirements.in
     #   ctranslate2
     #   onnxruntime
+    #   soundcard
 numpy==2.5.5 ; python_full_version >= '3.12' \
     --hash=sha256:08f1b9abf1707fa89c125aaa17e78389c063fb20ce37a141b47821e996f4a1db \
     --hash=sha256:095113ee2ceab6a9501b184eff5ea806973d3a63d74a8cbc15e4911e754da9c1 \
@@ -538,6 +542,7 @@ numpy==2.5.5 ; python_full_version >= '3.12' \
     #   -r app/requirements.in
     #   ctranslate2
     #   onnxruntime
+    #   soundcard
 nvidia-cublas-cu12==12.9.2.10 \
     --hash=sha256:5572131a59c3eebeeb1c4c8144f772d49372c20124916e072a0e3fc30df421d5 \
     --hash=sha256:623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661 \
@@ -1049,6 +1054,10 @@ six==1.17.0 \
     #   pynput
     #   pystray
     #   python-xlib
+soundcard==0.4.6 \
+    --hash=sha256:9b46d64a26f97cd7d88bcfc385c97c069f97c5ec3404e4e7c23771598a8cf47b \
+    --hash=sha256:ab44b8c1033ac6ec49c5d618ce096dab9b60c7d7a427c92bef15856e5ebb3e09
+    # via -r app/requirements.in
 sounddevice==0.5.6 \
     --hash=sha256:7f4162f514f007b0bf25a3ccfed3f1705bc2ec311888a90232729eec4f57a4f4 \
     --hash=sha256:8ec9fbfde2e32f020b167e348f3ab3bac6625a5f15af524d790108ac7147a410 \

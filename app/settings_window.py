@@ -587,6 +587,16 @@ class SettingsWindow:
     def _build_record_tab(self, f):
         c = self.cfg
         self._pane_heading(f, "tabs.record", "settings.sub_record")
+        self._head(f, self.tr("settings.g_source"))
+        self._source_by_name = {
+            self.tr("settings.source_mic"): "microphone",
+            self.tr("settings.source_system"): "system",
+        }
+        self.v_source = tk.StringVar(
+            value=self._source_display(c.get("audio_source", "microphone")))
+        self._row(f, self.tr("settings.source"),
+                  self._opt(f, self.v_source, list(self._source_by_name)))
+        self._note(f, self.tr("settings.note_source"))
         # -- tab: recording --------------------------------------------------
         self._head(f, self.tr("settings.g_pauses"))
         self.v_silence = tk.IntVar(value=int(c.get("silence_ms", 2000)))
@@ -610,6 +620,13 @@ class SettingsWindow:
         self.v_text_rules = tk.BooleanVar(value=bool(c.get("text_rules", False)))
         self._bind(f, self.v_text_rules, self.tr("settings.text_rules"))
         self._note(f, self.tr("settings.note_text_rules"))
+
+
+    def _source_display(self, code):
+        """The localized label for a stored audio_source code."""
+        key = ("settings.source_system" if str(code or "") == "system"
+               else "settings.source_mic")
+        return self.tr(key)
 
 
     def _build_keys_tab(self, f):
@@ -1149,6 +1166,7 @@ class SettingsWindow:
         """Restore option defaults; the model, dictionary and history stay."""
         d = DEFAULTS
         self.v_silence.set(d["silence_ms"])
+        self.v_source.set(self._source_display(d["audio_source"]))
         self.v_partial.set(d["partial_every_s"])
         self.v_maxrec.set(d["max_record_s"])
         self.v_hold.set(d["hold_to_talk"])
@@ -1497,6 +1515,8 @@ class SettingsWindow:
         c["partial_every_s"] = float(self.v_partial.get())
         c["max_record_s"] = int(self.v_maxrec.get())
         c["auto_stop"] = bool(self.v_autostop.get())
+        c["audio_source"] = self._source_by_name.get(self.v_source.get(),
+                                                     "microphone")
         c["beep_on"] = bool(self.v_beep_on.get())
         c["beep_off"] = bool(self.v_beep_off.get())
         c["model_keep_old"] = bool(self.v_keep.get())

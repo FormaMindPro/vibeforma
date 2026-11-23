@@ -5,6 +5,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.4.1 — 2026-11-23
+
+### Added
+- **System audio capture.** A take can now record what the computer plays
+  instead of the microphone: set `"audio_source": "system"` in `config.json`
+  and press the hotkey; the same hotkey stops the take. The default output
+  is captured through its WASAPI loopback (works on Bluetooth, USB and HDMI
+  outputs, not only the on-board jack), so a YouTube video or a film can be
+  transcribed. Silence auto-stop and live partial text are off in this mode;
+  `max_record_s` still applies. An unavailable loopback shows a clear
+  notification instead of pasting an empty result. The Sound source switch
+  (Microphone / System audio) now lives on the Settings window's Record tab;
+  it ships in this same release.
+- **A PortAudio device refresh.** When Windows re-creates an audio endpoint
+  while the service runs, the cached device table is re-read once and the
+  same capture plans are retried, so a 48 kHz WASAPI take comes back without
+  restarting the application. The log line now names the host API
+  (`api=Windows WASAPI`) next to the device and rate.
+
+### Changed
+- **The speech band is kept whole.** The resampler from a device rate to
+  16 kHz now uses 127 taps with a Kaiser beta of 10 instead of 25/8: flat to
+  6 kHz, aliases from 9 kHz suppressed (previously a 9 kHz tone folded to
+  7 kHz at -13.7 dB).
+- **The VAD keeps the beginning of a phrase.** `speech_pad_ms` grows from 30
+  to 400 and `min_silence_duration_ms` from 250 to 1000, so the first word
+  and the closing punctuation survive in both dictation and file mode.
+- `soundcard>=0.4.6` joins the runtime dependencies for the loopback.
+
 ## 0.4.0 — 2026-11-22
 
 ### Added

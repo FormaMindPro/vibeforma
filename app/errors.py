@@ -6,7 +6,7 @@ in locales/*.json under "errors.<code>.text" and "errors.<code>.action".
 """
 import i18n
 
-KINDS = ("mic", "model", "recognition", "file")
+KINDS = ("mic", "model", "recognition", "file", "system")
 
 # Fallback code per kind: what to show when no hint matches.
 FALLBACK = {
@@ -14,10 +14,13 @@ FALLBACK = {
     "model": "model.load",
     "recognition": "recognition.failed",
     "file": "file.read",
+    "system": "system.unavailable",
 }
 
 # Order matters: a specific hint wins over a general one.
 HINTS = (
+    ("system.unavailable", ("soundcard", "loopback", "no default output",
+                            "system audio")),
     ("mic.permission", ("permission", "access is denied", "access denied",
                         "unanticipated host", "not allowed")),
     ("mic.busy", ("busy", "in use", "unavailable")),

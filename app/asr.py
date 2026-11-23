@@ -23,7 +23,7 @@ try:  # faster-whisper >= 1.1 ships the batched wrapper; older builds do not
 except Exception:  # noqa: BLE001, pragma: no cover - an old faster-whisper build
     BatchedInferencePipeline = None
 
-VAD_PARAMETERS = {"min_silence_duration_ms": 250, "speech_pad_ms": 30}
+VAD_PARAMETERS = {"min_silence_duration_ms": 1000, "speech_pad_ms": 400}
 NO_SPEECH_THRESHOLD = 0.6
 TARGET_RATE = 16000
 # File-mode preprocessing block: the VAD pass and feature extraction run on one

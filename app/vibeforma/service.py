@@ -258,12 +258,17 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         except Exception as e:
             self._record_started = 0.0
             self._record_seconds = 0.0
-            self.log.exception("Microphone unavailable: %s", e)
+            source = str(self.cfg.get("audio_source") or "microphone")
+            kind = "system" if source == "system" else "mic"
+            if kind == "system":
+                self.log.exception("System audio unavailable: %s", e)
+            else:
+                self.log.exception("Microphone unavailable: %s", e)
             if self._test_mode:
                 self._finish_mic_test("", "error")
             self._set_state(STATE_IDLE)
             if self.tray:
-                self.tray.notify(errors.text(self.cfg, "mic", e))
+                self.tray.notify(errors.text(self.cfg, kind, e))
             return
         self._set_state(STATE_RECORDING)
 

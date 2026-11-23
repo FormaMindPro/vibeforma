@@ -16,6 +16,11 @@ SAMPLE_RATE = 16000
 FRAME_MS = 32
 FRAME = SAMPLE_RATE * FRAME_MS // 1000  # 512 samples
 VOICE_THRESHOLD = 0.5
+# System audio: the loopback is captured at the output's native rate and goes
+# through the same Resampler. 48 kHz is the shared-mode mix format on Windows.
+SYSTEM_RATE = 48000
+SYSTEM_RATES = (48000, 44100, 16000)
+SYSTEM_BLOCK = SYSTEM_RATE * FRAME_MS // 1000
 
 
 class Resampler:
@@ -28,7 +33,7 @@ class Resampler:
     band clean.
     """
 
-    def __init__(self, src_rate, dst_rate=SAMPLE_RATE, taps=25, beta=8.0):
+    def __init__(self, src_rate, dst_rate=SAMPLE_RATE, taps=127, beta=10.0):
         self.src_rate = float(src_rate)
         self.dst_rate = float(dst_rate)
         self.step = self.src_rate / self.dst_rate
@@ -76,6 +81,27 @@ def resample_16k(audio, rate):
     r = Resampler(rate)
     tail = np.zeros(r.taps, dtype=np.float32)   # flush the filter's look-ahead
     return r.process(np.concatenate((a, tail)))
+
+
+_REFRESH_LOCK = threading.Lock()
+
+
+def refresh_devices() -> bool:
+    """Re-enumerate PortAudio devices after an endpoint change.
+
+    A long-running process keeps the device table it read at startup. When
+    Windows re-creates an endpoint (driver restart, jack or Bluetooth
+    change), the cached entry fails with an unanticipated host error and
+    every take falls back to the legacy path. No stream is open when this
+    is called. Returns False if the re-initialization raised.
+    """
+    with _REFRESH_LOCK:
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:  # noqa: BLE001 - the caller retries the plans
+            return False
+    return True
 
 
 def capture_plans(device_index=None):
@@ -182,6 +208,11 @@ class Recorder:
         self.level = 0.0        # RMS of the last frame (HUD)
         self.vad_p = 0.0        # last VAD speech probability (HUD)
         self._t_last_partial = 0.0
+        self._source = "microphone"     # microphone | system
+        self._system_rec = None
+        self._system_thread = None
+        self._system_rate = SYSTEM_RATE
+        self._system_block = SYSTEM_BLOCK
 
     # -- live indicators ---------------------------------------------------
     def live(self):
@@ -219,31 +250,88 @@ class Recorder:
 
     def start(self, device_index=None):
         self._pending = np.zeros(0, dtype=np.float32)
-        chosen = None
-        for index, (dev, rate, channels) in enumerate(capture_plans(device_index)):
-            if self._open(dev, rate, channels):
-                chosen = (dev, rate, channels)
-                break
-            # A driver that is re-enumerating the endpoint refuses one stream
-            # with a WDM IOCTL error and accepts the next: a short pause is
-            # cheaper than losing the clean path for the whole take.
-            if index == 0:
-                time.sleep(0.25)
-                if self._open(dev, rate, channels):
-                    chosen = (dev, rate, channels)
-                    break
+        # The same Recorder outlives a setting change; a previous system take
+        # must not leave the silence auto-stop and partials disabled here.
+        self._source = "microphone"
+        if str(self.cfg.get("audio_source") or "microphone") == "system":
+            self._start_system()
+            return
+        chosen = self._open_plans(device_index)
+        if chosen is None:
+            # A long-running process keeps the device table it read at
+            # startup; when Windows re-created the endpoint every plan fails.
+            # Re-enumerate once and try the same plans again.
+            refresh_devices()
+            chosen = self._open_plans(device_index)
         if chosen is None:
             raise RuntimeError("no capture device could be opened")
         self._t_start = time.monotonic()
         self._stop_evt.clear()
         self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor.start()
-        self.log.info("Recording started: device=%s (%s) rate=%s Hz x%d",
-                      chosen[0], device_index, chosen[1], chosen[2])
+        api = "unknown"
+        with contextlib.suppress(Exception):
+            dev_info = sd.query_devices(chosen[0])
+            api = sd.query_hostapis()[dev_info["hostapi"]]["name"]
+        self.log.info("Recording started: device=%s (%s) rate=%s Hz x%d api=%s",
+                      chosen[0], device_index, chosen[1], chosen[2], api)
+
+    def _open_plans(self, device_index):
+        """First plan that opens; the first plan gets one 0.25 s retry."""
+        for index, (dev, rate, channels) in enumerate(capture_plans(device_index)):
+            if self._open(dev, rate, channels):
+                return (dev, rate, channels)
+            # A driver that is re-enumerating the endpoint refuses one stream
+            # with a WDM IOCTL error and accepts the next: a short pause is
+            # cheaper than losing the clean path for the whole take.
+            if index == 0:
+                time.sleep(0.25)
+                if self._open(dev, rate, channels):
+                    return (dev, rate, channels)
+        return None
+
+    def _start_system(self):
+        """Take what the default output plays, through the soundcard loopback."""
+        from system_audio import default_loopback
+
+        mic, name = default_loopback()
+        last = None
+        for rate in SYSTEM_RATES:
+            try:
+                rec = mic.recorder(samplerate=rate, channels=2)
+                rec.__enter__()
+            except Exception as e:  # noqa: BLE001 - the next rate may open
+                last = e
+                continue
+            self._system_rec = rec
+            self._system_rate = rate
+            self._rate = rate
+            self._system_block = max(FRAME, int(round(rate * FRAME_MS / 1000)))
+            self._resampler = None if rate == SAMPLE_RATE else Resampler(rate)
+            break
+        if self._system_rec is None:
+            raise RuntimeError("system audio could not be opened: " + str(last))
+        self._source = "system"
+        self._t_start = time.monotonic()
+        self._stop_evt.clear()
+        self._system_thread = threading.Thread(target=self._system_loop,
+                                               daemon=True)
+        self._system_thread.start()
+        self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor.start()
+        self.log.info("Recording started: system audio (%s) rate=%s Hz",
+                      name, self._system_rate)
 
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
         self._stop_evt.set()
+        if self._system_rec is not None:
+            # Closing the loopback recorder unblocks a pending record().
+            with contextlib.suppress(Exception):
+                self._system_rec.__exit__(None, None, None)
+            self._system_rec = None
+        if self._system_thread:
+            self._system_thread.join(timeout=2.0)
         if self._monitor:
             self._monitor.join(timeout=2.0)
         if self._stream:
@@ -280,25 +368,44 @@ class Recorder:
                 mono = indata[:, 0]
             else:
                 mono = indata
-            if self._resampler is not None:
-                mono = self._resampler.process(mono)
-            if not len(mono):
-                return
-            # The queue and the VAD take exact 16 kHz frames; the resampler's
-            # output length wobbles around 512, so the remainder waits here.
-            if len(self._pending):
-                self._pending = np.concatenate((self._pending, mono))
-            else:
-                self._pending = np.asarray(mono, dtype=np.float32)
-            while len(self._pending) >= FRAME:
-                chunk = self._pending[:FRAME].copy()
-                self._pending = self._pending[FRAME:]
-                try:
-                    self._q.put_nowait(chunk)
-                except queue.Full:
-                    self._overruns += 1
+            self._push(mono)
         except Exception:  # noqa: BLE001 - the audio thread must never die
             self._overruns += 1
+
+    def _push(self, mono):
+        """Resample to 16 kHz, then cut exact FRAME chunks into the queue."""
+        if self._resampler is not None:
+            mono = self._resampler.process(mono)
+        if not len(mono):
+            return
+        # The queue and the VAD take exact 16 kHz frames; the resampler's
+        # output length wobbles around 512, so the remainder waits here.
+        if len(self._pending):
+            self._pending = np.concatenate((self._pending, mono))
+        else:
+            self._pending = np.asarray(mono, dtype=np.float32)
+        while len(self._pending) >= FRAME:
+            chunk = self._pending[:FRAME].copy()
+            self._pending = self._pending[FRAME:]
+            try:
+                self._q.put_nowait(chunk)
+            except queue.Full:
+                self._overruns += 1
+
+    def _system_loop(self):
+        """Read loopback blocks and feed the same frame queue."""
+        while not self._stop_evt.is_set():
+            try:
+                data = self._system_rec.record(numframes=self._system_block)
+                arr = np.asarray(data, dtype=np.float32)
+                mono = arr.mean(axis=1) if arr.ndim > 1 else arr
+                self._push(mono)
+            except Exception as e:  # noqa: BLE001 - a dead loopback must not hang the take
+                if self._stop_evt.is_set():
+                    return
+                self.log.info("System audio stopped: %s", e)
+                self._auto_stop("error")
+                return
 
     def _monitor_loop(self):
         partial_every_s = float(self.cfg.get("partial_every_s", 1.5))
@@ -325,6 +432,8 @@ class Recorder:
 
     def _maybe_partial(self, partial_every_s):
         """Fire a partial transcribe every partial_every_s of live speech."""
+        if self._source == "system":
+            return
         if self.on_partial is None or not self._has_speech:
             return
         now = time.monotonic()
@@ -342,6 +451,9 @@ class Recorder:
         elapsed = now - self._t_start
         if elapsed >= self.cfg["max_record_s"]:
             self._auto_stop("limit")
+            return
+        if self._source == "system":
+            # A film may have long quiet passages; only max_record_s closes it.
             return
         if (
             self.cfg.get("auto_stop")

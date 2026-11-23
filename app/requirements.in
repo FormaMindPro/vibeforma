@@ -4,6 +4,8 @@
 #       --python-version 3.10 --no-header -o app/requirements.txt
 faster-whisper>=1.2.1
 sounddevice>=0.4.6
+# System audio: WASAPI loopback of the default output (pure Python, uses cffi).
+soundcard>=0.4.6
 numpy>=2.0
 pynput>=1.7.6
 pystray>=0.19.5

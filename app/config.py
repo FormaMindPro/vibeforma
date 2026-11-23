@@ -3,7 +3,7 @@ import contextlib
 import json
 import os
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # The service folder holds run.cmd and main.py both in a source checkout
@@ -78,6 +78,7 @@ DEFAULTS = {
     "hotkey": "ctrl+alt+space",
     "hold_to_talk": False,              # hotkey held while talking, released to stop
     "input_device": "",                 # substring of the device name
+    "audio_source": "microphone",       # microphone | system
     "model": "large-v3-turbo",
     "device": "cuda",
     "compute_type": "float16",
