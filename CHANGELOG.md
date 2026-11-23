@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.4.2 — 2026-11-23
+
+### Fixed
+- **Rare 10–20 s waits before the final text are gone.** A live partial now
+  reads only the last 10 seconds of the take and decodes greedily at one
+  temperature, so it no longer holds the engine lock for the whole growing
+  buffer. The final dictation pass keeps beam 5 and a two-step temperature
+  fallback (0.0 and 0.2) instead of six steps. Each partial's duration is
+  logged: above 2 s as `Slow partial`, otherwise at debug level. File mode
+  keeps its full temperature fallback and its behavior is unchanged.
+
 ## 0.4.1 — 2026-11-23
 
 ### Added

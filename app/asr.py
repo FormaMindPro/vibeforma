@@ -25,6 +25,12 @@ except Exception:  # noqa: BLE001, pragma: no cover - an old faster-whisper buil
 
 VAD_PARAMETERS = {"min_silence_duration_ms": 1000, "speech_pad_ms": 400}
 NO_SPEECH_THRESHOLD = 0.6
+# Dictation presets: a live partial is greedy and single-temperature; the
+# final dictation pass keeps beam 5 and a short fallback ladder. File mode
+# does not use these values and keeps faster-whisper's full ladder.
+DICTATION_TEMPERATURES = (0.0, 0.2)
+PARTIAL_BEAM_SIZE = 1
+PARTIAL_TEMPERATURE = 0.0
 TARGET_RATE = 16000
 # File-mode preprocessing block: the VAD pass and feature extraction run on one
 # block at a time, so the model lock is never held for a whole file. A
@@ -275,21 +281,23 @@ class ASR:
     def _transcribe_impl(self, audio: np.ndarray, language: str, *,
                          word_timestamps: bool = False,
                          initial_prompt: str | None = None,
-                         temperature: float | None = None):
+                         temperature: float | list[float] | tuple[float, ...] | None = None,
+                         beam_size: int = 5):
         """One call to the model with the shared VAD, prompt and guards.
 
         Dictation and the file mode both enter here, so the anti-hallucination
         settings and the prompt can never drift apart. An explicit prompt or
         temperature from a file job overrides the configured default; omitted
-        values keep today's behavior.
+        values keep today's behavior. A temperature sequence reaches
+        faster-whisper as a sequence: a scalar means one decode, no fallback.
         """
         options: dict[str, Any] = {}
         if temperature is not None:
-            options["temperature"] = float(temperature)
+            options["temperature"] = temperature
         return self.model.transcribe(
             audio,
             language=language,
-            beam_size=5,
+            beam_size=beam_size,
             initial_prompt=(initial_prompt if initial_prompt is not None
                             else _prompt(self.cfg)),
             condition_on_previous_text=False,
@@ -373,16 +381,25 @@ class ASR:
             **options,
         )
 
-    def transcribe(self, audio: np.ndarray, verbose: bool = True) -> str:
+    def transcribe(self, audio: np.ndarray, verbose: bool = True, *,
+                   partial: bool = False) -> str:
         """Transcribe 16 kHz float32 mono audio; returns stripped text.
 
-        The language is pinned exactly (config) — never guessed. A legacy
-        hand-edited "auto" value maps to "en".
+        A live partial reads a short window (see audio.partial_snapshot) and
+        decodes greedily at one temperature. The final dictation pass keeps
+        beam 5 and a two-step fallback ladder.
         """
         with self._lock:
             t0 = time.time()
             lang = self._language()
-            segments, info = self._transcribe_impl(audio, lang)
+            if partial:
+                segments, info = self._transcribe_impl(
+                    audio, lang, beam_size=PARTIAL_BEAM_SIZE,
+                    temperature=PARTIAL_TEMPERATURE)
+            else:
+                segments, info = self._transcribe_impl(
+                    audio, lang, beam_size=5,
+                    temperature=DICTATION_TEMPERATURES)
             text = "".join(s.text for s in segments).strip()
             if verbose:
                 self.log.info(

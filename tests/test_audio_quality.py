@@ -205,3 +205,53 @@ def test_system_audio_unavailable_is_clear(monkeypatch):
     with pytest.raises(system_audio.SystemAudioUnavailable) as info:
         system_audio.default_loopback()
     assert "soundcard" in str(info.value)
+
+
+class _FakeInfo:
+    language = "en"
+
+
+class _CapturingModel:
+    """Records one transcribe() call; yields no text."""
+
+    def __init__(self):
+        self.calls = []
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append((audio, kwargs))
+        return [], _FakeInfo()
+
+
+def test_final_dictation_uses_the_short_temperature_ladder():
+    asr = pytest.importorskip("asr")
+    engine = asr.ASR(_cfg(), logging.getLogger("test_audio_quality"))
+    engine.model = _CapturingModel()
+    engine.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32))
+    _audio, kwargs = engine.model.calls[-1]
+    assert kwargs["beam_size"] == 5
+    assert kwargs["temperature"] == (0.0, 0.2)
+    assert kwargs["vad_filter"] is True
+    assert kwargs["condition_on_previous_text"] is False
+
+
+def test_partial_uses_greedy_decoding():
+    asr = pytest.importorskip("asr")
+    engine = asr.ASR(_cfg(), logging.getLogger("test_audio_quality"))
+    engine.model = _CapturingModel()
+    engine.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32),
+                      verbose=False, partial=True)
+    _audio, kwargs = engine.model.calls[-1]
+    assert kwargs["beam_size"] == 1
+    assert kwargs["temperature"] == 0.0
+    assert kwargs["vad_filter"] is True
+    assert kwargs["condition_on_previous_text"] is False
+
+
+def test_partial_snapshot_keeps_only_the_window():
+    audio = pytest.importorskip("audio")
+    frames = [np.zeros(audio.FRAME, dtype=np.float32) for _ in range(1000)]
+    frames[-1][-1] = 1.0
+    snapshot = audio.partial_snapshot(frames)
+    assert 0 < len(snapshot) <= int(audio.PARTIAL_WINDOW_S * SAMPLE_RATE)
+    assert len(snapshot) < 1000 * audio.FRAME
+    assert snapshot[-1] == 1.0

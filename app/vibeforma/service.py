@@ -287,7 +287,19 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
 
         def _run() -> None:
             try:
-                text = self.asr.transcribe(audio_snapshot, verbose=False)
+                t0 = time.monotonic()
+                text = self.asr.transcribe(audio_snapshot, verbose=False,
+                                           partial=True)
+                took = time.monotonic() - t0
+                audio_s = len(audio_snapshot) / 16000.0
+                if took >= 2.0:
+                    self.log.info(
+                        "Slow partial: audio %.1f s, recognition %.2f s",
+                        audio_s, took)
+                else:
+                    self.log.debug(
+                        "Partial: audio %.1f s, recognition %.2f s",
+                        audio_s, took)
                 if text and self.state == STATE_RECORDING:
                     self.live["partial"] = text
             except Exception as e:  # noqa: BLE001 - a failed partial must not stop the recording

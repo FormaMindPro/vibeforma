@@ -15,6 +15,7 @@ import sounddevice as sd
 SAMPLE_RATE = 16000
 FRAME_MS = 32
 FRAME = SAMPLE_RATE * FRAME_MS // 1000  # 512 samples
+PARTIAL_WINDOW_S = 10.0   # a live partial reads only the tail of the take
 VOICE_THRESHOLD = 0.5
 # System audio: the loopback is captured at the output's native rate and goes
 # through the same Resampler. 48 kHz is the shared-mode mix format on Windows.
@@ -175,6 +176,28 @@ def load_wav_16k(path):
         raise RuntimeError(f"mono WAV required, channels={channels}")
     a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     return resample_16k(a, rate)
+
+
+def partial_snapshot(frames, window_s=PARTIAL_WINDOW_S):
+    """The last ``window_s`` seconds of captured frames.
+
+    A partial is a preview, not the final take: decoding the whole growing
+    buffer on every tick makes the engine lock wait grow with the take.
+    Returns a new float32 array; ``frames`` is never modified.
+    """
+    if not frames:
+        return np.zeros(0, dtype=np.float32)
+    limit = max(1, int(window_s * SAMPLE_RATE))
+    kept = []
+    total = 0
+    for frame in reversed(frames):
+        kept.append(frame)
+        total += len(frame)
+        if total >= limit:
+            break
+    kept.reverse()
+    audio = np.concatenate(kept)
+    return audio[-limit:]
 
 
 class Recorder:
@@ -442,7 +465,7 @@ class Recorder:
         with self._lock:
             if len(self._frames) < SAMPLE_RATE // FRAME:  # < 1 s of audio
                 return
-            snapshot = np.concatenate(self._frames)
+            snapshot = partial_snapshot(self._frames)
         self._t_last_partial = now
         threading.Thread(target=self.on_partial, args=(snapshot,), daemon=True).start()
 
