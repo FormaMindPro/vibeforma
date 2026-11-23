@@ -61,6 +61,8 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._history_saved = ""
         self._history_total = 0
         self.pending_update = None
+        self.update_check_state = "idle"
+        self.update_check_tag = ""
         self.panel_request = threading.Event()
         self.history = history.History(history.history_path(DATA_DIR))
         self.stats = stats.Stats(stats.stats_path(DATA_DIR))

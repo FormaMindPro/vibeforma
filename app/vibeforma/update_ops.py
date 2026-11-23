@@ -12,29 +12,49 @@ from config import SERVICE_DIR, VERSION
 from . import STATE_IDLE, STATE_UPDATING
 from .base import ServiceHost
 
+UPDATE_IDLE = "idle"
+UPDATE_CHECKING = "checking"
+UPDATE_LATEST = "latest"
+UPDATE_FOUND = "found"
+UPDATE_APPLYING = "applying"
+UPDATE_DEFERRED = "deferred"
+UPDATE_ERROR = "error"
+UPDATE_INSTALL_FAILED = "install_failed"
+
 
 class UpdateActions(ServiceHost):
     def check_updates(self, notify_latest: bool = False) -> None:
-        """Check GitHub; a newer release only becomes pending (no silent apply)."""
+        """Check GitHub; a newer release only becomes pending (no silent apply).
+
+        The result is visible in the settings header: ``latest`` or ``found``
+        after a successful check, ``error`` only for a manual one. A
+        background failure leaves an earlier result as it is.
+        """
         import updater
         try:
             rel = updater.latest_release()
         except (OSError, ValueError) as e:
             self.log.debug("Update check failed: %s", e)
+            self._note_failed_check(notify_latest)
             if notify_latest and self.tray:
                 self.tray.notify(self.tr("notify.update_fail"))
             return
         if rel is None:
+            self._note_failed_check(notify_latest)
             if notify_latest and self.tray:
                 self.tray.notify(self.tr("notify.update_fail"))
             return
         current = updater.version_tuple(VERSION)
         if not updater.is_newer(rel["version"], current):
+            self.update_check_tag = VERSION
+            self.update_check_state = UPDATE_LATEST
             if notify_latest and self.tray:
                 self.tray.notify(self.tr("notify.update_latest", ver=VERSION))
             return
         self.log.info("New release %s found (current %s)", rel["tag"], VERSION)
         self.pending_update = rel
+        self.update_check_tag = rel["tag"]
+        self.update_check_state = UPDATE_FOUND
         if self.tray:
             message = self.tr("notify.update_found", ver=rel["tag"])
             excerpt = updater.changelog_excerpt(rel.get("body"))
@@ -44,6 +64,13 @@ class UpdateActions(ServiceHost):
         if (self.cfg.get("auto_update") == "auto"
                 and self.state == STATE_IDLE):
             self.apply_pending_update()
+
+    def _note_failed_check(self, manual: bool) -> None:
+        """``error`` only after a manual check; a stale error clears on its own."""
+        if manual:
+            self.update_check_state = UPDATE_ERROR
+        elif self.update_check_state == UPDATE_ERROR:
+            self.update_check_state = UPDATE_IDLE
 
     def open_release_notes(self) -> bool:
         """Tray: what changed in the pending release, in the browser."""
@@ -75,6 +102,8 @@ class UpdateActions(ServiceHost):
         if not rel or self._update_busy:
             return False
         if self.state != STATE_IDLE:
+            self.update_check_tag = rel["tag"]
+            self.update_check_state = UPDATE_DEFERRED
             if self.tray:
                 self.tray.notify(self.tr("notify.update_later", ver=rel["tag"]))
             return False
@@ -87,6 +116,8 @@ class UpdateActions(ServiceHost):
             return False
         self._update_busy = True
         tag = rel["tag"]
+        self.update_check_tag = tag
+        self.update_check_state = UPDATE_APPLYING
 
         def _work() -> None:
             import updater
@@ -115,18 +146,25 @@ class UpdateActions(ServiceHost):
             self._set_state(STATE_IDLE)
             self._update_busy = False
             if ok:
+                self.update_check_state = UPDATE_IDLE
                 self._restart_after_update(tag)
-            elif self.tray:
-                self.tray.notify(self.tr("notify.update_install_fail", ver=tag))
+            else:
+                self.update_check_state = UPDATE_INSTALL_FAILED
+                if self.tray:
+                    self.tray.notify(
+                        self.tr("notify.update_install_fail", ver=tag))
 
         threading.Thread(target=_work, daemon=True).start()
         return True
 
     def dismiss_pending_update(self) -> None:
         self.pending_update = None
+        self.update_check_tag = ""
+        self.update_check_state = UPDATE_IDLE
 
     def check_updates_now(self) -> None:
         """Settings button: manual check with a visible result."""
+        self.update_check_state = UPDATE_CHECKING
         threading.Thread(target=self.check_updates, args=(True,),
                          daemon=True).start()
 

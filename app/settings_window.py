@@ -22,6 +22,7 @@ import onboarding
 import snippets
 import snippets_ui
 import stats_ui
+import update_control
 import window_layout
 import winfx
 from config import DEFAULTS, LANG_NAMES, LANGS, MODEL_GB, MODELS, VERSION
@@ -294,6 +295,10 @@ class SettingsWindow:
         self._style_scrollbar()
         self._build_header()
         self._build_search()
+        self.update_control = update_control.UpdateControl(
+            self._header, svc=self.svc, tr=self.tr, px=self._px,
+            version=VERSION, bg=BG, fg=FG, dim=DIM, field_bg=FIELD_BG,
+            accent=ACCENT, before=self._search_row)
         frames = self._create_panes()
         self._build_record_tab(frames["record"])
         self._build_keys_tab(frames["keys"])
@@ -1040,12 +1045,6 @@ class SettingsWindow:
         self._bind(f, self.v_upd_auto, self.tr("updates.install_auto"))
         self.v_upd_h = tk.IntVar(value=int(c.get("update_interval_h", 2)))
         self._row(f, self.tr("updates.interval"), self._scale(f, 1, 24, 1, self.v_upd_h))
-        btn_upd = tk.Button(f, text=self.tr("updates.check_now"),
-                            command=self.svc.check_updates_now, width=16,
-                            bg="#22262E", fg=FG, relief="flat",
-                            activebackground="#2A2F38", activeforeground=FG,
-                            cursor="hand2")
-        self._full(f, btn_upd)
         self.ram_lbl = tk.Label(f, text="", font=("Segoe UI", 9),
                                 fg="#9FE0A8", bg=BG, anchor="w")
         self.ram_lbl.grid(row=self.rows[f], column=0, columnspan=2,

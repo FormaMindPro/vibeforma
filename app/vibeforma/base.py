@@ -25,6 +25,8 @@ class ServiceHost:
     history: Any
     stats: Any
     pending_update: dict[str, Any] | None
+    update_check_state: str
+    update_check_tag: str
     _state_lock: threading.Lock
     _running: bool
     _partial_busy: bool

@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.4.3 — 2026-11-23
+
+### Added
+- **The update check is always in sight.** The settings window header now
+  carries the running version and a Check for updates button next to it on
+  every page. A click checks GitHub and answers right in the window: the
+  latest version, an available release with Download and Later, a network
+  failure, or a request to wait while a recording finishes. Download runs
+  the same installation command as before and restarts the app; Later
+  dismisses the offer until the next check. The duplicate check button at
+  the bottom of the System page is gone; the update toggles stay.
+
 ## 0.4.2 — 2026-11-23
 
 ### Fixed
