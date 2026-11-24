@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from typing import Any
 
 from config import SERVICE_DIR, VERSION
 
@@ -139,15 +140,15 @@ class UpdateActions(ServiceHost):
     def _source_checkout(self) -> bool:
         """Whether the service runs from a git checkout, not an install."""
         import updater
-        return updater.is_source_checkout(SERVICE_DIR)
+        return bool(updater.is_source_checkout(SERVICE_DIR))
 
-    def _note_source_checkout(self, rel: dict) -> None:
+    def _note_source_checkout(self, rel: dict[str, Any]) -> None:
         self.log.info("Update %s skipped: the service runs from a source "
                       "checkout", rel["tag"])
         self.update_check_tag = rel["tag"]
         self.update_check_state = UPDATE_SOURCE_CHECKOUT
 
-    def _note_deferred(self, rel: dict) -> None:
+    def _note_deferred(self, rel: dict[str, Any]) -> None:
         self.update_check_tag = rel["tag"]
         self.update_check_state = UPDATE_DEFERRED
         if self.tray:
@@ -169,7 +170,7 @@ class UpdateActions(ServiceHost):
             return
         self.apply_pending_update(manual=False)
 
-    def _prepare_update(self, rel: dict) -> tuple[str, str]:
+    def _prepare_update(self, rel: dict[str, Any]) -> tuple[str, str]:
         """Download the zip and SHA256SUMS; return verified local paths.
 
         The zip keeps its asset name, so the sums line matches it. A missing
