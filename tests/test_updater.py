@@ -1,4 +1,5 @@
 """Updater pure logic: version parsing, comparison, release parsing offline."""
+import hashlib
 import json
 
 import pytest
@@ -62,6 +63,7 @@ def test_latest_release_picks_the_zip_asset(monkeypatch):
     assert release["tag"] == "v0.2.0"
     assert release["version"] == (0, 2, 0)
     assert release["zip"] == "https://x/z"
+    assert release["sums"] == "https://x/sums"
     assert release["body"] == "## Added\n- Doctor"
 
 
@@ -97,4 +99,60 @@ def test_latest_release_without_zip_asset(monkeypatch):
         "assets": [],
     }))
 
-    assert updater.latest_release()["zip"] is None
+    release = updater.latest_release()
+    assert release["zip"] is None
+    assert release["sums"] is None
+
+
+def test_parse_sha256sums_reads_lines_and_skips_garbage():
+    digest = "a" * 64
+    text = (digest + "  VibeForma-0.4.4.zip\n"
+            + digest.upper() + " *VibeForma-0.4.4.zip.sig\n"
+            + "\n"
+            + "not-a-hash  file.zip\n"
+            + "b" * 64 + "\n")
+
+    assert updater.parse_sha256sums(text) == {
+        "VibeForma-0.4.4.zip": digest,
+        "VibeForma-0.4.4.zip.sig": digest,
+    }
+    assert updater.parse_sha256sums(None) == {}
+
+
+def test_expected_sha256_is_lower_case_and_name_bound():
+    digest = "c" * 64
+    text = digest.upper() + "  VibeForma-0.4.4.zip\n"
+
+    assert updater.expected_sha256(text, "VibeForma-0.4.4.zip") == digest
+    assert updater.expected_sha256(text, "other.zip") is None
+    assert updater.expected_sha256("", "VibeForma-0.4.4.zip") is None
+
+
+def test_sha256_file_and_verify(tmp_path):
+    path = tmp_path / "payload.bin"
+    path.write_bytes(b"vibeforma")
+    digest = hashlib.sha256(b"vibeforma").hexdigest()
+
+    assert updater.sha256_file(str(path)) == digest
+    assert updater.verify_sha256(str(path), digest)
+    assert updater.verify_sha256(str(path), digest.upper())
+    assert not updater.verify_sha256(str(path), "0" * 64)
+    assert not updater.verify_sha256(str(path), "")
+
+
+def test_download_file_refuses_a_non_https_url(tmp_path):
+    with pytest.raises(ValueError):
+        updater.download_file("http://example.invalid/x.zip",
+                              str(tmp_path / "x.zip"))
+    assert not (tmp_path / "x.zip").exists()
+
+
+def test_is_source_checkout_needs_pyproject_and_no_marker(tmp_path):
+    service = tmp_path / "app"
+    service.mkdir()
+
+    assert not updater.is_source_checkout(str(service))
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    assert updater.is_source_checkout(str(service))
+    (service / ".vibeforma-install.json").write_text("{}", encoding="utf-8")
+    assert not updater.is_source_checkout(str(service))

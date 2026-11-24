@@ -48,9 +48,30 @@ jobs:
           print("release artifact OK: %d files" % len(names))
           PY
 
+      - name: Extract the release notes from CHANGELOG
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          config = Path("app/config.py").read_text(encoding="utf-8")
+          version = re.search(r'VERSION = "([^"]+)"', config).group(1)
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              r"^## " + re.escape(version) + r"\b.*?(?=^## |\Z)",
+              text, re.MULTILINE | re.DOTALL,
+          )
+          if not match:
+              raise SystemExit("CHANGELOG has no section for " + version)
+          notes = match.group(0).strip() + "\n"
+          Path("dist/RELEASE_NOTES.md").write_text(notes, encoding="utf-8")
+          print(notes)
+          PY
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/VibeForma-*.zip
             dist/SHA256SUMS

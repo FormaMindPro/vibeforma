@@ -534,6 +534,13 @@ class FileJobs:
             return [batch for batch in self._batches.values()
                     if batch.state not in (DONE, CANCELLED)]
 
+    def active_jobs(self) -> list[FileJob]:
+        """Every file job still unfinished, batch children included."""
+        with self._lock:
+            self._purge()
+            return [job for job in self._jobs.values()
+                    if job.state not in TERMINAL]
+
     def counts(self, batch: FileBatch) -> dict[str, int]:
         with self._lock:
             children = [self._jobs[cid] for cid in batch.children

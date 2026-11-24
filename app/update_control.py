@@ -20,6 +20,7 @@ LATEST = "latest"
 FOUND = "found"
 APPLYING = "applying"
 DEFERRED = "deferred"
+SOURCE_CHECKOUT = "source_checkout"
 ERROR = "error"
 INSTALL_FAILED = "install_failed"
 
@@ -128,6 +129,8 @@ class UpdateControl:
             return self.tr("updates.applying", tag=tag), self._dim, False
         if state == DEFERRED:
             return self.tr("updates.deferred"), self._fg, True
+        if state == SOURCE_CHECKOUT:
+            return self.tr("updates.source_checkout"), self._dim, False
         if state == INSTALL_FAILED:
             return self.tr("updates.install_failed", tag=tag), RED, False
         return self.tr("updates.failed"), RED, False

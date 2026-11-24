@@ -5,6 +5,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.4.4 — 2026-11-24
+
+### Added
+- **The release archive is verified before anything is unpacked.** The app
+  downloads `SHA256SUMS` together with the release zip, checks the hash and
+  hands the verified local files to the bootstrap through
+  `VIBEFORMA_UPDATE_ZIP` and `VIBEFORMA_UPDATE_SUMS`, never through the
+  command line. `install.ps1` verifies the archive on its own download path
+  too, and a missing sums file, a missing line or a mismatch stops the
+  install before unpacking.
+- **Updates wait for file work.** An update is deferred while a recording
+  is in flight or `FileJobs` still has an unfinished single job or folder
+  batch; in `auto` mode it retries by itself once the work completes. The
+  deferred text and the notification name the recording or transcription.
+- **Release notes come from the CHANGELOG.** The release workflow writes the
+  current version's section into `RELEASE_NOTES.md` and attaches it as the
+  GitHub release body, so a release is never published empty.
+
+### Changed
+- **A source checkout says so.** Running from a git checkout (a
+  `pyproject.toml` beside `app/`, no install marker) shows a clear
+  `source_checkout` state instead of installing a release zip over the
+  sources; an installed copy updates as before.
+- The updates documentation page describes the job-aware deferral and the
+  checksum check before unpacking.
+
+### Fixed
+- **A failed relaunch no longer tears the service down.** The service shuts
+  down only after the new process really started; when the spawn fails it
+  keeps running and reports a failed install, and the interpreter is looked
+  up in the installed copy and then in the parent dev clone.
+
 ## 0.4.3 — 2026-11-23
 
 ### Added

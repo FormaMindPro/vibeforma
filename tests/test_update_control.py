@@ -143,6 +143,18 @@ def test_deferred_keeps_the_offer_visible(panel):
     assert str(control.button.cget("state")) == "normal"
 
 
+def test_source_checkout_explains_and_keeps_the_button(panel):
+    _root_, svc, control = panel
+    svc.update_check_state = "source_checkout"
+    svc.update_check_tag = "v0.4.4"
+    control.refresh()
+    assert control.status.cget("text") == "updates.source_checkout"
+    assert control.row.winfo_manager() == "pack"
+    assert control.download.winfo_manager() == ""
+    assert control.later.winfo_manager() == ""
+    assert str(control.button.cget("state")) == "normal"
+
+
 def test_applying_disables_the_button(panel):
     _root_, svc, control = panel
     svc.update_check_state = "applying"

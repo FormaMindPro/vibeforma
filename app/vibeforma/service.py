@@ -54,6 +54,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._partial_busy = False
         self._cancel_evt = threading.Event()
         self._update_busy = False
+        self._update_failed = False
         self._test_mode = False
         self._panel_mode = False
         self._draft_busy = False
@@ -131,11 +132,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 state in (STATE_RECORDING, STATE_PROCESSING))
         if self.tray:
             self.tray.set_state(state)
-        if (state == STATE_IDLE and self.pending_update
-                and self.cfg.get("auto_update") == "auto"
-                and not self._update_busy):
-            threading.Thread(target=self.apply_pending_update,
-                             daemon=True).start()
+        self._maybe_apply_pending_update()
 
     def _sync_cancel_watcher(self, state: str) -> None:
         """The global Esc binding lives only while a dictation is in flight.
@@ -803,6 +800,8 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         if self.tray:
             with contextlib.suppress(Exception):
                 self.tray.set_state(self.state)
+        if job.state in ("done", "error", "cancelled", "skipped"):
+            self._maybe_apply_pending_update()
 
     def _on_batch_event(self, batch: Any) -> None:
         """The batch snapshot the HUD panel reads; one notice at the end."""
@@ -872,6 +871,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             self.set_last(message)
             if self.tray:
                 self.tray.notify(message)
+            self._maybe_apply_pending_update()
 
     def has_active_batch(self) -> bool:
         jobs = self.file_jobs

@@ -31,6 +31,7 @@ class ServiceHost:
     _running: bool
     _partial_busy: bool
     _update_busy: bool
+    _update_failed: bool
     _test_mode: bool
     _panel_mode: bool
     _draft_busy: bool
@@ -47,7 +48,9 @@ class ServiceHost:
         # Implemented by the core and by the update part of Service.
         def _set_state(self, state: str) -> None: ...
 
-        def apply_pending_update(self) -> bool: ...
+        def apply_pending_update(self, manual: bool = True) -> bool: ...
+
+        def _maybe_apply_pending_update(self) -> None: ...
 
         def check_updates(self, notify_latest: bool = False) -> None: ...
 
