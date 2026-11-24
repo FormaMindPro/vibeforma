@@ -149,8 +149,10 @@ if ($ZipPath -ne "") {
 }
 
 Write-Step "Unpacking"
-Expand-Archive -Path $archivePath -DestinationPath $tmp -Force
-$src = Get-ChildItem -Path $tmp -Directory |
+$extract = Join-Path $tmp "extract"
+if (Test-Path -LiteralPath $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
+Expand-Archive -Path $archivePath -DestinationPath $extract
+$src = Get-ChildItem -Path $extract -Directory |
     Where-Object { Test-Path (Join-Path $_.FullName "install.py") } |
     Select-Object -First 1
 if (-not $src) {
