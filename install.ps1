@@ -53,7 +53,14 @@ function Test-ArchiveHash($archive, $sumsFile) {
         Write-Host "[X] SHA256SUMS has no line for $name - nothing was unpacked."
         return $false
     }
-    $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($archive)
+    try {
+        $actual = ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
     if ($actual -ne $expected) {
         Write-Host "[X] SHA256 mismatch for $name - nothing was unpacked."
         Write-Host "    expected $expected"

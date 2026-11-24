@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+- **The bootstrap hashes archives without `Get-FileHash`.** `install.ps1`
+  computes SHA-256 through .NET, so the checksum gate works even when
+  PowerShell inherits a module path without the Windows PowerShell utility
+  modules.
+
 ## 0.4.4 — 2026-11-24
 
 ### Added
