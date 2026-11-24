@@ -320,6 +320,24 @@ The file mode adds three kinds of routes, all on `127.0.0.1` and all with the sa
 
 `/health` keeps its old fields and adds `file_mode`, `jobs_running`, `jobs_queued` and `dictation_priority`. The old `/transcribe` keeps its contract: 10 MB, one request per second, idle only. A dictation always outranks a file job: the job pauses between segments and resumes when the service is idle.
 
+## Connecting an AI agent (MCP)
+
+Settings → **AI and automation** shows the loopback endpoint, the MCP launcher and two copy buttons: the key and a ready connection block that a local AI client can be given as is. The block names the endpoint, the token, the launcher and the tools.
+
+An MCP client starts `%LOCALAPPDATA%\VibeForma\mcp.cmd` as a stdio server:
+
+```json
+{
+  "mcpServers": {
+    "vibeforma": {
+      "command": "C:\\Users\\<you>\\AppData\\Local\\VibeForma\\mcp.cmd"
+    }
+  }
+}
+```
+
+The server reads `location.json` for the actual port and `config.json` for the token, so nothing has to be hardcoded. It exposes `vibeforma_capabilities`, `vibeforma_transcribe_file` and `vibeforma_job_status`; transcription queues the file through `/jobs` and returns the text when the job finishes. The local API must be on: without it the server answers with a named refusal. The service itself stays loopback-only — the MCP server adds no listener and never sends the token anywhere.
+
 ## File transcription
 
 Audio and video files go through the same engine as dictation: mp4, mkv, mov, webm, mp3, wav, m4a. PyAV decodes them (the dependency faster-whisper already brings), so no external ffmpeg is needed. The output is text with timestamps in TXT, JSON, SRT or VTT.

@@ -30,7 +30,7 @@ PYTHON_MIN = (3, 10)
 PYTHON_MAX_EXCLUSIVE = (3, 15)
 SUPPORTED_ARCH = {"amd64", "x86_64", "arm64", "aarch64"}
 FREE_SPACE_HEADROOM_GB = 4
-PRODUCT_FILES = ("run.cmd", "requirements.txt", "requirements-cuda.txt",
+PRODUCT_FILES = ("run.cmd", "mcp.cmd", "requirements.txt", "requirements-cuda.txt",
                  "requirements.in", "requirements-cuda.in",
                  "uninstall.cmd", "uninstall.py", "test_ru.wav", "config.json")
 PRODUCT_DIRS = ("assets", "locales", "vibeforma")

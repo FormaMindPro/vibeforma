@@ -15,6 +15,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PowerShell `Expand-Archive` overload failure on some runners and keeping
   the downloaded checksum files out of the release tree.
 
+## 0.4.5 — 2026-11-24
+
+### Added
+- **An AI agent can use the local transcriber over MCP.** `app\mcp.cmd`
+  starts a stdio MCP server that finds the running service through
+  `location.json`, reads the token from `config.json` and offers three
+  tools: `vibeforma_capabilities`, `vibeforma_transcribe_file` and
+  `vibeforma_job_status`. Transcription queues the file through `/jobs` and
+  returns the text when the job finishes. No listener is added and the
+  requests are pinned to `http://127.0.0.1` with redirects refused.
+- **Settings show the connection facts.** The new section **AI and
+  automation** displays the loopback endpoint, the MCP launcher and two copy
+  buttons: the key and a ready connection block for a local AI client. The
+  key itself stays in `config.json`.
+
 ## 0.4.4 — 2026-11-24
 
 ### Added

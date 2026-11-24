@@ -25,7 +25,8 @@ import stats_ui
 import update_control
 import window_layout
 import winfx
-from config import DEFAULTS, LANG_NAMES, LANGS, MODEL_GB, MODELS, VERSION
+from config import DEFAULTS, INSTALL_DIR, LANG_NAMES, LANGS, MODEL_GB, MODELS, VERSION
+from vibeforma import connect
 
 BG = "#16181D"
 FG = "#D5D9E0"
@@ -569,6 +570,13 @@ class SettingsWindow:
             padx=self._px(18), pady=(0, self._px(2)))
         self.rows[f] += 1
 
+    def _copy_api(self, text):
+        """Put a connection fact on the clipboard and say so."""
+        self.win.clipboard_clear()
+        self.win.clipboard_append(str(text))
+        if hasattr(self, "ai_status"):
+            self.ai_status.configure(text=self.tr("settings.ai_copied"))
+
     def _scale(self, f, from_, to, resolution, var, command=None):
         return tk.Scale(f, from_=from_, to=to, resolution=resolution,
                         orient="horizontal", length=self._px(210),
@@ -1027,6 +1035,35 @@ class SettingsWindow:
                                      ValueError):
                 api_port = int(server.server_address[1])
         self._note(f, self.tr("settings.note_http_api", port=api_port))
+        self._head(f, self.tr("settings.g_ai"))
+        api_url = connect.endpoint(api_port)
+        self._note(f, self.tr("settings.note_ai_endpoint", endpoint=api_url))
+        mcp_cmd = connect.mcp_command(INSTALL_DIR)
+        self._note(f, self.tr("settings.note_ai_mcp", command=mcp_cmd))
+        if not bool(c.get("http_api", False)):
+            self._note(f, self.tr("settings.ai_off"))
+        token = str(c.get("http_token") or "")
+        if not token:
+            self._note(f, self.tr("settings.ai_no_key"))
+        self.ai_status = tk.Label(f, text="", font=("Segoe UI", 9),
+                                  fg="#9FE0A8", bg=BG, anchor="w")
+        self._full(f, self.ai_status)
+        for text_key, action in (
+            ("settings.copy_endpoint", lambda: self._copy_api(api_url)),
+            ("settings.copy_token", lambda: self._copy_api(token)),
+        ):
+            button = tk.Button(f, text=self.tr(text_key), command=action,
+                               width=24, bg="#22262E", fg=FG, relief="flat",
+                               activebackground="#2A2F38", cursor="hand2")
+            self._full(f, button)
+        instruction = self.tr("settings.ai_instruction", endpoint=api_url,
+                              token=token or "-", command=mcp_cmd)
+        copy_ai = tk.Button(f, text=self.tr("settings.copy_ai"),
+                            command=lambda: self._copy_api(instruction),
+                            width=28, bg=ACCENT, fg="white", relief="flat",
+                            activebackground="#1B6EC2", activeforeground="white",
+                            font=("Segoe UI", 10, "bold"), cursor="hand2")
+        self._full(f, copy_ai)
         self._head(f, self.tr("settings.g_hook"))
         self.v_hook = tk.StringVar(value=str(c.get("hook_command", "")))
         self._row(f, self.tr("settings.hook_command"),
