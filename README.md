@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.4.1** adds system-audio capture: transcribe what your computer plays, not only what your microphone hears. The same release keeps the speech band clean and the first word intact. See [What's new](#whats-new-in-041).
+> **VibeForma 0.4.4** verifies the release archive against `SHA256SUMS` before anything is unpacked and holds an update back while a recording or a file job is running. The releases since 0.4.1 also add the **Check for updates** button to the settings header (0.4.3) and remove the rare 10–20 s waits before the final text (0.4.2). See [What's new](#whats-new-in-044).
 
 ## What is VibeForma
 
@@ -57,14 +57,21 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, history (opt-in), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.4.4
+
+- **The release archive is verified before anything is unpacked.** The app downloads `SHA256SUMS` together with the release zip, checks the hash and hands the verified local files to the bootstrap; `install.ps1` verifies the archive on its own download path too. A missing sums file, a missing line or a mismatch stops the install before unpacking.
+- **An update waits for your work.** While a recording is in flight or `FileJobs` still has an unfinished single job or folder batch, the update is deferred; in `auto` mode it retries by itself once the work completes. The notification names the recording or transcription that is in the way.
+- **The update check is always in sight (0.4.3).** The settings window header carries the running version and a **Check for updates** button on every page, and the answer — the latest version, an available release, a network failure or a request to wait — appears right in the window. The duplicate button at the bottom of the System page is gone.
+- **The rare 10–20 s waits before the final text are gone (0.4.2).** A live partial now reads only the last 10 seconds of the take and decodes greedily at one temperature, so it no longer holds the engine lock for the whole growing buffer; the final dictation pass keeps beam 5 and a two-step temperature fallback.
+
+Release notes now come from the CHANGELOG, and a source checkout reports itself as `source_checkout` instead of installing a release zip over the sources. The full list is in [CHANGELOG.md](CHANGELOG.md).
+
 ## What's new in 0.4.1
 
 - **System audio capture.** A take can record what the computer plays instead of the microphone: choose **System audio** in Settings → Record, press the hotkey, and the default output is captured through its WASAPI loopback — Bluetooth, USB and HDMI outputs included. The same hotkey stops the take; an unavailable loopback shows a clear notification instead of an empty paste.
 - **A cleaner speech band.** The resampler from the device rate to 16 kHz now uses 127 taps with a Kaiser beta of 10: flat to 6 kHz and aliases above 9 kHz suppressed, instead of a 9 kHz tone folding to 7 kHz at −13.7 dB.
 - **The first word survives.** The VAD pad grows from 30 to 400 ms and the silence window from 250 to 1000 ms, so the beginning of a phrase and its closing punctuation are kept in both dictation and file mode.
 - **A PortAudio refresh.** When Windows re-creates an audio endpoint, the service re-reads the device table once and retries the same capture plans, so a 48 kHz WASAPI take comes back without restarting the application.
-
-The full list is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -120,7 +127,7 @@ The bootstrap installs released builds only: when no release zip can be download
 | Settings | Tabs for Recording, Hotkeys, Model & language, Dictionary, Snippets, History, Statistics, Appearance and System; changes apply to the live service. |
 | Tray | Pause, input device, model, recognition language, history, undo last insert, diagnostics and the logs folder; autostart with Windows. |
 | Privacy | Local recognition, no accounts, no telemetry; logs without dictated text or window titles; network only for the model download and optional update checks. |
-| Updates | A background check every 2 h (configurable, can be switched off); a newer release is offered, not forced; release notes in the notification; one click keeps your data. |
+| Updates | A background check every 2 h (configurable, can be switched off); the running version and a **Check for updates** button in the settings header since 0.4.3; a newer release is offered, not forced; release notes in the notification; the archive is verified against `SHA256SUMS` before anything is unpacked; an update waits while a recording or a file job is running and retries by itself in `auto` mode; one click keeps your data. |
 | Install and uninstall | One PowerShell command; a per-user install in `%LOCALAPPDATA%\VibeForma`; a Settings > Apps entry; uninstall keeps models and config unless `--remove-data`. |
 | Interface | English and Russian out of the box; drop a JSON file into `app/locales/` to add another language. |
 
@@ -142,7 +149,7 @@ This is not a rating and not advertising. The snapshot date is **23 November 202
 
 | Product | Type | Platforms | Local recognition | Dictation | File transcription | Russian UI / docs | Price / source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **VibeForma 0.4.1** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
+| **VibeForma 0.4.4** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
 | Handy | local dictation | Windows, macOS, Linux | Yes, Whisper | Yes | n/v | n/v / n/v | Free, open source |
 | Buzz | local transcription | Windows, macOS, Linux | Yes, Whisper | No | Yes | n/v / n/v | Free, open source |
 | Whispering | local or connected transcription | Windows, macOS, Linux | Yes or a provider | Yes | Yes | n/v / n/v | Free, open source |
@@ -161,7 +168,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **Local files and folders.** Audio and video are transcribed on the same engine, with timestamps and four output formats. No upload, no queue in someone else's cloud.
 - **Exact language pinning.** The model recognizes exactly the language you set. That is more predictable for Russian and mixed-vocabulary dictation than per-phrase guessing.
 - **No account, no telemetry.** There is nothing to sign in to and no server that receives audio. The network is used for the model download and optional update checks, and both are named explicitly.
-- **Small and honest.** VibeForma 0.4.1 does not pretend to be a meeting platform. Its limits are documented on a separate page.
+- **Small and honest.** VibeForma 0.4.4 does not pretend to be a meeting platform. Its limits are documented on a separate page.
 
 ### Where VibeForma is weaker
 
@@ -171,7 +178,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **No meetings, summaries, teams or billing.** Superwhisper, Wispr Flow and Descript cover scenarios VibeForma does not.
 - **No cloud models.** Everything runs on the local machine, so a very weak CPU or GPU means slower recognition; cloud products offload that cost.
 - **No mobile.** Dictation happens at a Windows desk.
-- **A smaller ecosystem and a shorter track record.** The project is at 0.4.1; the commercial products have years of releases and larger support teams.
+- **A smaller ecosystem and a shorter track record.** The project is at 0.4.4; the commercial products have years of releases and larger support teams.
 - **An unsigned installer.** Windows SmartScreen may warn; there is no code-signing certificate yet.
 
 ### How to choose
@@ -185,7 +192,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 
 ## Updating
 
-The service checks GitHub releases in the background (every 2 h by default; the switch and the interval live in Settings). When a newer release is found, a blue **Update** button appears on the monitoring panel and in the tray. One click runs the same installer as the quick start, keeps the model, dictionary, history and `config.json`, and restarts the service.
+The service checks GitHub releases in the background (every 2 h by default; the switch and the interval live in Settings). The settings window header also shows the running version and a **Check for updates** button on every page (0.4.3). When a newer release is found, a blue **Update** button appears on the monitoring panel and in the tray. One click runs the same installer as the quick start, keeps the model, dictionary, history and `config.json`, and restarts the service. The archive is checked against `SHA256SUMS` before anything is unpacked, and an update waits while a recording or a file job is running — in `auto` mode it retries by itself when the work is done (0.4.4).
 
 To update by hand, close VibeForma from the tray and run the quick-start command again. If the app lives outside the default folder, add `-Target`:
 
@@ -193,7 +200,7 @@ To update by hand, close VibeForma from the tray and run the quick-start command
 iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Target "D:\VibeForma"
 ```
 
-The update is the same GitHub release zip as the first installation; nothing else is downloaded and no extra step is required.
+The update is the same GitHub release zip as the first installation, with its `SHA256SUMS` for the check; nothing else is downloaded and no extra step is required.
 
 ## Uninstall
 
@@ -209,7 +216,7 @@ Windows 10/11, Python 3.10+ (3.12+ recommended). With an NVIDIA GPU the recognit
 irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
 ```
 
-The bootstrap downloads the latest release, unpacks it and runs the installer — everything else (venv, dependencies, model, shortcuts) happens automatically. It installs a released build only: when no release zip is available it stops and explains why instead of falling back to the main branch. Without `-Model` the model is chosen in a small dialog during install. With options:
+The bootstrap downloads the latest release together with its `SHA256SUMS`, verifies the hash, unpacks the archive and runs the installer — everything else (venv, dependencies, model, shortcuts) happens automatically. It installs a released build only: when no release zip is available it stops and explains why instead of falling back to the main branch. Without `-Model` the model is chosen in a small dialog during install. With options:
 
 ```powershell
 iex "& { $(irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1) } -Model large-v3 -NoRun"
