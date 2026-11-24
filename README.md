@@ -71,13 +71,6 @@ The same engine also transcribes audio and video files, including whole folders,
 
 Release notes now come from the CHANGELOG, and a source checkout reports itself as `source_checkout` instead of installing a release zip over the sources. The full list is in [CHANGELOG.md](CHANGELOG.md).
 
-## What's new in 0.4.1
-
-- **System audio capture.** A take can record what the computer plays instead of the microphone: choose **System audio** in Settings → Record, press the hotkey, and the default output is captured through its WASAPI loopback — Bluetooth, USB and HDMI outputs included. The same hotkey stops the take; an unavailable loopback shows a clear notification instead of an empty paste.
-- **A cleaner speech band.** The resampler from the device rate to 16 kHz now uses 127 taps with a Kaiser beta of 10: flat to 6 kHz and aliases above 9 kHz suppressed, instead of a 9 kHz tone folding to 7 kHz at −13.7 dB.
-- **The first word survives.** The VAD pad grows from 30 to 400 ms and the silence window from 250 to 1000 ms, so the beginning of a phrase and its closing punctuation are kept in both dictation and file mode.
-- **A PortAudio refresh.** When Windows re-creates an audio endpoint, the service re-reads the device table once and retries the same capture plans, so a 48 kHz WASAPI take comes back without restarting the application.
-
 ## Quick start
 
 Windows 10/11 x64, Python 3.10+ on `PATH`. One command in PowerShell:
