@@ -151,7 +151,8 @@ if ($ZipPath -ne "") {
 Write-Step "Unpacking"
 $extract = Join-Path $tmp "extract"
 if (Test-Path -LiteralPath $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
-Expand-Archive -Path $archivePath -DestinationPath $extract
+Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+[System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extract)
 $src = Get-ChildItem -Path $extract -Directory |
     Where-Object { Test-Path (Join-Path $_.FullName "install.py") } |
     Select-Object -First 1

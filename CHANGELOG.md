@@ -10,10 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   computes SHA-256 through .NET, so the checksum gate works even when
   PowerShell inherits a module path without the Windows PowerShell utility
   modules.
-- **The bootstrap unpacks without `Expand-Archive -Force`.** The archive is
-  extracted into a fresh subfolder, avoiding the PowerShell overload failure
-  on some runners and keeping the downloaded checksum files out of the
-  release tree.
+- **The bootstrap unpacks through .NET `ZipFile`.** The archive is extracted
+  into a fresh subfolder with `ZipFile.ExtractToDirectory`, avoiding the
+  PowerShell `Expand-Archive` overload failure on some runners and keeping
+  the downloaded checksum files out of the release tree.
 
 ## 0.4.4 — 2026-11-24
 
