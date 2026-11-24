@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.4.4** verifies the release archive against `SHA256SUMS` before anything is unpacked and holds an update back while a recording or a file job is running. The releases since 0.4.1 also add the **Check for updates** button to the settings header (0.4.3) and remove the rare 10–20 s waits before the final text (0.4.2). See [What's new](#whats-new-in-044).
+> **VibeForma 0.4.5** connects an AI agent over MCP: a stdio server (`mcp.cmd`) with three `vibeforma_*` tools and a new **AI and automation** settings page with a copy-ready connection block. 0.4.4 verifies the release archive against `SHA256SUMS` and holds an update back while a recording or a file job is running; 0.4.3 added the **Check for updates** button to the settings header; 0.4.2 removed the rare 10–20 s waits before the final text. See [What's new](#whats-new-in-045).
 
 ## What is VibeForma
 
@@ -53,9 +53,14 @@ The same engine also transcribes audio and video files, including whole folders,
 | Languages | pinned recognition, 26 menu codes, ~99 model languages; English/Russian UI |
 | File input | mp4, mkv, mov, webm, mp3, wav, m4a, m4b, ogg, flac |
 | Output | TXT, JSON, SRT, VTT; folder batches with a mirrored tree |
-| Integrations | CLI, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
+| Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
 | Own archive | dictionary, snippets, history (opt-in), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.4.5
+
+- **An AI agent can drive the transcriber over MCP.** `mcp.cmd` starts a stdio MCP server that finds the running service through `location.json`, reads the token from `config.json` and exposes three tools: `vibeforma_capabilities`, `vibeforma_transcribe_file` and `vibeforma_job_status`. Transcription queues the file through `/jobs` and returns the text when the job finishes. No new listener is opened: the service stays loopback-only, and with the local API off the server answers with a named refusal.
+- **The connection facts live in Settings.** The new **AI and automation** page shows the loopback endpoint, the MCP launcher and two copy buttons: the key and a ready connection block a local AI client can be given as is. The key itself stays in `config.json`.
 
 ## What's new in 0.4.4
 
@@ -149,7 +154,7 @@ This is not a rating and not advertising. The snapshot date is **23 November 202
 
 | Product | Type | Platforms | Local recognition | Dictation | File transcription | Russian UI / docs | Price / source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **VibeForma 0.4.4** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
+| **VibeForma 0.4.5** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
 | Handy | local dictation | Windows, macOS, Linux | Yes, Whisper | Yes | n/v | n/v / n/v | Free, open source |
 | Buzz | local transcription | Windows, macOS, Linux | Yes, Whisper | No | Yes | n/v / n/v | Free, open source |
 | Whispering | local or connected transcription | Windows, macOS, Linux | Yes or a provider | Yes | Yes | n/v / n/v | Free, open source |
@@ -163,12 +168,12 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 
 - **Windows-first.** Insertion into the window that was active at the hotkey, clipboard restoration, exclusion from Windows clipboard history and cloud sync, DPI-aware windows, a tray icon and a Settings > Apps entry.
 - **Russian as a first-class language.** A pinned recognition language, endonyms in the menu, a Russian interface and Russian documentation — not a translated help page bolted onto an English product.
-- **A local API, a CLI and a hook without a cloud account.** The API listens on `127.0.0.1` only and requires a token; `location.json` publishes the actual port; the CLI talks to the running service over a named pipe; `hook_command` passes the text on stdin without a shell.
+- **A local API, a CLI, a hook and an MCP server without a cloud account.** The API listens on `127.0.0.1` only and requires a token; `location.json` publishes the actual port; the CLI talks to the running service over a named pipe; `hook_command` passes the text on stdin without a shell; the MCP server hands an agent the same transcriber over stdio without opening a port.
 - **Your own archive.** Dictionary, snippets, history and statistics live in files next to `config.json`. History is opt-in and stores text; statistics store only numbers. Nothing is uploaded.
 - **Local files and folders.** Audio and video are transcribed on the same engine, with timestamps and four output formats. No upload, no queue in someone else's cloud.
 - **Exact language pinning.** The model recognizes exactly the language you set. That is more predictable for Russian and mixed-vocabulary dictation than per-phrase guessing.
 - **No account, no telemetry.** There is nothing to sign in to and no server that receives audio. The network is used for the model download and optional update checks, and both are named explicitly.
-- **Small and honest.** VibeForma 0.4.4 does not pretend to be a meeting platform. Its limits are documented on a separate page.
+- **Small and honest.** VibeForma 0.4.5 does not pretend to be a meeting platform. Its limits are documented on a separate page.
 
 ### Where VibeForma is weaker
 
@@ -178,7 +183,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **No meetings, summaries, teams or billing.** Superwhisper, Wispr Flow and Descript cover scenarios VibeForma does not.
 - **No cloud models.** Everything runs on the local machine, so a very weak CPU or GPU means slower recognition; cloud products offload that cost.
 - **No mobile.** Dictation happens at a Windows desk.
-- **A smaller ecosystem and a shorter track record.** The project is at 0.4.4; the commercial products have years of releases and larger support teams.
+- **A smaller ecosystem and a shorter track record.** The project is at 0.4.5; the commercial products have years of releases and larger support teams.
 - **An unsigned installer.** Windows SmartScreen may warn; there is no code-signing certificate yet.
 
 ### How to choose
@@ -187,7 +192,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **You need macOS or Linux** → Handy, VoiceInk (macOS) or Whispering.
 - **You need to transcribe recorded files** → VibeForma for local files and folder batches; Buzz or Whispering for transcription-first batch work.
 - **You want meetings, summaries and mobile apps** → Superwhisper, Wispr Flow or Descript.
-- **You are building an editor or agent integration** → VibeForma's [local API](#local-http-api-off-by-default) and [command line](#command-line-and-external-hook), or a commercial API service.
+- **You are building an editor or agent integration** → VibeForma's [MCP server](#connecting-an-ai-agent-mcp), [local API](#local-http-api-off-by-default) and [command line](#command-line-and-external-hook), or a commercial API service.
 - **You need an engine, not an app** → whisper.cpp or faster-whisper directly.
 
 ## Updating
@@ -388,7 +393,7 @@ Exit codes: `0` every file done or skipped, `1` a file failed or the service is 
 
 ## For agents and other harnesses
 
-Any harness - Forma Mind, Claude Code, Cursor, Codex, a PowerShell script or a Python process - uses the same OS-level contract; VibeForma does not know which one is calling.
+Any harness - Forma Mind, Claude Code, Cursor, Codex, a PowerShell script or a Python process - uses the same OS-level contract; VibeForma does not know which one is calling. A harness that speaks MCP can skip the contract entirely: see [Connecting an AI agent (MCP)](#connecting-an-ai-agent-mcp).
 
 1. Read `%LOCALAPPDATA%\VibeForma\location.json`: `launcher`, `python`, `entry` and `pipe`. No file means the service is not running.
 2. Call the launcher, or the venv python with the entry file, with `--transcribe`:
