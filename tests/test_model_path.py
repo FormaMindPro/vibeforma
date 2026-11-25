@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,28 @@ class _Log:
 
 def _explode(*_args, **_kwargs):
     raise AssertionError("a model folder must never be downloaded")
+
+
+@pytest.fixture(autouse=True)
+def _engine_stubs(monkeypatch):
+    """The pure logic needs the engine modules only as patch targets.
+
+    On a machine without the runtime wheels (the Linux CI) the test still
+    exercises folder resolution and refusal: the two modules are absent only
+    at the real engine call, which every test replaces with a fake.
+    """
+    if "huggingface_hub" not in sys.modules:
+        hub = types.ModuleType("huggingface_hub")
+        hub.snapshot_download = _explode
+        monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    if "faster_whisper" not in sys.modules:
+        engine = types.ModuleType("faster_whisper")
+
+        def _no_engine(*_args, **_kwargs):
+            raise AssertionError("the fake engine must replace WhisperModel")
+
+        engine.WhisperModel = _no_engine
+        monkeypatch.setitem(sys.modules, "faster_whisper", engine)
 
 
 def _write_model(folder: Path, *, model_bin: bytes | None = None) -> Path:

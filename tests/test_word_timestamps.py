@@ -142,6 +142,7 @@ def _wait(job, timeout=10.0):
 # -- the guard -------------------------------------------------------------
 @pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
 def test_a_file_with_a_trailing_sliver_still_yields_text():
+    pytest.importorskip("av")
     model = _AlignCrashModel(crash_after=0)
     engine = _engine(model)
 
@@ -227,6 +228,7 @@ def test_the_batched_path_retries_without_word_timestamps(monkeypatch):
 # -- the setting and the job ----------------------------------------------
 @pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
 def test_a_file_job_with_the_setting_on_ends_done(tmp_path):
+    pytest.importorskip("av")
     import file_jobs
 
     model = _AlignCrashModel(crash_after=0)
