@@ -78,3 +78,19 @@ def test_version_is_parseable():
     import updater
 
     assert updater.version_tuple(config.VERSION) is not None
+
+
+def test_load_keeps_a_model_folder_path(config_path, tmp_path):
+    model_dir = os.path.join(str(tmp_path), "own-ct2-model")
+    config_path.write_text(json.dumps({"model": model_dir}), encoding="utf-8")
+
+    cfg = config.load()
+
+    assert cfg["model"] == model_dir
+
+
+def test_save_roundtrips_a_model_folder_path(config_path, tmp_path):
+    model_dir = os.path.join(str(tmp_path), "own-ct2-model")
+    config.save({"model": model_dir})
+
+    assert config.load()["model"] == model_dir

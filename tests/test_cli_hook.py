@@ -7,6 +7,7 @@ import sys
 import time
 
 import hook
+import pytest
 from config import VERSION
 from vibeforma import app as app_mod
 from vibeforma import status as status_mod
@@ -58,6 +59,43 @@ def test_parse_flags_ignores_unknown_arguments():
 
 def test_parse_flags_last_command_wins():
     assert app_mod.parse_flags(["--toggle", "--cancel"]) == "--cancel"
+
+
+def test_transcribe_cli_carries_prompt_words_and_clip():
+    seen = {}
+
+    def client(payload, on_event=None):
+        seen.update(payload)
+        return {"event": "done", "ok": True, "job_id": "j1", "out": [],
+                "segments": 1, "duration_s": 1.0}
+
+    out, err = io.StringIO(), io.StringIO()
+    code = app_mod.run_cli(
+        "--transcribe",
+        argv=["--transcribe", "clip.mp4", "--prompt", "names: Forma",
+              "--words", "--clip", "2,5"],
+        out=out, err=err, client=client)
+
+    assert code == 0
+    assert seen["prompt"] == "names: Forma"
+    assert seen["word_timestamps"] is True
+    assert seen["clip_timestamps"] == "2,5"
+    assert "100%" in err.getvalue()
+
+    default = app_mod.parse_transcribe_args(["--transcribe", "clip.mp4"])
+    assert default["prompt"] == ""
+    assert default["word_timestamps"] is False
+    assert default["clip_timestamps"] == ""
+    with pytest.raises(app_mod.CliArgumentError):
+        app_mod.parse_transcribe_args(["--transcribe", "clip.mp4", "--prompt"])
+    with pytest.raises(app_mod.CliArgumentError):
+        app_mod.parse_transcribe_args(["--transcribe", "clip.mp4", "--clip"])
+
+
+def test_transcribe_help_names_the_agent_contract():
+    text = app_mod.transcribe_help()
+    for option in ("--prompt", "--words", "--clip"):
+        assert option in text
 
 
 def test_toggle_and_cancel_ask_the_running_instance():
@@ -261,3 +299,48 @@ def test_hook_skipped_while_command_is_empty(monkeypatch):
                         lambda *a, **kw: calls.append((a, kw)))
     svc._run_hook(TEXT)
     assert calls == []
+
+
+# -- voice actions ------------------------------------------------------
+def test_action_needs_the_whole_phrase():
+    actions = [{"trigger": "open the browser", "kind": "command"}]
+    assert hook.match_action("Open the browser.", actions) is not None
+    assert hook.match_action("please open the browser", actions) is None
+    assert hook.match_action("open the browsers", actions) is None
+    assert hook.match_action("", actions) is None
+    assert hook.match_action("open the browser", None) is None
+
+
+def test_a_phrase_in_the_project_language_matches():
+    phrase = "\u043e\u0442\u043a\u0440\u043e\u0439 \u0431\u0440\u0430\u0443\u0437\u0435\u0440"
+    actions = [{"trigger": phrase, "kind": "command"}]
+    assert hook.match_action(" " + phrase.upper() + "  ", actions) is not None
+
+
+def test_action_kind_defaults_to_a_command():
+    assert hook.normalize_actions([{"trigger": "open the browser"}]) == [
+        {"trigger": "open the browser", "kind": "command"}]
+
+
+def test_action_model_names_its_model():
+    entries = hook.normalize_actions([
+        {"trigger": "switch to small", "kind": "model", "model": "small"}])
+    assert entries == [
+        {"trigger": "switch to small", "kind": "model", "model": "small"}]
+
+
+def test_unusable_actions_are_dropped():
+    entries = hook.normalize_actions([
+        "not an entry",
+        {"trigger": "", "kind": "command"},
+        {"trigger": "no model", "kind": "model"},
+        {"trigger": "no command", "kind": "agent"},
+        {"trigger": "bad kind", "kind": "explode"},
+        {"trigger": "Open the browser", "kind": "command"},
+        {"trigger": "open the browser", "kind": "command"},
+        {"trigger": "ask the agent", "kind": "agent", "command": "agent.exe"},
+    ])
+    assert entries == [
+        {"trigger": "Open the browser", "kind": "command"},
+        {"trigger": "ask the agent", "kind": "agent", "command": "agent.exe"},
+    ]

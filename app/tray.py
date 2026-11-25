@@ -112,6 +112,9 @@ class Tray:
                     lambda item: service.tr("tray.history"),
                     lambda *a: service.open_settings("history")),
                 pystray.MenuItem(
+                    lambda item: service.tr("tray.retranscribe_last"),
+                    self._on_retranscribe_last),
+                pystray.MenuItem(
                     lambda item: service.tr("tray.undo"),
                     lambda *a: service.undo_last()),
                 pystray.MenuItem(
@@ -156,6 +159,10 @@ class Tray:
 
     def _on_settings(self, icon, item):
         self.service.open_settings()
+
+    def _on_retranscribe_last(self, icon, item):
+        # The dialog and the pass load a model: the menu thread stays free.
+        self.service.retranscribe_last_dialog()
 
     def _on_pause(self, icon, item):
         self.service.toggle_pause()

@@ -3,7 +3,10 @@ import contextlib
 import json
 import os
 
-VERSION = "0.4.5"
+import dictionary
+import snippets
+
+VERSION = "0.5.0"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # The service folder holds run.cmd and main.py both in a source checkout
@@ -79,19 +82,24 @@ DEFAULTS = {
     "hold_to_talk": False,              # hotkey held while talking, released to stop
     "input_device": "",                 # substring of the device name
     "audio_source": "microphone",       # microphone | system
-    "model": "large-v3-turbo",
+    "model": "large-v3-turbo",          # catalog name, HF repo id, or a CT2 model folder
     "device": "cuda",
     "compute_type": "float16",
     "language": "en",                   # pinned exactly: a LANGS code, never guessed
     "locale": "auto",                   # UI language: auto = follow Windows
     "hotwords": "",                     # terms appended to the prompt (user-local)
+    "dictation_context": False,         # previous phrase + selected text as hotwords (opt-in)
     "dictionary": [],                   # {"from", "to"} pairs, post-ASR replacements
     "snippets": [],                     # {"trigger", "text"} pairs, post-ASR expansion
+    "app_profiles": [],                 # per-app dictionary and snippets (card-251)
     "text_rules": False,                # backtrack and spoken lists (opt-in)
+    "text_cleanup": False,              # numbers, fillers, capitals (opt-in)
     "history": False,                   # keep a local dictation history (opt-in)
     "history_app": False,               # remember the target app in the history
+    "history_audio": False,             # keep the WAV of each dictation (opt-in)
     "auto_stop": True,
     "silence_ms": 2000,                 # phrase-closing pause
+    "continuous": True,                 # long dictation: no max_record_s cut; chunks at pauses
     "max_record_s": 120,
     "partial_every_s": 1.5,             # live partial transcribe period (HUD)
     "hud": True,                        # live monitoring panel
@@ -112,6 +120,7 @@ DEFAULTS = {
     "http_token": "",                   # required when http_api is on
     "hook_command": "",                 # external command: text on stdin (opt-in)
     "hook_timeout_s": 5,                # hook run limit, kept inside 1-30 s
+    "actions": [],                      # voice actions: whole phrase -> command/model/agent
 
     # File mode: the same engine takes a path, not a microphone.
     "file_roots": [],                   # empty: every local fixed/removable disk
@@ -148,6 +157,119 @@ def save(cfg):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG_PATH)
+
+
+# -- by-app profiles (card-251) ---------------------------------------------
+# One profile binds a window to its own dictionary and snippets: the
+# process name ("Code.exe" or "code"), a window-title fragment, or both. A
+# take is matched by the address captured at recording start, so the
+# profile follows the window the person spoke into, not the one active later.
+MAX_APP_PROFILES = 50
+MAX_PROFILE_NAME = 80
+MAX_PROFILE_PROCESS = 120
+MAX_PROFILE_WINDOW = 200
+
+
+def _profile_text(value):
+    """A profile string field, stripped; anything else is empty."""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _clean_app_profile(entry):
+    """One profile as a dict, or None when it names no target.
+
+    The dictionary and the snippets use the same normalization as the global
+    lists, so a profile can never carry a malformed pair. A missing name
+    falls back to the target; the settings tab shows that name.
+    """
+    if not isinstance(entry, dict):
+        return None
+    process = _profile_text(entry.get("process"))
+    window = _profile_text(entry.get("window"))
+    if not process and not window:
+        return None
+    name = _profile_text(entry.get("name")) or process or window
+    return {
+        "name": name[:MAX_PROFILE_NAME],
+        "process": process[:MAX_PROFILE_PROCESS],
+        "window": window[:MAX_PROFILE_WINDOW],
+        "dictionary": dictionary.normalize(entry.get("dictionary")),
+        "snippets": snippets.normalize(entry.get("snippets")),
+    }
+
+
+def normalize_app_profiles(profiles):
+    """Clean the by-app profile list: targets kept, names deduped, capped."""
+    out = []
+    seen = set()
+    for item in profiles or []:
+        profile = _clean_app_profile(item)
+        if profile is None:
+            continue
+        key = profile["name"].casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(profile)
+        if len(out) >= MAX_APP_PROFILES:
+            break
+    return out
+
+
+def validate_app_profiles(profiles):
+    """Format problems in the raw profile list: [{level, code, profile}].
+
+    Codes: "format" (not an object, or neither a process nor a window
+    target) and "duplicate" (the name repeats an earlier profile). The
+    broken entries are dropped by normalization; the report exists for the
+    settings tab, so a typo never disappears silently.
+    """
+    issues = []
+    seen = set()
+    for item in profiles or []:
+        profile = _clean_app_profile(item)
+        if profile is None:
+            name = _profile_text(item.get("name")) if isinstance(item, dict) else ""
+            issues.append({"level": "error", "code": "format", "profile": name})
+            continue
+        key = profile["name"].casefold()
+        duplicate = key in seen
+        seen.add(key)
+        if duplicate:
+            issues.append({"level": "error", "code": "duplicate",
+                           "profile": profile["name"]})
+    return issues
+
+
+def _exe_stem(value):
+    """A process name without a folder or the ".exe" suffix, casefolded."""
+    base = str(value or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    base = base.casefold()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def app_profile_matches(profile, process="", title=""):
+    """True when every target the profile names matches this window.
+
+    A profile with only a process ignores the title; one with only a window
+    fragment ignores the process; both set must both match. An empty window
+    or process never satisfies a rule that needs it.
+    """
+    wanted_process = _exe_stem(profile.get("process"))
+    wanted_window = str(profile.get("window") or "").casefold()
+    if not wanted_process and not wanted_window:
+        return False
+    if wanted_process and _exe_stem(process) != wanted_process:
+        return False
+    return not (wanted_window and wanted_window not in str(title or "").casefold())
+
+
+def match_app_profile(profiles, process="", title=""):
+    """The first profile this window matches, or None (global rules apply)."""
+    for profile in normalize_app_profiles(profiles):
+        if app_profile_matches(profile, process, title):
+            return profile
+    return None
 
 
 def bootstrap_cuda_dlls():

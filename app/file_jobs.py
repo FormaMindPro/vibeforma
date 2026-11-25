@@ -295,6 +295,10 @@ class FileJob:
     state: str = QUEUED
     progress: float = 0.0
     segments: list[Segment] = field(default_factory=list)
+    # Engine options an agent named; None/"" keeps the configured behavior.
+    prompt: str = ""
+    word_timestamps: bool | None = None
+    clip_timestamps: str = ""
     error: str | None = None
     duration: float = 0.0
     outputs: list[str] = field(default_factory=list)
@@ -360,12 +364,20 @@ class FileJobs:
     def submit(self, source: str, *, language: str = "", model: str = "",
                formats: list[str] | None = None, force: bool = False,
                out: str = "", temporary: bool = False,
+               prompt: str = "", word_timestamps: bool | None = None,
+               clip_timestamps: str | list[float] | None = None,
                trusted: bool = False) -> FileJob:
         """Queue one file; the source is validated now, not in the worker.
 
         ``trusted`` is the tray dialog: the person picked the file, so the
         ``file_roots`` restriction does not apply. Every agent-named path
         goes through ``resolve_source``.
+
+        ``prompt``, ``word_timestamps`` and ``clip_timestamps`` are the
+        agent contract: an explicit prompt replaces the configured one for
+        this job, None keeps the config's word-timestamp setting, and the
+        clip range is parsed here so a malformed one is refused before a
+        job exists.
         """
         if trusted:
             resolved = os.path.realpath(str(source or ""))
@@ -381,12 +393,18 @@ class FileJobs:
             if name not in transcript.FORMATS:
                 raise ValueError(f"unknown format: {name}")
         import asr as asr_mod
+        clip = asr_mod.format_clip_timestamps(
+            asr_mod.parse_clip_timestamps(clip_timestamps))
         requested = asr_mod.check_model(model, str(self.cfg.get("model") or ""))
         job = FileJob(id=uuid.uuid4().hex[:16], source=resolved,
                       language=str(language or ""), model=requested,
                       engine_model=self._engine_model(),
                       formats=names, force=bool(force), out=resolve_out(out),
-                      temporary=bool(temporary), created_at=self.clock())
+                      temporary=bool(temporary), created_at=self.clock(),
+                      prompt=str(prompt or ""),
+                      word_timestamps=(None if word_timestamps is None
+                                       else bool(word_timestamps)),
+                      clip_timestamps=clip)
         with self._lock:
             self._jobs[job.id] = job
             self._order.append(job.id)
@@ -837,13 +855,17 @@ class FileJobs:
         self._emit(job)
         self.log.info("File job %s started: %s, formats=%s", job.id,
                       job.source, ",".join(job.formats) or "-")
-        word_ts = bool(self.cfg.get("file_word_timestamps", False))
+        word_ts = (bool(job.word_timestamps)
+                   if job.word_timestamps is not None
+                   else bool(self.cfg.get("file_word_timestamps", False)))
         try:
             limit = float(self.cfg.get("file_max_s") or 0.0)
             stream = self.asr.transcribe_file(
                 job.source,
                 language=job.language or None,
                 word_timestamps=word_ts,
+                initial_prompt=job.prompt or None,
+                clip_timestamps=job.clip_timestamps or None,
                 max_s=limit or None,
                 on_progress=lambda value: self._progress(job, value),
                 on_duration=self._set_duration(job),

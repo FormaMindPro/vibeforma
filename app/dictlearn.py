@@ -169,6 +169,25 @@ def suggestions(path=None, threshold=MIN_COUNT):
         return []
 
 
+def frequency(path=None):
+    """How often each target form was corrected: {casefolded ``to``: count}.
+
+    The recognition prompt ranks dictionary terms by this before the token
+    budget is filled, so the terms a person fixes most often reach every
+    window first. A missing or broken store means no ranking, never a failed
+    transcription.
+    """
+    try:
+        rows = Corrections(path).suggestions(1)
+    except Exception:  # noqa: BLE001 - a broken store never breaks recognition
+        return {}
+    weights = {}
+    for row in rows:
+        key = row["to"].casefold()
+        weights[key] = weights.get(key, 0) + row["count"]
+    return weights
+
+
 def add_pair(cfg, save, from_text, to_text):
     """The one place a confirmed pair enters the dictionary.
 

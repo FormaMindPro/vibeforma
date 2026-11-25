@@ -52,6 +52,9 @@ def transcribe_help() -> str:
         "  --lang <code>          recognition language, e.g. ru, en (default: config)\n"
         "  --format <name>        txt | json | srt | vtt | all (default: srt)\n"
         "  --out <path>           write the result there instead of beside the file\n"
+        "  --prompt <text>        recognition hint for this file (default: config)\n"
+        "  --words                ask for word-level timestamps and probabilities\n"
+        "  --clip <start[,end]>   transcribe only that time range, in seconds\n"
         "  --json                 machine-readable answer on stdout\n"
         "  --force                overwrite an existing output file\n"
         "  --help                 print this contract\n"
@@ -128,6 +131,7 @@ def parse_transcribe_args(argv: Sequence[str]) -> dict[str, Any]:
     """
     options: dict[str, Any] = {
         "path": "", "language": "", "formats": [], "out": "",
+        "prompt": "", "word_timestamps": False, "clip_timestamps": "",
         "json": False, "force": False, "help": False,
     }
     args = list(argv)
@@ -143,6 +147,18 @@ def parse_transcribe_args(argv: Sequence[str]) -> dict[str, Any]:
             if index >= len(args):
                 raise CliArgumentError("--lang needs a value")
             options["language"] = args[index].strip()
+        elif arg == "--prompt":
+            index += 1
+            if index >= len(args):
+                raise CliArgumentError("--prompt needs a value")
+            options["prompt"] = args[index]
+        elif arg in ("--words", "--word-timestamps"):
+            options["word_timestamps"] = True
+        elif arg in ("--clip", "--clip-timestamps"):
+            index += 1
+            if index >= len(args):
+                raise CliArgumentError("--clip needs a value")
+            options["clip_timestamps"] = args[index].strip()
         elif arg == "--format":
             index += 1
             if index >= len(args):
@@ -223,6 +239,10 @@ def run_transcribe(argv: Sequence[str], *, out: TextIO | None = None,
         "formats": options["formats"],
         "out": options["out"],
         "force": options["force"],
+        "prompt": options["prompt"],
+        # Absent means "follow the config", only an explicit flag overrides it.
+        "word_timestamps": True if options["word_timestamps"] else None,
+        "clip_timestamps": options["clip_timestamps"],
     }
     try:
         answer = send(payload, on_event=on_event)

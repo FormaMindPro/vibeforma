@@ -49,6 +49,7 @@ ALLOWED_FILES = {
     "tests/test_errors.py",
     "tests/test_history_table.py",
     "tests/test_installer_language.py",
+    "tests/wer/manifest.json",
 }
 
 SKIP_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "models", "logs"}

@@ -176,6 +176,23 @@ def _form_text(fields: dict[str, tuple[str, bytes]], key: str,
     return item[1].decode("utf-8", errors="replace").strip()
 
 
+def _form_bool(fields: dict[str, tuple[str, bytes]], key: str) -> bool | None:
+    """A multipart flag: None when absent, so the configured default applies."""
+    raw = _form_text(fields, key, "").lower()
+    if not raw:
+        return None
+    return raw in ("1", "true", "yes", "on")
+
+
+def _json_bool(value: Any) -> bool | None:
+    """A JSON flag: a bool stays as it is, a string is read like a form one."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
                    ) -> ThreadingHTTPServer | None:
     """GET /health, POST /transcribe, /capabilities, /v1 and /jobs.
@@ -243,6 +260,10 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
         return str(getattr(svc, "state", "")) == STATE_IDLE
 
     def job_payload(job: Any) -> dict[str, Any]:
+        requested_words = getattr(job, "word_timestamps", None)
+        applied_words = (bool(requested_words)
+                         if requested_words is not None
+                         else bool(cfg.get("file_word_timestamps", False)))
         return {
             "id": job.id,
             "state": job.state,
@@ -253,6 +274,9 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
             "duration_s": round(float(job.duration), 3),
             "segments": len(job.segments),
             "outputs": list(job.outputs),
+            "prompt": getattr(job, "prompt", ""),
+            "word_timestamps": applied_words,
+            "clip_timestamps": getattr(job, "clip_timestamps", ""),
             "error": job.error,
         }
 
@@ -372,6 +396,8 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
                     "version": VERSION,
                     "file_mode": True,
                     "word_timestamps": True,
+                    "prompt": True,
+                    "clip_timestamps": True,
                     "formats": list(FILE_FORMATS),
                     "models": list(MODELS),
                     "model": str(cfg.get("model") or ""),
@@ -543,6 +569,20 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
                 self._json(400, {"ok": False, "error": "unknown response_format"})
                 return
             language = _form_text(fields, "language", "")
+            clip = _form_text(fields, "clip_timestamps", "")
+            try:
+                clip = asr_mod.format_clip_timestamps(
+                    asr_mod.parse_clip_timestamps(clip))
+            except ValueError as e:
+                self._json(400, {"ok": False, "error": str(e)})
+                return
+            granularities = " ".join((
+                _form_text(fields, "timestamp_granularities[]", ""),
+                _form_text(fields, "timestamp_granularities", ""),
+            )).replace(",", " ")
+            words_on = bool(_form_bool(fields, "word_timestamps"))
+            if "word" in granularities.lower().split():
+                words_on = True
             if not service_idle():
                 self._json(409, {"ok": False, "error": "dictation in progress"})
                 return
@@ -569,7 +609,9 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
                     return
                 segments = list(svc.asr.transcribe_array(
                     audio, duration, language=language or None,
-                    initial_prompt=prompt or None, temperature=temperature))
+                    initial_prompt=prompt or None, temperature=temperature,
+                    word_timestamps=words_on,
+                    clip_timestamps=clip or None))
                 meta = {"language": language, "model": actual_model(),
                         "duration": duration}
                 if fmt == "json":
@@ -605,40 +647,65 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
             if body is None:
                 return
             ctype = self.headers.get("Content-Type") or ""
+            multipart = ctype.split(";")[0].strip().lower().startswith(
+                "multipart/")
             language = ""
             model = ""
             formats: list[str] = []
+            prompt = ""
+            word_ts: bool | None = None
+            clip_value: str | list[float] | None = None
+            filename = ""
+            data = b""
             source = ""
             temporary = False
             try:
-                if ctype.split(";")[0].strip().lower().startswith("multipart/"):
+                if multipart:
                     fields = _parse_multipart(body, ctype)
                     if "file" not in fields:
                         self._json(400, {"ok": False,
                                          "error": "file field is missing"})
                         return
                     filename, data = fields["file"]
-                    suffix = os.path.splitext(filename)[1] or ".bin"
-                    fd, source = tempfile.mkstemp(prefix="_file_job_",
-                                                  suffix=suffix, dir=LOG_DIR)
-                    with os.fdopen(fd, "wb") as f:
-                        f.write(data)
-                    temporary = True
                     language = _form_text(fields, "language", "")
                     model = _form_text(fields, "model", "")
                     formats = [f.strip().lower() for f in
                                _form_text(fields, "formats", "").replace(
                                    " ", ",").split(",") if f.strip()]
+                    prompt = _form_text(fields, "prompt", "")
+                    word_ts = _form_bool(fields, "word_timestamps")
+                    clip_value = _form_text(fields, "clip_timestamps", "")
                 else:
                     payload = json.loads(body.decode("utf-8"))
                     source = str(payload.get("path") or "")
                     language = str(payload.get("language") or "")
                     model = str(payload.get("model") or "")
                     formats = [str(f).lower() for f in payload.get("formats") or []]
+                    prompt = str(payload.get("prompt") or "")
+                    word_ts = _json_bool(payload.get("word_timestamps"))
+                    clip_value = payload.get("clip_timestamps")
             except (ValueError, TypeError, KeyError) as e:
                 self._json(400, {"ok": False, "error": str(e)})
                 return
+            if len(prompt) > PROMPT_MAX_CHARS:
+                self._json(400, {"ok": False,
+                                 "error": (f"prompt is longer than "
+                                           f"{PROMPT_MAX_CHARS} characters")})
+                return
             import asr as asr_mod
+            try:
+                clip = asr_mod.format_clip_timestamps(
+                    asr_mod.parse_clip_timestamps(clip_value))
+            except ValueError as e:
+                self._json(400, {"ok": False, "error": str(e)})
+                return
+            if multipart:
+                suffix = os.path.splitext(filename)[1] or ".bin"
+                fd, source = tempfile.mkstemp(prefix="_file_job_",
+                                              suffix=suffix, dir=LOG_DIR)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                temporary = True
             queue = jobs_queue()
             if queue is None:
                 if temporary and source:
@@ -648,7 +715,9 @@ def start_http_api(cfg: dict[str, Any], svc: Any, log: Any,
                 return
             try:
                 job = queue.submit(source, language=language, model=model,
-                                   formats=formats, temporary=temporary)
+                                   formats=formats, temporary=temporary,
+                                   prompt=prompt, word_timestamps=word_ts,
+                                   clip_timestamps=clip)
             except asr_mod.ModelNotInstalled as e:
                 if temporary and source:
                     with contextlib.suppress(OSError):

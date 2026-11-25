@@ -15,13 +15,24 @@ from .base import ServiceHost
 
 class HistoryActions(ServiceHost):
     # -- dictionary / history ----------------------------------------------
-    def _remember(self, text: str, way: str = history.WAY_INSERT) -> None:
-        """Write the dictation to the local history when the user opted in."""
+    def _remember(self, text: str, way: str = history.WAY_INSERT,
+                  wav: bytes | None = None) -> None:
+        """Write the dictation to the local history when the user opted in.
+
+        ``wav`` is the take's WAV bytes; it is stored only when the audio
+        option is on, and dropped silently otherwise so a caller can never
+        put sound on disk against the setting.
+        """
         if not self.cfg.get("history", False):
             return
+        if not self.cfg.get("history_audio", False):
+            wav = None
         app = self._target_title if self.cfg.get("history_app", False) else ""
         try:
-            self.history.add(text, app=app, way=way)
+            if wav:
+                self.history.add(text, app=app, way=way, wav=wav)
+            else:
+                self.history.add(text, app=app, way=way)
         except Exception as e:  # noqa: BLE001 - a broken history file must not break dictation
             self.log.warning("History write failed: %s", e)
 

@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.4.5** connects an AI agent over MCP: a stdio server (`mcp.cmd`) with three `vibeforma_*` tools and a new **AI and automation** settings page with a copy-ready connection block. 0.4.4 verifies the release archive against `SHA256SUMS` and holds an update back while a recording or a file job is running; 0.4.3 added the **Check for updates** button to the settings header; 0.4.2 removed the rare 10–20 s waits before the final text. See [What's new](#whats-new-in-045).
+> **VibeForma 0.5.0** brings the engine forward: live subtitles of system audio, a **Recognize more precisely** retry for a doubtful draft, continuous dictation without the 120 s cut, per-app dictionary and snippet profiles, optional text cleanup, history with sound and re-recognition of the last take, voice actions and sentence-level SRT/VTT. 0.4.5 connects an AI agent over MCP with a ready connection block in settings. See [What's new](#whats-new-in-050).
 
 ## What is VibeForma
 
@@ -49,27 +49,31 @@ The same engine also transcribes audio and video files, including whole folders,
 | Platform | Windows 10/11 x64, ARM64 supported |
 | Recognition | local faster-whisper; CUDA float16 or CPU int8 |
 | Models | large-v3, large-v3-turbo, medium, small — switch without restart |
-| Dictation | global hotkey, toggle or hold-to-talk, VAD auto-stop, `Esc` to cancel |
-| Languages | pinned recognition, 26 menu codes, ~99 model languages; English/Russian UI |
+| Dictation | global hotkey, toggle or hold-to-talk, VAD auto-stop, continuous mode without the 120 s cut, `Esc` to cancel |
+| System audio | live subtitles of the default output in the panel; nothing inserted, no file written yet |
+| Languages | pinned recognition, 26 menu codes, ~99 model languages, a punctuation preset for every menu code; English/Russian UI |
 | File input | mp4, mkv, mov, webm, mp3, wav, m4a, m4b, ogg, flac |
-| Output | TXT, JSON, SRT, VTT; folder batches with a mirrored tree |
+| Output | TXT, JSON, SRT, VTT cut by sentences; folder batches with a mirrored tree |
 | Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
-| Own archive | dictionary, snippets, history (opt-in), statistics — files next to `config.json` |
+| Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.5.0
+
+- **Live subtitles of system audio.** Switch the sound source to **System audio** and the hotkey starts a take that shows the last phrases in the panel instead of inserting text: no auto-stop, no 120 s cut, a 30 s buffer, a stop with the second hotkey, and nothing in the active window, the draft or the history. Two live takes of 409.5 s and 844.4 s held. Honest limits: the filter drops only short stop phrases and repeated loops, so invented text over music can still reach the plate, and no audio or subtitle file is written yet — that is the next round.
+- **A doubtful phrase offers "Recognize more precisely".** A low-confidence or `temperature > 0` pass waits in the draft with the doubtful words underlined; the button re-runs the same recording through the same model with beam 10 and temperature 0, and **Restore previous** returns the exact prior text. The rollback is one level, and the offer needs the take's WAV.
+- **Long dictation is continuous.** Continuous mode is on by default: a take is cut at pauses and at 30 s with a carried tail, so the 120 s limit no longer interrupts speech, and the text is inserted once. If recognition falls behind and does not take a chunk, the buffer is capped: at 240 s the buffered audio is dropped whole with a warning in the log — a memory guard, not the phrase limit.
+- **The dictionary goes everywhere, and per app.** Terms reach every 30-second window; **Application profiles** on the Dictionary tab give one window its own terms and snippets; the prompt preset now covers all 26 menu languages; a hint says "looks like X, Y is pinned" when another language leads.
+- **Optional text cleanup.** `text_cleanup` (config, off by default) turns numbers and dates into digits for ru and en through wetext, removes filler words and capitalizes sentence starts, while code, names, paths and URLs stay untouched; punctuation stays Whisper's.
+- **Your archive gets the sound back.** `history_audio` (off by default) keeps a WAV of each dictation under a 200 MiB cap and deletes it with the record; the tray re-recognizes the last take with a prompt and another model. Voice actions and opt-in dictation context join the config.
+- **Files get sentence cues and a guard.** SRT and VTT are cut by sentences from word timestamps; invented phrases on silence and music are filtered; a batched segment that fails a threshold is re-recognized sequentially; a file's blocks carry the previous tail; word timestamps no longer crash on the library bug; `model` accepts a converted CT2 folder.
+- **Agents get the engine.** `/jobs`, `/v1/audio/transcriptions`, the CLI and the MCP tools take `prompt`, `word_timestamps` and `clip_timestamps`; `verbose_json` carries segment confidence and a top-level `words[]`.
+- **Silero is not included.** Punctuation remains Whisper's: the Silero model's license is non-commercial, the dependency and model add about 219 MB, and Russian quality was not confirmed (ADR 0001).
 
 ## What's new in 0.4.5
 
 - **An AI agent can drive the transcriber over MCP.** `mcp.cmd` starts a stdio MCP server that finds the running service through `location.json`, reads the token from `config.json` and exposes three tools: `vibeforma_capabilities`, `vibeforma_transcribe_file` and `vibeforma_job_status`. Transcription queues the file through `/jobs` and returns the text when the job finishes. No new listener is opened: the service stays loopback-only, and with the local API off the server answers with a named refusal.
 - **The connection facts live in Settings.** The new **AI and automation** page shows the loopback endpoint, the MCP launcher and two copy buttons: the key and a ready connection block a local AI client can be given as is. The key itself stays in `config.json`.
-
-## What's new in 0.4.4
-
-- **The release archive is verified before anything is unpacked.** The app downloads `SHA256SUMS` together with the release zip, checks the hash and hands the verified local files to the bootstrap; `install.ps1` verifies the archive on its own download path too. A missing sums file, a missing line or a mismatch stops the install before unpacking.
-- **An update waits for your work.** While a recording is in flight or `FileJobs` still has an unfinished single job or folder batch, the update is deferred; in `auto` mode it retries by itself once the work completes. The notification names the recording or transcription that is in the way.
-- **The update check is always in sight (0.4.3).** The settings window header carries the running version and a **Check for updates** button on every page, and the answer — the latest version, an available release, a network failure or a request to wait — appears right in the window. The duplicate button at the bottom of the System page is gone.
-- **The rare 10–20 s waits before the final text are gone (0.4.2).** A live partial now reads only the last 10 seconds of the take and decodes greedily at one temperature, so it no longer holds the engine lock for the whole growing buffer; the final dictation pass keeps beam 5 and a two-step temperature fallback.
-
-Release notes now come from the CHANGELOG, and a source checkout reports itself as `source_checkout` instead of installing a release zip over the sources. The full list is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -105,26 +109,26 @@ The bootstrap installs released builds only: when no release zip can be download
 
 | Area | What VibeForma does |
 | --- | --- |
-| Dictation | `Ctrl+Alt+Space` (remappable) starts a take; the phrase closes on a pause of silence, on the second keypress, or on release in hold-to-talk mode. `Esc` cancels. |
+| Dictation | `Ctrl+Alt+Space` (remappable) starts a take; the phrase closes on a pause of silence, on the second keypress, or on release in hold-to-talk mode. Continuous mode is on by default, so a long take is cut at pauses and at 30 s with a carried tail and the 120 s limit no longer interrupts speech; the text is inserted once. `Esc` cancels. |
 | Insertion | The text goes to the window that had focus when you pressed the hotkey. If the window changed, VibeForma offers paste here / copy / cancel instead of pasting into a stranger. |
 | Clipboard care | Layout-independent Shift+Insert; the previous clipboard is restored after 1 s if you have not copied something new; dictated text is excluded from Windows clipboard history and cloud sync. |
-| Monitoring panel | Microphone level, VAD indicator, streaming text near-real-time, a privacy mode, a microphone button, history arrows and draft actions (Edit, Copy, Insert, Cancel). |
-| System audio | Records the default output through WASAPI loopback (Bluetooth, USB, HDMI); the same hotkey stops the take; an unavailable loopback shows a clear error. |
-| Models | large-v3, large-v3-turbo, medium and small; a choice dialog at install; switch in settings or the tray without a restart; a failed download rolls back. |
-| Languages | Recognition is pinned exactly — no auto-guessing; 26 language codes in the menu, about 99 languages in the model; every language is written in its own script. |
-| Dictionary | Terms go into the recognition prompt; replacements apply to the recognized text (case-insensitive, the longest term wins); JSON import/export and a preview. |
-| Snippets | Spoken triggers expand into prepared text; stored in JSON. |
-| History (opt-in) | The last 100 dictations in `history.jsonl`; a table with when / chars / application / text, search and filters, multi-select delete, undo last insert, restore clipboard. Turning it off deletes the file. |
+| Monitoring panel | Microphone level, VAD indicator, streaming text near-real-time, a privacy mode, a microphone button, history arrows and draft actions (Edit, Copy, Insert, Cancel). A doubtful phrase waits in the draft with uncertain words highlighted and offers **Recognize more precisely** / **Restore previous**; a language hint appears when another language leads; a system-audio take shows its last phrases as live subtitles. |
+| System audio | Records the default output through WASAPI loopback (Bluetooth, USB, HDMI). The take runs without auto-stop on silence and without the 120 s cut, shows the last phrases as live subtitles in the panel, and writes nothing to the active window, the draft or the history; the same hotkey stops it, a 30 s buffer keeps memory flat, and an unavailable loopback shows a clear error. No audio or subtitle file is written yet. |
+| Models | large-v3, large-v3-turbo, medium and small; a choice dialog at install; switch in settings or the tray without a restart; a failed download rolls back; `model` also accepts a folder with a converted CT2 model, loaded offline and checked before use. |
+| Languages | Recognition is pinned exactly — no auto-guessing; 26 language codes in the menu, about 99 languages in the model; every language is written in its own script; a punctuation preset covers every menu language, and a hint says "looks like X, Y is pinned" when another language leads. |
+| Dictionary | Terms go into `hotwords` on every 30-second window, in their target form and by correction frequency; replacements apply to the recognized text (case-insensitive, the longest term wins); JSON import/export and a preview; **Application profiles** give one window its own terms, merged over the global ones. |
+| Snippets | Spoken triggers expand into prepared text; stored in JSON; an application profile can carry its own snippets. |
+| History (opt-in) | The last 100 dictations in `history.jsonl`; a table with when / chars / application / text, search and filters, multi-select delete, undo last insert, restore clipboard. `history_audio` also keeps a WAV of each take under a 200 MiB cap, deleted with its record; the tray re-recognizes the last take with a prompt and another model. Turning history off deletes the file. |
 | Statistics | Counters of dictations and characters; numbers only, never the text. |
-| File transcription | Audio and video (mp4, mkv, mov, webm, mp3, wav, m4a and more) through the same engine; PyAV decode, no external ffmpeg; TXT, JSON, SRT, VTT with timestamps. |
+| File transcription | Audio and video (mp4, mkv, mov, webm, mp3, wav, m4a and more) through the same engine; PyAV decode, no external ffmpeg; TXT, JSON, SRT, VTT with timestamps; SRT and VTT are cut by sentences from word timestamps; invented phrases on silence and music are filtered; a file with word timestamps no longer fails on the library's `IndexError`. |
 | Folder batches | A whole folder, optionally recursive; a mirrored output tree; existing files skipped; one broken file does not stop the batch; cancel; a progress strip. |
-| Long files | Files of 60 s and longer use `BatchedInferencePipeline`; 4 GB / 6 h limits; a job queue where dictation always outranks a file job. |
-| Local HTTP API | Off by default; `127.0.0.1` only; a token; `/health`, `/transcribe`, an OpenAI-compatible `/v1/audio/transcriptions` and a `/jobs` queue; discovery through `location.json`. |
-| CLI | `--toggle`, `--cancel`, `--status`, `--transcribe`, `--transcribe-folder`, `--cancel-batch`, `--doctor`, `--selftest`, `--help`; talks to the running service over a named pipe. |
+| Long files | Files of 60 s and longer use `BatchedInferencePipeline`; each batched segment is checked against the same thresholds and re-recognized sequentially when it fails; the prompt carries the previous block's tail; 4 GB / 6 h limits; a job queue where dictation always outranks a file job. |
+| Local HTTP API | Off by default; `127.0.0.1` only; a token; `/health`, `/transcribe`, an OpenAI-compatible `/v1/audio/transcriptions` and a `/jobs` queue; `/jobs`, `/v1` and the CLI take `prompt`, `word_timestamps` and `clip_timestamps`; `verbose_json` carries segment confidence and a top-level `words[]`; discovery through `location.json`. |
+| CLI | `--toggle`, `--cancel`, `--status`, `--transcribe`, `--transcribe-folder`, `--cancel-batch`, `--prompt`, `--words`, `--clip`, `--doctor`, `--selftest`, `--help`; talks to the running service over a named pipe. |
 | Hook | `hook_command` receives the recognized text on stdin, without a shell, with a 1–30 s timeout; a failure never affects insertion. |
-| Settings | Tabs for Recording, Hotkeys, Model & language, Dictionary, Snippets, History, Statistics, Appearance and System; changes apply to the live service. |
-| Tray | Pause, input device, model, recognition language, history, undo last insert, diagnostics and the logs folder; autostart with Windows. |
-| Privacy | Local recognition, no accounts, no telemetry; logs without dictated text or window titles; network only for the model download and optional update checks. |
+| Settings | Tabs for Recording, Hotkeys, Model & language, Dictionary, Snippets, History, Statistics, Appearance and System; the Dictionary tab carries **Application profiles**, and the System tab carries **AI and automation**. Changes apply to the live service. `text_cleanup`, `dictation_context`, `history_audio`, `continuous` and `actions` live in `config.json` for now. |
+| Tray | Pause, input device, model, recognition language, history, re-recognize the last dictation, undo last insert, diagnostics and the logs folder; autostart with Windows. |
+| Privacy | Local recognition, no accounts, no telemetry; logs without dictated text or window titles; the network only for the model download and optional update checks; history sound is opt-in and stays in the data folder. |
 | Updates | A background check every 2 h (configurable, can be switched off); the running version and a **Check for updates** button in the settings header since 0.4.3; a newer release is offered, not forced; release notes in the notification; the archive is verified against `SHA256SUMS` before anything is unpacked; an update waits while a recording or a file job is running and retries by itself in `auto` mode; one click keeps your data. |
 | Install and uninstall | One PowerShell command; a per-user install in `%LOCALAPPDATA%\VibeForma`; a Settings > Apps entry; uninstall keeps models and config unless `--remove-data`. |
 | Interface | English and Russian out of the box; drop a JSON file into `app/locales/` to add another language. |
@@ -147,7 +151,7 @@ This is not a rating and not advertising. The snapshot date is **23 November 202
 
 | Product | Type | Platforms | Local recognition | Dictation | File transcription | Russian UI / docs | Price / source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **VibeForma 0.4.5** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
+| **VibeForma 0.5.0** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
 | Handy | local dictation | Windows, macOS, Linux | Yes, Whisper | Yes | n/v | n/v / n/v | Free, open source |
 | Buzz | local transcription | Windows, macOS, Linux | Yes, Whisper | No | Yes | n/v / n/v | Free, open source |
 | Whispering | local or connected transcription | Windows, macOS, Linux | Yes or a provider | Yes | Yes | n/v / n/v | Free, open source |
@@ -159,24 +163,27 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 
 ### Where VibeForma is stronger
 
-- **Windows-first.** Insertion into the window that was active at the hotkey, clipboard restoration, exclusion from Windows clipboard history and cloud sync, DPI-aware windows, a tray icon and a Settings > Apps entry.
-- **Russian as a first-class language.** A pinned recognition language, endonyms in the menu, a Russian interface and Russian documentation — not a translated help page bolted onto an English product.
-- **A local API, a CLI, a hook and an MCP server without a cloud account.** The API listens on `127.0.0.1` only and requires a token; `location.json` publishes the actual port; the CLI talks to the running service over a named pipe; `hook_command` passes the text on stdin without a shell; the MCP server hands an agent the same transcriber over stdio without opening a port.
-- **Your own archive.** Dictionary, snippets, history and statistics live in files next to `config.json`. History is opt-in and stores text; statistics store only numbers. Nothing is uploaded.
-- **Local files and folders.** Audio and video are transcribed on the same engine, with timestamps and four output formats. No upload, no queue in someone else's cloud.
-- **Exact language pinning.** The model recognizes exactly the language you set. That is more predictable for Russian and mixed-vocabulary dictation than per-phrase guessing.
+- **Windows-first.** Insertion into the window that was active at the hotkey, clipboard restoration, exclusion from Windows clipboard history and cloud sync, DPI-aware windows, a tray icon and a Settings > Apps entry. System audio comes through its WASAPI loopback and can be read as live subtitles.
+- **Russian as a first-class language.** A pinned recognition language, endonyms in the menu, a punctuation preset for all 26 menu languages, a language hint when another language leads, a Russian interface and Russian documentation — not a translated help page bolted onto an English product.
+- **A local API, a CLI, a hook and an MCP server without a cloud account.** The API listens on `127.0.0.1` only and requires a token; `location.json` publishes the actual port; the CLI talks to the running service over a named pipe; `hook_command` passes the text on stdin without a shell; the MCP server hands an agent the same transcriber over stdio without opening a port. Agents get the engine's own contract — prompt, word timestamps, a clip range, segment confidence and words with probabilities.
+- **Your own archive.** Dictionary, snippets, application profiles, history and statistics live in files next to `config.json`. History is opt-in and stores text; with `history_audio` it also keeps the take's WAV and can re-recognize the last one; statistics store only numbers. Nothing is uploaded.
+- **Local files and folders.** Audio and video are transcribed on the same engine, with timestamps and four output formats; SRT and VTT cues follow sentences, a long file's blocks carry context, a batched segment that fails a threshold is retried, invented phrases are filtered, and `model` can point at a converted CT2 folder. No upload, no queue in someone else's cloud.
+- **Exact language pinning.** The model recognizes exactly the language you set. That is more predictable for Russian and mixed-vocabulary dictation than per-phrase guessing; a hint names the language it hears without changing the setting.
 - **No account, no telemetry.** There is nothing to sign in to and no server that receives audio. The network is used for the model download and optional update checks, and both are named explicitly.
-- **Small and honest.** VibeForma 0.4.5 does not pretend to be a meeting platform. Its limits are documented on a separate page.
+- **Small and honest.** VibeForma 0.5.0 does not pretend to be a meeting platform. Its limits are documented on a separate page and in [Where VibeForma is weaker](#where-vibeforma-is-weaker).
 
 ### Where VibeForma is weaker
 
 - **Windows only.** There is no macOS, Linux, iOS or Android version.
 - **One file at a time.** Files and folders are transcribed sequentially. Buzz, Whispering, Superwhisper and Descript are transcription-first tools and can be a better fit for high-volume batch work.
+- **A long take can lose its buffered audio.** If recognition falls behind and does not take a chunk (for example on a very slow machine during a long continuous take), the engine drops the buffered audio at 240 s and writes a warning to the log instead of growing memory without bound; that piece is not transcribed.
+- **System audio is a view, not a recorder.** Live subtitles show the last phrases in the panel, but the mode does not write an audio or subtitle file yet, and on music the filter drops only short stop phrases and repeated loops — other invented text can reach the plate.
+- **Punctuation is the Whisper model's.** There is no separate punctuation model: Silero text enhancement is not included because its license is non-commercial, the dependency and model add about 219 MB, and Russian quality was not confirmed (ADR 0001). Numbers come from the optional cleanup, filler words and capitals from its rules.
 - **Two interface languages.** English and Russian. Commercial help centers cover many more.
 - **No meetings, summaries, teams or billing.** Superwhisper, Wispr Flow and Descript cover scenarios VibeForma does not.
 - **No cloud models.** Everything runs on the local machine, so a very weak CPU or GPU means slower recognition; cloud products offload that cost.
 - **No mobile.** Dictation happens at a Windows desk.
-- **A smaller ecosystem and a shorter track record.** The project is at 0.4.5; the commercial products have years of releases and larger support teams.
+- **A smaller ecosystem and a shorter track record.** The project is at 0.5.0; the commercial products have years of releases and larger support teams.
 - **An unsigned installer.** Windows SmartScreen may warn; there is no code-signing certificate yet.
 
 ### How to choose
@@ -265,7 +272,7 @@ The first launch opens a three-step wizard. Step 1 picks the interface and recog
 | medium | «medium» | 1.5 GB | ×4 vs large-v3 | medium |
 | small | «small» | 0.5 GB | ×10 vs large-v3 | lower |
 
-Pick the model during install (the dialog shows size and description); switch later in settings (the *Model & language* tab) or the tray menu. The switch downloads the new model first, reloads the service without a restart and then — at your choice — keeps the previous model on disk for fast switching back or deletes it (a model in the shared Hugging Face cache is left there; a failed download leaves the old model untouched). Models live in `%LOCALAPPDATA%\VibeForma\models\<name>` or in the shared Hugging Face cache; the service loads offline-first and only reaches the network when the model is nowhere on disk. For an offline install, put a model folder into `models\<name>` (or the shared Hugging Face cache) beforehand: the installer and the service then need no network at all.
+Pick the model during install (the dialog shows size and description); switch later in settings (the *Model & language* tab) or the tray menu. The switch downloads the new model first, reloads the service without a restart and then — at your choice — keeps the previous model on disk for fast switching back or deletes it (a model in the shared Hugging Face cache is left there; a failed download leaves the old model untouched). Models live in `%LOCALAPPDATA%\VibeForma\models\<name>` or in the shared Hugging Face cache; the service loads offline-first and only reaches the network when the model is nowhere on disk. `model` also accepts a path to a folder with a converted CT2 model: the folder is loaded with `local_files_only=True` and checked for `model.bin` with its CT2 header, `config.json`, `tokenizer.json` and the vocabulary; a broken folder stops with a named error instead of downloading the catalog model. For an offline install, put a model folder into `models\<name>` (or the shared Hugging Face cache) beforehand: the installer and the service then need no network at all.
 
 Measured on the 12.5 s test phrase (CUDA float16, best of 3):
 
@@ -278,7 +285,7 @@ On short phrases the real turbo speedup is below the vendor's 4–8× (a larger 
 
 ## Languages
 
-- **Recognition**: pinned exactly — the model recognizes exactly the chosen language (default `en`; the installer preselects your Windows locale); switch in the tray or settings. No auto-detection: what you set is what is recognized. A per-language prompt preset improves punctuation for the major languages; personal terms belong to `config.json → "hotwords"`.
+- **Recognition**: pinned exactly — the model recognizes exactly the chosen language (default `en`; the installer preselects your Windows locale); switch in the tray or settings. No auto-detection: what you set is what is recognized. A punctuation preset exists for every one of the 26 menu languages, each written in its own script; personal terms go to `config.json → "hotwords"` and reach every 30-second window. When the pinned language looks unlikely and another language leads, the panel says "looks like X, Y is pinned" without changing the setting.
 - **Menu naming**: every language is written in its own script — English, Russian, Ukrainian, German, Japanese…
 - **Interface**: English and Russian ship in `app/locales/*.json`. To add yours — copy `en.json`, translate the values, save as `app/locales/<code>.json`; the language then appears in settings automatically.
 
@@ -293,6 +300,7 @@ On short phrases the real turbo speedup is below the vendor's 4–8× (a larger 
 
 - Recording and recognition are local processes. Network contacts: the first model download at install; and if auto-update is on (the default), a small check of `api.github.com` every 2 h — the interval is configurable and the check can be switched off in settings. The release zip downloads only when a newer version exists. Nothing else leaves the machine.
 - Logs live in the local `logs\` folder with rotation. No telemetry, no accounts, no tokens. The log holds no dictated text and no window titles; `log_window_titles: true` in `config.json` adds the title of the paste target if you need it for a diagnosis.
+- History is opt-in and stays in the data folder; `history_audio` is a second opt-in and keeps the take's WAV only there, under a 200 MiB cap, deleted with the record. System-audio live subtitles write nothing to the history or to disk.
 - On Windows 10+ the dictated text is marked as excluded from the clipboard history and cloud sync. The monitoring panel has a privacy mode (the eye button): the text is hidden, the mic level stays, and the status line disappears 30 s after it was set.
 
 ## What stays on disk
@@ -300,9 +308,10 @@ On short phrases the real turbo speedup is below the vendor's 4–8× (a larger 
 - `config.json` — your settings and `hotwords` (the terms you typed there);
 - `models\` — downloaded Whisper models;
 - `logs\` — the service log (five rotated files, 1 MB each), no dictated text and no window titles by default;
+- `history_audio\` — only with `history` and `history_audio` on: a WAV of each dictation, under a 200 MiB cap, deleted with its record, the history or the option;
 - `_http_in_*.wav` — only while the local HTTP API handles a request; deleted in any case, success or failure;
 - `install.log` — the installer's own log;
-- no audio recordings are kept.
+- no audio recordings are kept unless you turn `history_audio` on.
 
 ## Local HTTP API (off by default)
 
@@ -312,9 +321,9 @@ The service publishes `%LOCALAPPDATA%\VibeForma\location.json` with `schema` (2)
 
 The file mode adds three kinds of routes, all on `127.0.0.1` and all with the same token:
 
-- `GET /capabilities` - version, models, languages, formats, limits, `file_mode`, `word_timestamps`, `dictation_priority`, the pipe and the launcher;
-- `POST /v1/audio/transcriptions` - OpenAI-compatible multipart (`file`, `model`, `language`, `response_format`, `prompt`, `temperature`); `response_format` is `json`, `text`, `srt`, `vtt` or `verbose_json`; synchronous up to `file_max_sync_s` (900 s), longer files get `413` with a pointer to `/jobs`;
-- `POST /jobs`, `GET /jobs/<id>`, `DELETE /jobs/<id>` (cancel), `GET /jobs/<id>/result?format=srt|vtt|txt|json` - the queue for long files; the answer is `202` with `Location: /jobs/<id>`, and `409` until the result is ready.
+- `GET /capabilities` - version, models, languages, formats, limits, `file_mode`, `word_timestamps`, `dictation_priority`, `prompt`, `clip_timestamps`, the pipe and the launcher;
+- `POST /v1/audio/transcriptions` - OpenAI-compatible multipart (`file`, `model`, `language`, `response_format`, `prompt`, `temperature`, `word_timestamps`, `clip_timestamps`); `response_format` is `json`, `text`, `srt`, `vtt` or `verbose_json`; `verbose_json` carries `segments[].avg_logprob`, `no_speech_prob`, `compression_ratio` and `temperature` plus a top-level `words[]` with `probability`; synchronous up to `file_max_sync_s` (900 s), longer files get `413` with a pointer to `/jobs`;
+- `POST /jobs`, `GET /jobs/<id>`, `DELETE /jobs/<id>` (cancel), `GET /jobs/<id>/result?format=srt|vtt|txt|json` - the queue for long files; `POST /jobs` takes `prompt`, `word_timestamps` and `clip_timestamps`, `/jobs/<id>` reports the applied contract, the answer is `202` with `Location: /jobs/<id>`, and `409` until the result is ready.
 
 `/health` keeps its old fields and adds `file_mode`, `jobs_running`, `jobs_queued` and `dictation_priority`. The old `/transcribe` keeps its contract: 10 MB, one request per second, idle only. A dictation always outranks a file job: the job pauses between segments and resumes when the service is idle.
 
@@ -334,13 +343,15 @@ An MCP client starts `%LOCALAPPDATA%\VibeForma\mcp.cmd` as a stdio server:
 }
 ```
 
-The server reads `location.json` for the actual port and `config.json` for the token, so nothing has to be hardcoded. It exposes `vibeforma_capabilities`, `vibeforma_transcribe_file` and `vibeforma_job_status`; transcription queues the file through `/jobs` and returns the text when the job finishes. The local API must be on: without it the server answers with a named refusal. The service itself stays loopback-only — the MCP server adds no listener and never sends the token anywhere.
+The server reads `location.json` for the actual port and `config.json` for the token, so nothing has to be hardcoded. It exposes `vibeforma_capabilities`, `vibeforma_transcribe_file` and `vibeforma_job_status`; transcription queues the file through `/jobs` and returns the text when the job finishes, and the tool accepts `prompt`, `word_timestamps` and `clip_timestamps`, with the job status reporting the applied contract. The local API must be on: without it the server answers with a named refusal. The service itself stays loopback-only — the MCP server adds no listener and never sends the token anywhere.
 
 ## File transcription
 
-Audio and video files go through the same engine as dictation: mp4, mkv, mov, webm, mp3, wav, m4a. PyAV decodes them (the dependency faster-whisper already brings), so no external ffmpeg is needed. The output is text with timestamps in TXT, JSON, SRT or VTT.
+Audio and video files go through the same engine as dictation: mp4, mkv, mov, webm, mp3, wav, m4a. PyAV decodes them (the dependency faster-whisper already brings), so no external ffmpeg is needed. The output is text with timestamps in TXT, JSON, SRT or VTT. With word timestamps on, SRT and VTT cues are cut by sentences: a sentence end or a pause of 0.6 s or longer closes a cue, a shorter pause glues words across engine windows and 600 s blocks; without word timestamps the engine segments stand. TXT and JSON keep their contract.
 
-Long file jobs (60 s and longer) are transcribed in batches: several 30-second windows go through the model in one pass (`BatchedInferencePipeline`) on the same loaded model, with the same language, VAD, prompt and anti-hallucination settings. Short files and dictation stay on the sequential path. If the batched path is unavailable or fails mid-file, the job falls back to the sequential path without duplicates. The keys are `file_batched` (on by default) and `file_batch_size` (8, kept within 1-16); the speed-up depends on the device, and the measured figure on the reference machine is in `CHANGELOG.md`.
+Invented text is filtered: a stop list of typical ru and en false phrases, a 2.0 s silence threshold with word timestamps and a compression-ratio guard drop a segment on silence or music when `no_speech_prob` is at least 0.6; a loop the engine still reads as speech stays and is flagged. A file with word timestamps no longer fails on faster-whisper's `find_alignment` bug: the block is retried without word timestamps and the retry is logged.
+
+Long file jobs (60 s and longer) are transcribed in batches: several 30-second windows go through the model in one pass (`BatchedInferencePipeline`) on the same loaded model, with the same language, VAD, prompt and anti-hallucination settings. Short files and dictation stay on the sequential path. If the batched path is unavailable or fails mid-file, the job falls back to the sequential path without duplicates. Each batched segment is measured against the same thresholds as the sequential path; a segment that fails is re-recognized sequentially over its own slice of the block and the fact is logged, and the prompt carries a 200-character tail of the previous block so a name holds across the seam. The keys are `file_batched` (on by default) and `file_batch_size` (8, kept within 1-16); the speed-up depends on the device, and the measured figure on the reference machine is in `CHANGELOG.md`.
 
 From the tray: **Transcribe file...**, pick a file, watch the progress in the panel, then use **Open result folder**. From the command line (the service must be running):
 
@@ -354,6 +365,9 @@ run.cmd --transcribe "D:\video\talk.mp4" --format all --json
 - `--format` is `txt`, `json`, `srt`, `vtt` or `all` (default `srt`);
 - `--out` writes to a named file or folder; without it the result lands beside the source with the same stem;
 - `--force` allows overwriting an existing result;
+- `--prompt` is the recognition hint for this file (the configured preset otherwise);
+- `--words` asks for word-level timestamps and probabilities, so SRT and VTT cues follow sentences;
+- `--clip START[,END]` transcribes only that range in seconds; timestamps stay absolute and a bad range exits 2;
 - `--json` prints `{"ok": true, "job_id": ..., "out": [...], "segments": N, "duration_s": ...}`; progress goes to stderr.
 
 Exit codes: `0` success, `1` the service is not running or the job failed, `2` bad arguments, `3` cancelled. While the service is still loading its first model the CLI answers `VibeForma: the model is loading` and exits 1; `VibeForma is not running` appears only when no channel listens. The request travels over the current user's named pipe (`\\.\pipe\VibeForma-<user>`), so the CLI never opens a port and never waits for the HTTP API.
@@ -402,7 +416,7 @@ subprocess.run([launcher, "--transcribe", path, "--format", "srt", "--json"], ch
 spawnSync(launcher, ["--transcribe", path, "--format", "srt", "--json"])
 ```
 
-3. With the local API on, `POST /v1/audio/transcriptions` (short files) or `POST /jobs` (long files) do the same over HTTP; `GET /capabilities` lists formats and limits.
+3. With the local API on, `POST /v1/audio/transcriptions` (short files) or `POST /jobs` (long files) do the same over HTTP; both take `prompt`, `word_timestamps` and `clip_timestamps`, and `GET /capabilities` lists formats, limits, `prompt` and `clip_timestamps`.
 4. `run.cmd --help` prints the contract, so a harness needs no source file.
 
 Python without a shell can always use the second form: `.venv\Scripts\python.exe main.py --transcribe ...`.
@@ -418,7 +432,7 @@ run.cmd --status
 .venv\Scripts\python.exe main.py --status
 ```
 
-`--toggle` starts recording or stops it when it is running, `--cancel` drops the current recording or the panel draft, and `--status` prints the running instance's `status.json` (`state`, `version`, `pid`, `ts`) as JSON. The flags talk to the instance that is already running: with no instance, or when the status is older than 60 s, the exit code is 1; on success it is 0. `--help` prints every command, and `--transcribe` is described under File transcription.
+`--toggle` starts recording or stops it when it is running, `--cancel` drops the current recording or the panel draft, and `--status` prints the running instance's `status.json` (`state`, `version`, `pid`, `ts`) as JSON. `--prompt`, `--words` and `--clip` belong to `--transcribe` and are described under File transcription. The flags talk to the instance that is already running: with no instance, or when the status is older than 60 s, the exit code is 1; on success it is 0. `--help` prints every command.
 
 The hook is opt-in and off while `"hook_command"` is empty. Set it in settings → System (or in `config.json` next to `"hook_timeout_s"`, default 5): the recognized text is written to the command's stdin as UTF-8. The command runs without a shell, so `&`, `|` and `>` in the text are plain characters; the timeout is kept inside 1–30 s. A failure or a timeout is logged as a status only — the text never reaches the log — and never affects insertion. The hook runs in parallel, after the text is inserted or shown as a panel draft.
 
@@ -472,6 +486,20 @@ python -m venv .venv
 ```
 
 `tools/ruff_gate.py` runs the same selection as CI and fails on any finding: the 164 findings recorded in 0.1.9 were cleaned up, so `ruff` is blocking.
+
+### WER/CER reference
+
+`tests/wer/manifest.json` is the local reference for the engine: 24 short ru+en recordings with the correct text (names, numbers, terms, noise, music, silence). Speech phrases are recorded into `tests/wer/` under the names in the `file` field (WAV, 16 kHz, mono); the `noise`, `music` and `silence` records must contain no speech. While the files are missing, the measurement lists them and exits 2.
+
+```bat
+.venv\Scripts\python -m pytest -q tests\test_wer_cer.py
+.venv\Scripts\python tools\wer_cer.py --self-test
+.venv\Scripts\python tools\wer_cer.py --transcribe
+.venv\Scripts\python tools\wer_cer.py --hyp-dir out\hyp
+.venv\Scripts\python tools\wer_cer.py --baseline
+```
+
+`--self-test` checks normalization, arithmetic and the manifest without recordings or a model — it is the gate. `--transcribe` recognizes the recordings with the same engine as the product; the model, device and compute type are set by `--model` (default `large-v3`), `--device` and `--compute-type` (default CPU int8). `--hyp-dir` takes ready texts `<name>.txt` instead of recognition. The report is WER and CER per file and in total over speech; for noise, music and silence it is the number of false positives. `--json` writes the same report to a file. `--baseline` measures `test_ru.wav`, prints the actual text and the baseline line. Normalization: lower case, the Russian yo letter folded to ye, punctuation to a space, integers 0–999 as words (ru and en); WER counts words, CER counts characters without spaces.
 
 ### Language of the repository
 

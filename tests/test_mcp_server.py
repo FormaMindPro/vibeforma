@@ -15,6 +15,8 @@ TOKEN = "test-token"  # noqa: S105 - a test value, not a secret
 class StubService(BaseHTTPRequestHandler):
     """A loopback stand-in for the product's HTTP API."""
 
+    posted: dict = {}
+
     def _send(self, code: int, body: str,
               content_type: str = "application/json") -> None:
         data = body.encode("utf-8")
@@ -36,7 +38,9 @@ class StubService(BaseHTTPRequestHandler):
                 {"formats": ["txt"], "model": "test-model"}))
             return
         if self.path == "/jobs/j1":
-            self._send(200, json.dumps({"id": "j1", "state": "done"}))
+            self._send(200, json.dumps({
+                "id": "j1", "state": "done", "prompt": "names: Forma",
+                "word_timestamps": True, "clip_timestamps": "2,5"}))
             return
         if self.path.startswith("/jobs/j1/result"):
             self._send(200, "hello world", "text/plain; charset=utf-8")
@@ -50,6 +54,7 @@ class StubService(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         payload = json.loads(self.rfile.read(length) or b"{}")
         assert str(payload.get("path") or "").endswith("a.wav")
+        StubService.posted = payload
         self._send(202, json.dumps({"job_id": "j1", "state": "queued"}))
 
     def log_message(self, fmt: str, *args: object) -> None:
@@ -98,6 +103,46 @@ def test_tools_list_names_the_three_tools(service):
         "vibeforma_transcribe_file",
         "vibeforma_job_status",
     }
+
+
+def test_transcribe_tool_offers_the_engine_contract(service):
+    response = _server(service).handle(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    assert response is not None
+    tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+    properties = tools["vibeforma_transcribe_file"]["inputSchema"]["properties"]
+    assert {"prompt", "word_timestamps", "clip_timestamps"} <= set(properties)
+
+
+def test_transcribe_tool_sends_prompt_words_and_clip(service):
+    StubService.posted = {}
+    response = _server(service).handle({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {
+            "name": "vibeforma_transcribe_file",
+            "arguments": {"path": r"D:\audio\a.wav", "timeout_s": 5,
+                          "prompt": "names: Forma", "word_timestamps": True,
+                          "clip_timestamps": "2,5"},
+        },
+    })
+    assert response is not None
+    assert response["result"]["isError"] is False
+    assert StubService.posted["prompt"] == "names: Forma"
+    assert StubService.posted["word_timestamps"] is True
+    assert StubService.posted["clip_timestamps"] == "2,5"
+
+
+def test_job_status_reports_the_applied_contract(service):
+    response = _server(service).handle({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": {"name": "vibeforma_job_status",
+                   "arguments": {"job_id": "j1"}},
+    })
+    assert response is not None
+    payload = json.loads(response["result"]["content"][0]["text"])
+    assert payload["prompt"] == "names: Forma"
+    assert payload["word_timestamps"] is True
+    assert payload["clip_timestamps"] == "2,5"
 
 
 def test_capabilities_tool_returns_service_data(service):

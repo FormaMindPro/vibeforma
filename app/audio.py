@@ -2,7 +2,9 @@
 
 16 kHz, mono, float32; frames of 512 samples (32 ms) — the Silero window.
 The monitor thread buffers frames, tracks speech, and closes the phrase
-after silence_ms of quiet (or max_record_s hard limit).
+after silence_ms of quiet (or max_record_s hard limit). In continuous
+dictation the hard limit is off: the take is cut into bounded chunks at
+pauses and handed to the caller for piecewise recognition.
 """
 import contextlib
 import queue
@@ -17,11 +19,28 @@ FRAME_MS = 32
 FRAME = SAMPLE_RATE * FRAME_MS // 1000  # 512 samples
 PARTIAL_WINDOW_S = 10.0   # a live partial reads only the tail of the take
 VOICE_THRESHOLD = 0.5
+# Continuous dictation: a take is not cut by max_record_s. It is cut into
+# bounded chunks at a pause after speech, or at the chunk cap when the
+# speaker runs on; the chunk cap is the Whisper window, so one recognition
+# pass never decodes more. The overlap after a hard cut carries the last
+# frames into the next chunk, so a word split by the boundary is complete in
+# the next recognition; the text side removes the repeated words.
+CONTINUOUS_CHUNK_S = 30.0
+CONTINUOUS_PAUSE_MS = 400
+CONTINUOUS_MIN_S = 1.0
+CONTINUOUS_OVERLAP_S = 0.3
+CONTINUOUS_HARD_MAX_S = 240.0
 # System audio: the loopback is captured at the output's native rate and goes
 # through the same Resampler. 48 kHz is the shared-mode mix format on Windows.
 SYSTEM_RATE = 48000
 SYSTEM_RATES = (48000, 44100, 16000)
 SYSTEM_BLOCK = SYSTEM_RATE * FRAME_MS // 1000
+# System audio for live subtitles (F9): a film has no phrase ends to cut on
+# and no natural end of its own, so the take runs until the hotkey. The
+# buffer is bounded — the plate reads only the last PARTIAL_WINDOW_S — and a
+# partial recognition runs at most this often, never on every partial_every_s.
+SYSTEM_BUFFER_S = 30.0
+SYSTEM_PARTIAL_EVERY_S = 4.0
 
 
 class Resampler:
@@ -156,6 +175,28 @@ def capture_plans(device_index=None):
     return out
 
 
+def wav_bytes(audio, rate=SAMPLE_RATE):
+    """float32 mono samples -> 16-bit PCM WAV bytes.
+
+    The mirror of ``load_wav_16k``: what a dictation take is saved as beside
+    the history entry, and what the same take is read back from when it is
+    re-recognized. Clipping keeps a hot take from wrapping around the int16
+    range; the level is otherwise untouched.
+    """
+    import io
+    import wave
+
+    a = np.asarray(audio, dtype=np.float32).reshape(-1)
+    pcm = (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(rate))
+        w.writeframes(pcm.tobytes())
+    return out.getvalue()
+
+
 def load_wav_16k(path):
     """PCM WAV (16-bit, mono) -> float32 @ 16 kHz; resamples if needed.
 
@@ -208,12 +249,18 @@ class Recorder:
     """
 
     def __init__(self, cfg, log, vad_model, on_auto_stop, on_partial=None,
-                 live_state=None):
+                 live_state=None, on_chunk=None, keep_take=False):
         self.cfg = cfg
         self.log = log
         self.vad = vad_model
         self.on_auto_stop = on_auto_stop  # callable(reason: str), runs in its own thread
         self.on_partial = on_partial      # callable(audio_snapshot: np.ndarray)
+        # callable(chunk: np.ndarray) -> bool; False means "no room, keep it"
+        self.on_chunk = on_chunk
+        # History with sound needs the whole take: the chunk cuts then keep a
+        # copy (opt-in, documented as the one place the take is not trimmed).
+        self._keep_take = keep_take
+        self._take_frames = []
         self.live_state = live_state      # shared HUD dict (level/vad)
         self._q = queue.Queue(maxsize=256)
         self._frames = []
@@ -231,6 +278,13 @@ class Recorder:
         self.level = 0.0        # RMS of the last frame (HUD)
         self.vad_p = 0.0        # last VAD speech probability (HUD)
         self._t_last_partial = 0.0
+        # Continuous chunk bookkeeping, reset per take (see _reset_take).
+        self._continuous = False
+        self._chunk_samples = 0     # samples in the current buffer
+        self._voice_end = 0         # buffer samples up to the last voiced frame
+        self._quiet_samples = 0     # buffer samples since the last voiced frame
+        self._voiced_samples = 0    # speech samples in the current chunk
+        self._chunk_deferred = False
         self._source = "microphone"     # microphone | system
         self._system_rec = None
         self._system_thread = None
@@ -271,8 +325,32 @@ class Recorder:
                            else Resampler(rate))
         return True
 
+    def _reset_take(self):
+        """Per-take state: the buffer, the speech flags and the chunk counters.
+
+        A Recorder outlives a take (the service reuses the setting object), so
+        a stale speech flag from the previous phrase must not close this one.
+        """
+        self._frames = []
+        self._take_frames = []
+        self._has_speech = False
+        self._t_last_voice = None
+        self._chunk_samples = 0
+        self._voice_end = 0
+        self._quiet_samples = 0
+        self._voiced_samples = 0
+        self._chunk_deferred = False
+        self._continuous = bool(self.cfg.get("continuous", True))
+        if self._continuous and self.on_chunk is None:
+            # Without a receiver the take could not be recognized piecewise;
+            # the old hard limit stays, and the log says why.
+            self.log.info("Continuous dictation has no chunk receiver — "
+                          "max_record_s applies")
+            self._continuous = False
+
     def start(self, device_index=None):
         self._pending = np.zeros(0, dtype=np.float32)
+        self._reset_take()
         # The same Recorder outlives a setting change; a previous system take
         # must not leave the silence auto-stop and partials disabled here.
         self._source = "microphone"
@@ -316,6 +394,12 @@ class Recorder:
     def _start_system(self):
         """Take what the default output plays, through the soundcard loopback."""
         from system_audio import default_loopback
+
+        self._reset_take()
+        # System audio has no pauses to cut on and no dictation end: its own
+        # long-capture path is live subtitles (F9) — no chunk cuts, no
+        # auto-stop, no max_record_s; the take ends by the hotkey.
+        self._continuous = False
 
         mic, name = default_loopback()
         last = None
@@ -364,10 +448,13 @@ class Recorder:
                 self._stream.close()
             self._stream = None
         with self._lock:
-            if not self._frames:
+            if not self._frames and not self._take_frames:
                 return None
-            buf = np.concatenate(self._frames)
+            frames = (self._take_frames + self._frames
+                      if self._take_frames else self._frames)
+            buf = np.concatenate(frames)
             self._frames = []
+            self._take_frames = []
         dur = len(buf) / SAMPLE_RATE
         self.log.info(
             "Recording stopped: %.1f s, queue overruns: %d", dur, self._overruns
@@ -431,36 +518,132 @@ class Recorder:
                 return
 
     def _monitor_loop(self):
-        partial_every_s = float(self.cfg.get("partial_every_s", 1.5))
         while not self._stop_evt.is_set():
             try:
                 frame = self._q.get(timeout=0.1)
             except queue.Empty:
                 self._check_timeouts()
                 continue
-            data = frame.reshape(-1)
-            with self._lock:
-                self._frames.append(data.copy())
-            self.level = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
-            prob = self._vad_prob(data)
-            self.vad_p = prob
-            if self.live_state is not None:
-                self.live_state["level"] = self.level
-                self.live_state["vad"] = self.vad_p
-            if prob >= VOICE_THRESHOLD:
-                self._t_last_voice = time.monotonic()
-                self._has_speech = True
-            self._maybe_partial(partial_every_s)
-            self._check_timeouts()
+            self._ingest(frame.reshape(-1))
+
+    def _ingest(self, data):
+        """One monitor pass: buffer the frame, run VAD, cut a chunk, check limits."""
+        with self._lock:
+            self._frames.append(data.copy())
+            if self._source == "system":
+                # Live subtitles read only the tail; a long film must not
+                # grow the buffer for hours. Microphone takes keep their
+                # frames — the continuous chunk path owns that buffer.
+                limit = int(SYSTEM_BUFFER_S * SAMPLE_RATE) // FRAME
+                if len(self._frames) > limit:
+                    del self._frames[:len(self._frames) - limit]
+        self.level = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
+        prob = self._vad_prob(data)
+        self.vad_p = prob
+        if self.live_state is not None:
+            self.live_state["level"] = self.level
+            self.live_state["vad"] = self.vad_p
+        voiced = prob >= VOICE_THRESHOLD
+        if voiced:
+            self._t_last_voice = time.monotonic()
+            self._has_speech = True
+        self._track_chunk(len(data), voiced)
+        self._maybe_partial(float(self.cfg.get("partial_every_s", 1.5)))
+        self._check_timeouts()
+
+    def chunk_ready(self):
+        """The receiver has room again: stop deferring chunk cuts."""
+        self._chunk_deferred = False
+
+    def _track_chunk(self, samples, voiced):
+        """Cut the live take into bounded chunks (continuous mode only)."""
+        if not self._continuous:
+            return
+        self._chunk_samples += samples
+        if voiced:
+            self._voice_end = self._chunk_samples
+            self._quiet_samples = 0
+            self._voiced_samples += samples
+        else:
+            self._quiet_samples += samples
+        pause = int(CONTINUOUS_PAUSE_MS * SAMPLE_RATE / 1000)
+        if (self._voiced_samples >= int(CONTINUOUS_MIN_S * SAMPLE_RATE)
+                and self._quiet_samples >= pause):
+            # A pause is the natural seam: the chunk ends exactly on the last
+            # voiced frame, so no word is cut and no overlap is needed.
+            self._flush_chunk(self._voice_end, 0)
+            return
+        if self._chunk_samples >= int(CONTINUOUS_CHUNK_S * SAMPLE_RATE):
+            # The speaker runs on: cut at the cap and carry the tail into the
+            # next chunk, so a word split here is complete in the next pass.
+            self._flush_chunk(self._chunk_samples,
+                              int(CONTINUOUS_OVERLAP_S * SAMPLE_RATE))
+            return
+        if (self._chunk_deferred
+                and self._chunk_samples >= int(CONTINUOUS_HARD_MAX_S * SAMPLE_RATE)):
+            # Recognition is far behind; keeping the audio would grow without
+            # bound. Drop this piece and say so — never silently.
+            self.log.warning(
+                "Continuous chunk dropped: %.0f s buffered while recognition "
+                "is behind", self._chunk_samples / SAMPLE_RATE)
+            self._drop_buffer()
+
+    def _flush_chunk(self, end, keep):
+        """Hand one chunk to the receiver; trim the buffer only when it took it."""
+        if self._chunk_deferred:
+            return
+        with self._lock:
+            frames = self._frames
+            total = len(frames) * FRAME
+            count = min(end, total) // FRAME
+            if count <= 0:
+                return
+            keep_count = min(keep // FRAME, count)
+            chunk_frames = list(frames[:count])
+            rest = list(frames[count:])
+            overlap = chunk_frames[count - keep_count:] if keep_count else []
+            trimmed = overlap + rest
+        chunk = np.concatenate(chunk_frames)
+        accepted = True
+        if self.on_chunk is not None:
+            try:
+                accepted = self.on_chunk(chunk) is not False
+            except Exception as e:  # noqa: BLE001 - the take must keep going
+                self.log.warning("Chunk handoff failed: %s", e)
+                accepted = False
+        if not accepted:
+            self._chunk_deferred = True
+            return
+        with self._lock:
+            self._frames = trimmed
+            if self._keep_take:
+                self._take_frames.extend(
+                    chunk_frames[:count - keep_count])
+        self._chunk_samples = len(trimmed) * FRAME
+        self._voice_end = 0
+        self._quiet_samples = self._chunk_samples
+        self._voiced_samples = 0
+
+    def _drop_buffer(self):
+        with self._lock:
+            self._frames = []
+        self._chunk_samples = 0
+        self._voice_end = 0
+        self._quiet_samples = 0
+        self._voiced_samples = 0
 
     def _maybe_partial(self, partial_every_s):
         """Fire a partial transcribe every partial_every_s of live speech."""
-        if self._source == "system":
-            return
         if self.on_partial is None or not self._has_speech:
             return
+        every = float(partial_every_s)
+        if self._source == "system":
+            # A film's recognition is heavier than dictation's and the plate
+            # is read for seconds: update it less often, never faster than
+            # SYSTEM_PARTIAL_EVERY_S.
+            every = max(every, SYSTEM_PARTIAL_EVERY_S)
         now = time.monotonic()
-        if now - self._t_last_partial < partial_every_s:
+        if now - self._t_last_partial < every:
             return
         with self._lock:
             if len(self._frames) < SAMPLE_RATE // FRAME:  # < 1 s of audio
@@ -470,13 +653,15 @@ class Recorder:
         threading.Thread(target=self.on_partial, args=(snapshot,), daemon=True).start()
 
     def _check_timeouts(self):
+        if self._source == "system":
+            # A film may have long quiet passages and no natural end: the
+            # take closes by the hotkey (or a loopback error), never by a
+            # timer — no silence auto-stop and no max_record_s cut.
+            return
         now = time.monotonic()
         elapsed = now - self._t_start
-        if elapsed >= self.cfg["max_record_s"]:
+        if not self._continuous and elapsed >= self.cfg["max_record_s"]:
             self._auto_stop("limit")
-            return
-        if self._source == "system":
-            # A film may have long quiet passages; only max_record_s closes it.
             return
         if (
             self.cfg.get("auto_stop")

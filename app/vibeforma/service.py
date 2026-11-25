@@ -2,18 +2,25 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import os
+import queue
 import threading
 import time
+from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import dictionary
 import errors
+import hallucination
 import history
 import snippets
 import stats
+import textclean
 import textrules
-from config import DATA_DIR, VERSION, find_input_device
+import transcript
+from config import DATA_DIR, VERSION, find_input_device, match_app_profile
 
 from . import (
     STATE_ERROR,
@@ -29,6 +36,208 @@ from .settings_ops import SettingsOps
 from .status import write_status
 from .update_ops import UpdateActions
 from .util import beep
+
+CONTINUOUS_QUEUE_CHUNKS = 8   # chunks waiting for the background final pass
+CONTEXT_TAIL_CHARS = 160      # one context source in hotwords, cut at a word
+_SEAM_WORDS = 12              # a repeated run at a seam is never longer
+_SENTENCE_END = frozenset(".!?\u2026")
+_WORD_EDGES = "\"'()[]{}<>,.;:!?\u2014\u2013-"
+# Live subtitles (F9): the plate is the last one or two phrases of a system
+# take, never a transcript. It is bounded, and a text-only partial has no
+# engine readings, so only a short known stop phrase or a loop is rejected.
+SUBTITLE_PHRASES = 2
+SUBTITLE_MAX_CHARS = 400
+SUBTITLE_STOP_MAX_WORDS = 12
+
+
+def _bare_word(word: str) -> str:
+    """A seam word without edge punctuation or case, for comparison."""
+    return word.strip(_WORD_EDGES).casefold()
+
+
+def _edge_punctuation(word: str) -> str:
+    """The punctuation this word ends with ('' when it has none)."""
+    return word[len(word.rstrip(_WORD_EDGES)):]
+
+
+def _keep_punctuation(kept: str, dropped: str) -> str:
+    """Two copies of one seam word: keep the stronger trailing punctuation."""
+    kept_tail = _edge_punctuation(kept)
+    dropped_tail = _edge_punctuation(dropped)
+    if not dropped_tail or kept_tail[-1:] in _SENTENCE_END:
+        return kept
+    if not kept_tail:
+        return kept + dropped_tail
+    return kept[:len(kept) - len(kept_tail)] + dropped_tail
+
+
+def join_chunks(parts: list[str]) -> str:
+    """Join recognized pieces into one text without repeating seam words.
+
+    A continuous take is recognized piecewise; every seam may repeat words
+    (the overlap carried across a hard cut, or the engine repeating the
+    boundary). The longest shared run is dropped from the next piece, and its
+    punctuation is kept on the word that stays, so a sentence end is never
+    lost. A trailing piece that is only a prefix of the next piece's first
+    word is the word split by a hard boundary: the complete word follows.
+    """
+    pieces = [part.strip() for part in parts if part and part.strip()]
+    if not pieces:
+        return ""
+    if len(pieces) == 1:
+        return pieces[0]
+    words: list[str] = []
+    for piece in pieces:
+        piece_words = piece.split()
+        if words and piece_words:
+            last = _bare_word(words[-1])
+            first = _bare_word(piece_words[0])
+            if (len(last) >= 4 and len(last) < len(first)
+                    and first.startswith(last)
+                    and _edge_punctuation(words[-1])[-1:] not in _SENTENCE_END):
+                words.pop()
+        limit = min(len(words), len(piece_words), _SEAM_WORDS)
+        for size in range(limit, 0, -1):
+            left = [_bare_word(word) for word in words[-size:]]
+            right = [_bare_word(word) for word in piece_words[:size]]
+            if left == right:
+                words[-1] = _keep_punctuation(words[-1], piece_words[size - 1])
+                piece_words = piece_words[size:]
+                break
+        words.extend(piece_words)
+    return " ".join(words)
+
+
+def _split_phrases(text: str) -> list[str]:
+    """One cumulative partial -> phrases: sentence ends and line breaks cut.
+
+    A partial re-recognizes the last PARTIAL_WINDOW_S on every tick, so the
+    plate splits it into sentences and keeps only the end. A closing quote or
+    bracket that lands in its own piece stays with the phrase it closes.
+    """
+    pieces: list[str] = []
+    current: list[str] = []
+    for ch in str(text or ""):
+        current.append(ch)
+        if ch in _SENTENCE_END or ch == "\n":
+            phrase = "".join(current).strip()
+            if phrase:
+                pieces.append(phrase)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        pieces.append(tail)
+    merged: list[str] = []
+    for phrase in pieces:
+        if merged and not any(ch.isalnum() for ch in phrase):
+            merged[-1] += phrase
+        else:
+            merged.append(phrase)
+    return merged
+
+
+def _subtitle_rejection(phrase: str) -> str | None:
+    """Why a text-only partial must not reach the plate, or None.
+
+    A partial carries no ``no_speech_prob`` and no compression ratio, so the
+    final-path guard cannot judge it. The honest limit is two text-only
+    families: a repetition loop, and a known stop phrase only while the
+    phrase is short — the same words inside real speech are kept.
+    """
+    if not any(ch.isalnum() for ch in phrase):
+        return "no words"
+    if hallucination.is_loop(phrase):
+        return "repetition loop"
+    if (len(phrase.split()) <= SUBTITLE_STOP_MAX_WORDS
+            and hallucination.stop_phrase(phrase)):
+        return "stop phrase"
+    return None
+
+
+def _tail_words(text: str, limit: int) -> str:
+    """The end of a too-long phrase, cut at a word edge when one is near."""
+    tail = text[-limit:]
+    space = tail.find(" ")
+    if 0 <= space < limit // 4:
+        tail = tail[space + 1:]
+    return tail.strip()
+
+
+def _subtitle_plate(text: str) -> list[str]:
+    """The last phrases of one cumulative partial: bounded and deduplicated.
+
+    The partial slides across the take, so the same sentence is recognized
+    again and again at the window's edge; identical neighbours collapse. The
+    total length is capped — the HUD is a glance, not a transcript.
+    """
+    kept: list[str] = []
+    for phrase in reversed(_split_phrases(text)):
+        if _subtitle_rejection(phrase) is not None:
+            continue
+        if (kept
+                and hallucination.normalize(phrase)
+                == hallucination.normalize(kept[0])):
+            continue
+        kept.insert(0, phrase)
+        if len(kept) == SUBTITLE_PHRASES:
+            break
+    total = sum(len(phrase) for phrase in kept) + max(0, len(kept) - 1)
+    while len(kept) > 1 and total > SUBTITLE_MAX_CHARS:
+        total -= len(kept.pop(0)) + 1
+    if kept and len(kept[0]) > SUBTITLE_MAX_CHARS:
+        kept[0] = _tail_words(kept[0], SUBTITLE_MAX_CHARS)
+    return kept
+
+
+def _shift_segments(rows: list[transcript.Segment],
+                    offset: float) -> list[transcript.Segment]:
+    """Chunk segments on the take's timeline; the readings are kept."""
+    shifted: list[transcript.Segment] = []
+    for row in rows:
+        words = None
+        if row.words:
+            words = [replace(word, start=word.start + offset,
+                             end=word.end + offset) for word in row.words]
+        shifted.append(replace(row, start=row.start + offset,
+                               end=row.end + offset, words=words))
+    return shifted
+
+
+def _context_tail(text: str, limit: int = CONTEXT_TAIL_CHARS) -> str:
+    """The last words of a context source, on one line and bounded.
+
+    A previous phrase carries the names and the style of the take; only its
+    ending goes to the prompt, so a long sentence never spends the hotwords
+    budget whole. The cut lands on a word boundary when there is one.
+    """
+    flat = " ".join(str(text or "").split())
+    if len(flat) <= limit:
+        return flat
+    tail = flat[-limit:]
+    cut = tail.find(" ")
+    if cut >= 0:
+        tail = tail[cut + 1:]
+    return tail.strip()
+
+
+def _join_hotwords(*parts: Any) -> str:
+    """Comma-separated hotword terms from several sources, without repeats.
+
+    The user's own hotwords and the take's context are one set for the
+    engine: a term already present is never added twice, whatever its case.
+    The profile's terms join the same set later, through the dictionary
+    ``hotwords`` merge in ``asr.py``, so the prompt carries every term once.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for chunk in str(part or "").split(","):
+            term = chunk.strip()
+            key = term.casefold()
+            if term and key not in seen:
+                seen.add(key)
+                out.append(term)
+    return ", ".join(out)
 
 
 class Service(HistoryActions, SettingsOps, UpdateActions):
@@ -53,33 +262,74 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._running = True
         self._partial_busy = False
         self._cancel_evt = threading.Event()
+        # Continuous dictation: finalized chunk texts, their segments on the
+        # take's timeline, and the one worker that recognizes the queue.
+        self._chunk_q: queue.Queue[Any] = queue.Queue(
+            maxsize=CONTINUOUS_QUEUE_CHUNKS)
+        self._chunk_texts: list[str] = []
+        self._chunk_segments: list[transcript.Segment] = []
+        self._chunk_offset = 0.0
+        self._chunk_worker: threading.Thread | None = None
+        self._chunk_lock = threading.Lock()
         self._update_busy = False
         self._update_failed = False
         self._test_mode = False
         self._panel_mode = False
         self._draft_busy = False
+        # The draft's wider pass (card-247): one retry at a time, and the
+        # text held before it so the person can roll back. The WAV of the
+        # draft's take lives in ``_draft_wav`` beside the text it produced.
+        self._retry_busy = False
+        self._draft_prev_text = ""
+        self._draft_prev_uncertain: list[str] = []
+        self._draft_prev_offer = False
         self._history_cursor = None
         self._history_saved = ""
+        self._history_saved_uncertain: list[str] = []
         self._history_total = 0
+        self._history_saved_wav: bytes | None = None
+        self._draft_wav: bytes | None = None
         self.pending_update = None
         self.update_check_state = "idle"
         self.update_check_tag = ""
+        # A voice action (card-250) may ask for another model; the switch
+        # waits for the idle state set_model needs.
+        self._pending_model = ""
         self.panel_request = threading.Event()
         self.history = history.History(history.history_path(DATA_DIR))
+        if "history_audio" in self.cfg and not self.cfg.get("history_audio"):
+            # Off means off across restarts too: no sound from an earlier run
+            # outlives the option. A partial config (an embedder, a test) does
+            # not name the option, so it never deletes anything.
+            self.history.drop_audio()
         self.stats = stats.Stats(stats.stats_path(DATA_DIR))
         self._record_started = 0.0
         self._record_seconds = 0.0
         self._last_insert = None
         self._target_title = ""
         self._target_hwnd = None
+        # Dictation context (F11): the previous phrase and the selected text
+        # of this take, in memory only. Off by default, so nothing is read.
+        self._last_phrase = ""
+        self._context_hotwords = ""
+        # By-app profiles (card-251): the take's target address fixes the
+        # profile once; the later foreground window never re-picks it.
+        self._app_profile_ready = False
+        self._app_profile_hwnd: Any = None
+        self._app_profile_cached: dict[str, Any] | None = None
         # shared live view for the HUD (written by worker threads, read by GUI)
         self.live: dict[str, Any] = {
             "state": STATE_LOADING,
             "level": 0.0,
             "vad": 0.0,
             "partial": "",
+            "subtitles": [],
             "draft": "",
             "draft_rev": 0,
+            "draft_offer": False,
+            "draft_rollback": False,
+            "draft_audio": False,
+            "language_hint": None,
             "last": "",
             "last_ts": 0.0,
             "device": "",
@@ -133,6 +383,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         if self.tray:
             self.tray.set_state(state)
         self._maybe_apply_pending_update()
+        self._maybe_apply_pending_model()
 
     def _sync_cancel_watcher(self, state: str) -> None:
         """The global Esc binding lives only while a dictation is in flight.
@@ -231,9 +482,15 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             dev_name = str(self.cfg.get("input_device", ""))
         self.live["device"] = dev_name
         self.live["partial"] = ""
+        self.live["subtitles"] = []
         self.live["level"] = 0.0
+        # A new take starts with no language note: the previous one is not
+        # about the audio being recorded now.
+        self.live["language_hint"] = None
         self._partial_busy = False
         self._cancel_evt.clear()
+        self._reset_chunks()
+        self._app_profile_ready = False   # a new take matches its own target
         if self._panel_mode:
             # The panel is the foreground window; there is no field to aim at.
             self._target_hwnd = None
@@ -270,13 +527,224 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 self.tray.notify(errors.text(self.cfg, kind, e))
             return
         self._set_state(STATE_RECORDING)
+        # The take is already capturing: a slow clipboard read never eats the
+        # first word, and the first chunk or partial lands after it anyway.
+        self._capture_dictation_context()
+
+    def _capture_dictation_context(self) -> None:
+        """Collect this take's hotwords context; option off — nothing is read.
+
+        On, the ending of the previous phrase and the text selected in the
+        target window bias the recognition: a name is written the same way
+        and the style does not jump. The selection is copied through the
+        clipboard by ``insert.read_selected_text`` and put back there; the
+        panel has no field to read from. Only the lengths are logged, never
+        the words themselves, and nothing is written to ``config.json``.
+        """
+        self._context_hotwords = ""
+        if self._test_mode or not self.cfg.get("dictation_context", False):
+            return
+        parts = []
+        previous = _context_tail(getattr(self, "_last_phrase", ""))
+        if previous:
+            parts.append(previous)
+        if not self._panel_mode:
+            import insert as insert_mod
+            try:
+                selected = _context_tail(
+                    insert_mod.read_selected_text(self.log))
+            except Exception as e:  # noqa: BLE001 - a context read never breaks a take
+                self.log.debug("Dictation context: selection skipped: %s", e)
+                selected = ""
+            if selected:
+                parts.append(selected)
+        self._context_hotwords = ", ".join(parts)
+        if parts:
+            self.log.info("Dictation context: %d source(s), %d chars",
+                          len(parts), len(self._context_hotwords))
+
+    def _app_profile(self) -> dict[str, Any] | None:
+        """The by-app profile of the window this take was aimed at.
+
+        The address is ``_target_hwnd``, captured when the recording started
+        (card-251): the profile follows the window the person spoke into,
+        never the window that happens to be active when the text is ready.
+        No address (the panel), no profiles or an unreadable window all mean
+        the global rules only. Resolved once per address; a new take clears
+        the cache.
+        """
+        hwnd = getattr(self, "_target_hwnd", None)
+        # An embedder or a test double may construct the service without
+        # __init__: no cache is ready there, the profile is resolved fresh.
+        if (getattr(self, "_app_profile_ready", False)
+                and hwnd == getattr(self, "_app_profile_hwnd", None)):
+            return getattr(self, "_app_profile_cached", None)
+        profile = None
+        profiles = self.cfg.get("app_profiles")
+        if profiles and hwnd:
+            import insert as insert_mod
+            try:
+                process, title = insert_mod.window_identity(hwnd)
+                profile = match_app_profile(profiles, process, title)
+            except Exception as e:  # noqa: BLE001 - an unreadable window keeps the global rules
+                self.log.debug("App profile skipped: %s", e)
+                profile = None
+        if profile is not None:
+            self.log.debug("App profile: %s (process %s)", profile.get("name"),
+                           profile.get("process") or "-")
+        self._app_profile_ready = True
+        self._app_profile_hwnd = hwnd
+        self._app_profile_cached = profile
+        return profile
+
+    @contextlib.contextmanager
+    def _context_engine(self, engine: Any = None) -> Iterator[None]:
+        """One recognition call with this take's context in the hotwords.
+
+        ``asr.py`` is untouched (card-248): its ``_hotwords`` reads the
+        config dict it was given, so the engine gets a shallow copy carrying
+        the merged string for the call and the user's dict is put back after.
+        The copy also carries the take's dictionary — the profile's entries
+        over the global ones (card-251) — so the recognition prompt is one
+        deduplicated set of the user hotwords, the profile terms and the
+        context. ``config.json`` never sees either: the shared config object
+        is not modified.
+        """
+        extra = getattr(self, "_context_hotwords", "")
+        engine = engine if engine is not None else self.asr
+        base = getattr(engine, "cfg", None) if engine is not None else None
+        if engine is None or not isinstance(base, dict):
+            yield
+            return
+        profile = self._app_profile()
+        profile_entries = profile.get("dictionary") if profile else None
+        if not extra and not profile_entries:
+            yield
+            return
+        call = {**base, "hotwords": _join_hotwords(base.get("hotwords"), extra)}
+        if profile_entries:
+            call["dictionary"] = dictionary.merge(base.get("dictionary"),
+                                                  profile_entries)
+        engine.cfg = call
+        try:
+            yield
+        finally:
+            engine.cfg = base
 
     def _make_recorder(self) -> Any:
         import audio as audio_mod
+        # History with sound (card-256) keeps the whole take: the chunk cuts
+        # then leave a copy behind, and the WAV is not only the tail.
+        keep_take = bool(self.cfg.get("history", False)
+                         and self.cfg.get("history_audio", False))
         return audio_mod.Recorder(self.cfg, self.log, self.vad,
                                   self._on_auto_stop,
                                   on_partial=self._on_partial,
+                                  on_chunk=self._on_audio_chunk,
+                                  keep_take=keep_take,
                                   live_state=self.live)
+
+    # -- continuous dictation (long speech, one insertion) ----------------
+    def _reset_chunks(self) -> None:
+        """A new phrase starts with no finalized pieces and an empty queue."""
+        with self._chunk_lock:
+            self._chunk_texts = []
+            self._chunk_segments = []
+            self._chunk_offset = 0.0
+        self._chunk_q = queue.Queue(maxsize=CONTINUOUS_QUEUE_CHUNKS)
+        self._chunk_worker = None
+
+    def _on_audio_chunk(self, chunk: Any) -> bool:
+        """One bounded piece of the live take: queue it for the final pass.
+
+        The chunk pass is the final dictation pass (beam 5, word timestamps),
+        not the greedy preview: the text that reaches the field is built from
+        finals with priority over the live partial. Returns False when the
+        queue is full, so the recorder keeps the audio and retries later.
+        """
+        if self.asr is None or self.state != STATE_RECORDING:
+            return False
+        try:
+            self._chunk_q.put_nowait(chunk)
+        except queue.Full:
+            self.log.info("Continuous chunk deferred: recognition is behind")
+            return False
+        if self._chunk_worker is None:
+            self._chunk_worker = threading.Thread(
+                target=self._chunk_loop, args=(self._chunk_q,), daemon=True)
+            self._chunk_worker.start()
+        return True
+
+    def _chunk_loop(self, chunks: queue.Queue[Any]) -> None:
+        """Recognize this take's chunks in order; a failed piece is skipped."""
+        while True:
+            chunk = chunks.get()
+            chunks.task_done()
+            if chunk is None:
+                return
+            engine = self.asr
+            if engine is None:
+                continue
+            try:
+                with self._context_engine(engine):
+                    text = engine.transcribe(chunk, verbose=False)
+                seconds = len(chunk) / 16000.0
+                with self._chunk_lock:
+                    if text:
+                        self._chunk_texts.append(text)
+                        self.live["partial"] = join_chunks(
+                            list(self._chunk_texts))
+                    rows = list(getattr(engine, "last_segments", None) or [])
+                    self._chunk_segments.extend(
+                        _shift_segments(rows, self._chunk_offset))
+                    self._chunk_offset += seconds
+                self.log.debug("Continuous chunk: %.1f s, %d chars",
+                               seconds, len(text or ""))
+            except Exception as e:  # noqa: BLE001 - one piece must not stop the take
+                self.log.warning("Continuous chunk recognition failed: %s", e)
+                with self._chunk_lock:
+                    self._chunk_offset += len(chunk) / 16000.0
+            finally:
+                rec = self.recorder
+                if rec is not None:
+                    rec.chunk_ready()
+
+    def _finish_chunks(self) -> threading.Thread | None:
+        """Close the chunk queue; the worker still has to drain its backlog."""
+        worker, self._chunk_worker = self._chunk_worker, None
+        if worker is None:
+            return None
+        self._chunk_q.put(None)
+        return worker
+
+    def _take_is_system(self, rec: Any = None) -> bool:
+        """Whether this take is the system source (live subtitles, no insert).
+
+        The recorder knows its source for the whole take; a test double or an
+        embedder without one falls back to the configured source. A
+        microphone take is never decided for: everything below branches only
+        when the answer is system.
+        """
+        rec = rec if rec is not None else getattr(self, "recorder", None)
+        source = getattr(rec, "_source", None) if rec is not None else None
+        if source is None:
+            source = self.cfg.get("audio_source")
+        return str(source or "microphone") == "system"
+
+    def _publish_subtitles(self, text: str) -> None:
+        """Publish the last phrases of a system take for the HUD plate.
+
+        The text never reaches the field: a system take has no dictation
+        result, only this view. Rejected phrases are named in the log at
+        debug — the limit is text-only and cannot claim the final-path
+        guard's confidence readings, so no text is logged either.
+        """
+        for phrase in _split_phrases(text):
+            reason = _subtitle_rejection(phrase)
+            if reason is not None:
+                self.log.debug("Subtitle dropped: %s (%d chars)",
+                               reason, len(phrase))
+        self.live["subtitles"] = _subtitle_plate(text)
 
     def _on_partial(self, audio_snapshot: Any) -> None:
         """Streaming partial: transcribe the in-flight phrase for the HUD."""
@@ -287,8 +755,9 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         def _run() -> None:
             try:
                 t0 = time.monotonic()
-                text = self.asr.transcribe(audio_snapshot, verbose=False,
-                                           partial=True)
+                with self._context_engine():
+                    text = self.asr.transcribe(audio_snapshot, verbose=False,
+                                               partial=True)
                 took = time.monotonic() - t0
                 audio_s = len(audio_snapshot) / 16000.0
                 if took >= 2.0:
@@ -300,7 +769,17 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                         "Partial: audio %.1f s, recognition %.2f s",
                         audio_s, took)
                 if text and self.state == STATE_RECORDING:
-                    self.live["partial"] = text
+                    if self._take_is_system():
+                        # System audio is a live subtitle, never a phrase
+                        # for the field: the plate carries the tail, the
+                        # partial field stays empty.
+                        self._publish_subtitles(text)
+                    else:
+                        # The finalized chunks come first: a partial is only
+                        # the tail of the take and never replaces final text.
+                        with self._chunk_lock:
+                            finalized = join_chunks(list(self._chunk_texts))
+                        self.live["partial"] = join_chunks([finalized, text])
             except Exception as e:  # noqa: BLE001 - a failed partial must not stop the recording
                 self.log.debug("Partial transcription: %s", e)
             finally:
@@ -316,16 +795,32 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         if rec is None:
             self._set_state(STATE_IDLE)
             return
+        system = self._take_is_system(rec)
         buf = rec.stop()
         started = self._record_started
         self._record_started = 0.0
-        self._record_seconds = (max(0.0, time.time() - started)
-                                if started else 0.0)
+        seconds = max(0.0, time.time() - started) if started else 0.0
+        self._record_seconds = seconds
         if self.cfg.get("beep_off"):
             beep(900, 70)
+        if system:
+            # Live subtitles are a view, never a dictation: the take ends
+            # with nothing recognized, inserted, remembered or drafted. The
+            # last plate stays until the next take replaces it.
+            self.live["partial"] = ""
+            self.live["level"] = 0.0
+            self._panel_mode = False
+            self._context_hotwords = ""
+            self._app_profile_ready = False
+            self._record_seconds = 0.0
+            self.log.info("System audio take stopped: %.1f s, live subtitles "
+                          "only, nothing inserted", seconds)
+            self._set_state(STATE_IDLE)
+            return
         self._set_state(STATE_PROCESSING)
-        threading.Thread(target=self._transcribe_worker, args=(buf, rec),
-                         daemon=True).start()
+        worker = self._finish_chunks()
+        threading.Thread(target=self._transcribe_worker,
+                         args=(buf, rec, worker), daemon=True).start()
 
     def cancel_recording(self) -> None:
         """Esc: drop the in-flight dictation, nothing is inserted or saved."""
@@ -341,7 +836,12 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             self._record_seconds = 0.0
             self._panel_mode = False
             self.live["partial"] = ""
+            self.live["subtitles"] = []
             self.live["level"] = 0.0
+            self._context_hotwords = ""   # a dropped take keeps no context
+            # The chunk worker drains its backlog and exits on its own; the
+            # finalized text is dropped with the phrase.
+            self._finish_chunks()
             self._set_state(STATE_IDLE)
             self._report_cancelled()
             self.log.info("Recording cancelled — buffer dropped")
@@ -350,6 +850,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 return
             self._cancel_evt.set()
             self.live["partial"] = ""
+            self.live["subtitles"] = []
             self.live["level"] = 0.0
             self._report_cancelled()
             self.log.info("Recognition cancel requested")
@@ -370,12 +871,26 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.live["level"] = 0.0
         self.log.info("Recognition cancelled — result dropped")
 
-    def _transcribe_worker(self, buf: Any, rec: Any) -> None:
+    def _transcribe_worker(self, buf: Any, rec: Any,
+                           chunk_worker: threading.Thread | None = None) -> None:
         try:
+            if chunk_worker is not None:
+                # Finalized chunks land before the tail: the text is built in
+                # take order and inserted once.
+                chunk_worker.join()
             if self._cancel_evt.is_set():
                 self._discard_cancelled()
                 return
-            if buf is None or not rec.had_speech():
+            # An embedder or a test double may construct the service without
+            # __init__: no chunk state means no chunks were queued.
+            lock = getattr(self, "_chunk_lock", None)
+            chunk_texts: list[str] = []
+            chunk_rows: list[transcript.Segment] = []
+            if lock is not None:
+                with lock:
+                    chunk_texts = list(self._chunk_texts)
+                    chunk_rows = list(self._chunk_segments)
+            if not rec.had_speech() and not chunk_texts:
                 if self._test_mode:
                     self._finish_mic_test("", "empty")
                     return
@@ -387,10 +902,46 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                     self.tray.notify(self.tr("notify.no_speech"))
                 return
             t0 = time.time()
-            text = self.asr.transcribe(buf)
+            tail_text = ""
+            tail_recognized = False
+            if buf is not None:
+                with self._context_engine():
+                    tail_text = self.asr.transcribe(buf)
+                tail_recognized = True
+            # The engine's own verdict on the take: a low-confidence phrase is
+            # never pasted blind, it waits in the panel draft with its
+            # doubtful words marked. An engine without readings (an embedder,
+            # a test double) keeps the old paste path. The chunk passes use
+            # the same final settings, so their readings join the tail's on
+            # one timeline.
+            rows = chunk_rows
+            if tail_recognized:
+                rows = rows + list(getattr(self.asr, "last_segments", None)
+                                   or [])
+            # What the take sounded like (F12): the pinned language stays the
+            # recognition language, the HUD only names the mismatch. A take
+            # without a reading clears the previous hint.
+            hint = getattr(self.asr, "last_language_hint", None)
+            self.live["language_hint"] = (
+                dict(hint) if isinstance(hint, dict) else None)
+            uncertain = transcript.uncertain_words(rows)
+            # A doubtful take is what the wider pass is offered for
+            # (card-247): the final pass fell back to a temperature above
+            # zero, or the engine's own readings mark the phrase unsure. The
+            # offer belongs to the take, not to the reason the draft is shown.
+            doubtful = transcript.needs_review(rows) or bool(uncertain)
+            # One text from the finalized pieces and the tail; seam words are
+            # repeated by the overlap and dropped here, never in the field.
+            text = join_chunks([*chunk_texts, tail_text])
             dt = time.time() - t0
             self.log.info("Latency to ready text: %.2f s", dt)
-            text, hits = dictionary.apply(text, self.cfg.get("dictionary"))
+            profile = self._app_profile()
+            if profile is not None:
+                self.log.info("App profile: %s", profile.get("name"))
+            text, hits = dictionary.apply(
+                text,
+                dictionary.merge(self.cfg.get("dictionary"),
+                                 profile.get("dictionary") if profile else None))
             if hits:
                 self.log.info("Dictionary: %d replacement(s)", hits)
             text, rule_hits = textrules.apply(text, self.cfg)
@@ -414,15 +965,72 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                     self.tray.notify(self.tr("notify.not_recognized_short"))
                 return
             self._count_dictation(text)
+            # The take as WAV bytes when the person keeps history with sound;
+            # one encode per dictation, shared by the draft and the record.
+            wav = self._dictation_wav(buf)
+            # A continuous take hands its chunks away as it goes: without the
+            # history sound option the recorder keeps no full buffer, and the
+            # bytes left are only the tail. The wider pass re-reads the whole
+            # take, so it is offered only when the take was kept whole.
+            tail_only = bool(chunk_texts) and wav is None
+            if doubtful and tail_only:
+                self.log.info("Draft retry: continuous take without its full "
+                              "buffer — the wider pass is not offered")
             # Run snippets (card-181) here, after the text rules and before
             # the draft and insertion paths, so both receive their result.
-            text, snippet_hits = snippets.apply(text,
-                                                self.cfg.get("snippets"))
+            text, snippet_hits = snippets.apply(
+                text,
+                snippets.merge(self.cfg.get("snippets"),
+                               profile.get("snippets") if profile else None))
             if snippet_hits:
                 self.log.info("Snippets: %d replacement(s)", snippet_hits)
+            # Voice actions (card-250): the whole phrase runs a command, picks
+            # another model or calls an external agent. Matching comes after
+            # the dictionary and the snippets, so a snippet may be the trigger.
+            action = self._match_action(text)
+            if action is not None and self._run_action(action, text):
+                # The phrase was a command: nothing reaches the text field.
+                self.live["partial"] = ""
+                self.live["level"] = 0.0
+                return
+            # Opt-in text cleanup (card-254): spoken numbers and dates become
+            # digits, filler words go, sentences start with a capital. It
+            # runs after the dictionary, the text rules and the snippets —
+            # their output is what the person sees — and after the action
+            # match, so a command phrase is compared as it was spoken. The
+            # draft and the insertion below both receive the cleaned text.
+            text, cleanup_hits = textclean.apply(text, self.cfg)
+            if cleanup_hits:
+                self.log.info("Text cleanup: %d change(s)", cleanup_hits)
+            if not text:
+                # The cleanup dropped the whole phrase (fillers only):
+                # nothing reaches the field, and the person hears about it.
+                self.log.info("Cleanup left no text — nothing inserted")
+                self.set_last(self.tr("notify.not_recognized"))
+                self.live["partial"] = ""
+                self.live["level"] = 0.0
+                if self.tray:
+                    self.tray.notify(self.tr("notify.not_recognized_short"))
+                return
+            # A phrase that reaches the field — pasted or drafted — is the
+            # context of the next take (F11): the same names, the same style.
+            self._last_phrase = text
+            # A doubtful draft keeps the take's sound for its wider pass
+            # (card-247), even with the history sound option off; a
+            # confident phrase never shows the retry, so it pays nothing.
+            draft_wav = self._panel_wav(buf, wav, doubtful and not tail_only)
             if self._panel_mode:
                 self._panel_mode = False
-                self._show_draft(text)
+                self._show_draft(text, wav=draft_wav,
+                                 run_hook=action is None,
+                                 uncertain=uncertain, offer=doubtful)
+                return
+            if transcript.needs_review(rows):
+                self.log.info("Low confidence — the phrase waits in the "
+                              "panel draft")
+                self._show_draft(text, wav=draft_wav,
+                                 run_hook=action is None,
+                                 uncertain=uncertain, offer=doubtful)
                 return
             import insert as insert_mod
             target_hwnd = getattr(self, "_target_hwnd", None)
@@ -432,7 +1040,9 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 # another: never a silent paste and never a dialog — the text
                 # waits in the panel draft.
                 self.log.info("Target window changed — draft in the panel")
-                self._show_draft(text)
+                self._show_draft(text, wav=draft_wav,
+                                 run_hook=action is None,
+                                 uncertain=uncertain, offer=doubtful)
                 return
             undo_state: dict[str, Any] = {}
             result = insert_mod.insert_text(
@@ -446,7 +1056,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             self.live["partial"] = ""
             self.live["level"] = 0.0
             if result == insert_mod.RESULT_COPIED:
-                self._remember(text, way=history.WAY_COPY)
+                self._remember(text, way=history.WAY_COPY, wav=wav)
                 self.set_last(self.tr("notify.copied"))
                 if self.tray:
                     self.tray.notify(self.tr("notify.copied"))
@@ -460,8 +1070,11 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                     "prev": undo_state.get("prev"),
                     "prev_known": bool(undo_state.get("prev_known")),
                 }
-                self._remember(text)
-                self._run_hook(text)
+                self._remember(text, wav=wav)
+                if action is None:
+                    # A failed action already spent this phrase on its own
+                    # command: never hand the same command the text again.
+                    self._run_hook(text)
                 message = self.inserted_message(text)
                 self.set_last(message)
                 if self.tray:
@@ -474,6 +1087,9 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 self.tray.notify(errors.text(self.cfg, "recognition", e))
         finally:
             self._cancel_evt.clear()
+            # The take is over: its context and its profile never outlive it.
+            self._context_hotwords = ""
+            self._app_profile_ready = False
             if self._running:
                 self._set_state(STATE_IDLE)
 
@@ -496,6 +1112,57 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         except Exception as e:  # noqa: BLE001 - the counters must not break dictation
             self.log.warning("Stats write failed: %s", e)
 
+    def _dictation_wav(self, buf: Any) -> bytes | None:
+        """The take as 16-bit PCM WAV bytes when history sound is on.
+
+        Off (the default) and history off mean ``None``: the encoder never
+        runs and nothing reaches the disk. An encoding failure is a line in
+        the log, never a lost dictation.
+        """
+        if not (self.cfg.get("history", False)
+                and self.cfg.get("history_audio", False)):
+            return None
+        if buf is None or not len(buf):
+            return None
+        try:
+            import audio as audio_mod
+            data: bytes = audio_mod.wav_bytes(buf)
+            return data
+        except Exception as e:  # noqa: BLE001 - sound must not break the text
+            self.log.warning("History audio skipped: %s", e)
+            return None
+
+    def _take_wav(self, buf: Any) -> bytes | None:
+        """The take as 16-bit PCM WAV bytes, whatever the history options.
+
+        The draft's wider pass re-reads the sound, so a doubtful draft keeps
+        its take even when history sound is off. Nothing reaches the disk
+        from here: ``_remember`` gates the history copy on its own, and the
+        bytes live in ``_draft_wav`` only while the draft does. An encoding
+        failure is a log line, never a lost draft.
+        """
+        try:
+            if buf is None or not len(buf):
+                return None
+            import audio as audio_mod
+            data: bytes = audio_mod.wav_bytes(buf)
+            return data
+        except Exception as e:  # noqa: BLE001 - the draft must survive a bad buffer
+            self.log.warning("Draft audio skipped: %s", e)
+            return None
+
+    def _panel_wav(self, buf: Any, wav: bytes | None,
+                   needed: bool) -> bytes | None:
+        """The WAV a draft keeps: the history copy, or the take for a retry.
+
+        ``needed`` is true for a doubtful take whose full buffer is held;
+        only then is the take encoded here. A confident phrase and a
+        continuous tail keep what the history option already produced.
+        """
+        if wav is not None or not needed:
+            return wav
+        return self._take_wav(buf)
+
     def _run_hook(self, text: str) -> None:
         """Hand the final text to the user's command in a daemon thread.
 
@@ -512,6 +1179,69 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             args=(command, text, self.cfg.get("hook_timeout_s", 5), self.log),
             daemon=True).start()
 
+    def _maybe_apply_pending_model(self) -> None:
+        """Switch to the model a voice action asked for, once the service idles.
+
+        ``set_model`` refuses to touch the engine while a dictation is in
+        flight, so the action only records the name and the idle transition
+        starts the switch.
+        """
+        # Hand-built services (a test's __new__, an embedder) never ran
+        # __init__: a missing field means no request, never a crash.
+        name = getattr(self, "_pending_model", "")
+        if not name or self.state != STATE_IDLE or self.asr is None:
+            return
+        self._pending_model = ""
+        self.set_model(name)
+
+    def _match_action(self, text: str) -> dict[str, str] | None:
+        """The voice action the whole phrase stands for, if any."""
+        import hook as hook_mod
+        action: dict[str, str] | None = hook_mod.match_action(
+            text, self.cfg.get("actions"))
+        return action
+
+    def _run_action(self, action: dict[str, str], text: str) -> bool:
+        """Run one voice action; True when the phrase was spent on it.
+
+        A ``model`` action only asks: the switch waits for the idle state
+        ``set_model`` needs, so the dictation ends first. A command-based
+        action runs here, in the worker thread, because its exit code decides
+        whether the phrase is still inserted: a failed command leaves the
+        words with the person and a status in the log, never a lost
+        dictation. The command is the configured hook command unless the
+        action names its own.
+        """
+        kind = action.get("kind") or "command"
+        if kind == "model":
+            name = action.get("model") or ""
+            if not name:
+                self.log.warning("Voice action has no model")
+                return False
+            self._pending_model = name
+            self.log.info("Voice action: model %s", name)
+            return True
+        command = action.get("command") or ""
+        if kind == "command" and not command:
+            command = str(self.cfg.get("hook_command") or "").strip()
+        if not command:
+            self.log.warning("Voice action has no command: %s",
+                             action.get("trigger", ""))
+            return False
+        import hook as hook_mod
+        ok = hook_mod.run_hook(command, text,
+                               self.cfg.get("hook_timeout_s", 5), self.log)
+        if not ok:
+            self.log.warning("Voice action failed: %s",
+                             action.get("trigger", ""))
+            return False
+        message = self.tr("notify.action_ran", name=action.get("trigger", ""))
+        self.log.info("Voice action ran: %s", action.get("trigger", ""))
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+        return True
+
     def inserted_message(self, text: str) -> str:
         """Notification text: the character count, the phrase on opt-in."""
         if self.cfg.get("notify_text", False):
@@ -520,33 +1250,76 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         return self.tr("notify.inserted_chars", n=len(text))
 
     # -- panel draft -------------------------------------------------------
-    def _show_draft(self, text: str) -> None:
-        """Hand the recognized text to the panel for review and insertion."""
+    def _show_draft(self, text: str, wav: bytes | None = None,
+                    run_hook: bool = True,
+                    uncertain: list[str] | None = None,
+                    offer: bool = False) -> None:
+        """Hand the recognized text to the panel for review and insertion.
+
+        ``uncertain`` names the words the engine doubted; the HUD marks them
+        inside the draft. The text is the reviewed one either way.
+
+        ``offer`` says this take is doubtful, so the HUD may offer the wider
+        pass (card-247) while the take's WAV is held; a draft shown for any
+        other reason keeps the offer off. Every new draft starts with no
+        rollback: the wider pass never reaches across takes.
+        """
         self._exit_history()
         self.live["partial"] = ""
         self.live["level"] = 0.0
         self.live["draft"] = text
+        self.live["draft_uncertain"] = list(uncertain or [])
+        self.live["draft_offer"] = bool(offer)
+        self.live["draft_rollback"] = False
+        self.live["draft_audio"] = wav is not None
+        self._draft_prev_text = ""
+        self._draft_prev_uncertain = []
+        self._draft_prev_offer = False
+        self._draft_wav = wav
         self._touch_draft()
         self.set_last(self.tr("hud.draft_ready"))
         self.log.info("Panel draft ready: %d chars", len(text))
-        self._run_hook(text)
+        if run_hook:
+            self._run_hook(text)
 
     def _touch_draft(self) -> None:
         """Change the revision so the HUD re-reads the draft."""
         self.live["draft_rev"] = int(self.live.get("draft_rev") or 0) + 1
 
+    def _clear_draft_offers(self) -> None:
+        """Drop both draft offers and the held previous text.
+
+        The offers are about one take's text: a new draft, a cancel, a
+        history flip or an insert must never leave a button that would act
+        on another take.
+        """
+        self.live["draft_offer"] = False
+        self.live["draft_rollback"] = False
+        self.live["draft_audio"] = self._draft_wav is not None
+        self._draft_prev_text = ""
+        self._draft_prev_uncertain = []
+        self._draft_prev_offer = False
+
     def _forget_draft(self) -> None:
         self._exit_history()
         self.live["draft"] = ""
+        self.live["draft_uncertain"] = []
+        self._draft_wav = None
+        self._clear_draft_offers()
         self._touch_draft()
 
     def cancel_draft(self) -> None:
         """Drop the panel draft; a history flip returns the set-aside draft."""
         if self._history_cursor is not None:
             saved = self._history_saved
+            saved_wav = self._history_saved_wav
+            saved_uncertain = self._history_saved_uncertain
             self._exit_history()
             if saved:
                 self.live["draft"] = saved
+                self.live["draft_uncertain"] = list(saved_uncertain)
+                self._draft_wav = saved_wav
+                self._clear_draft_offers()
                 self._touch_draft()
                 self.set_last(self.tr("hud.draft_ready"))
                 return
@@ -555,6 +1328,170 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._forget_draft()
         self.set_last(self.tr("notify.draft_cancelled"))
         self.log.info("Panel draft cancelled")
+
+    # -- draft retry (card-247) ---------------------------------------------
+    def retranscribe_draft(self) -> str:
+        """Re-recognize the panel draft's take with a wider search.
+
+        The HUD calls this on a click; the pass runs in a worker thread, so
+        the panel never waits on the model. Only the engine's own text
+        replaces the draft: the take's WAV is decoded again and the same
+        post-filter runs, but the dictionary, snippets, actions, text rules
+        and hook never see this pass. The text before it is kept for
+        ``rollback_draft``.
+
+        Refused while a take is being recorded, recognized or loaded, while
+        an insert or another retry is in flight, and when the take's audio is
+        not held. Returns "" — the new text arrives through the live draft.
+        """
+        if self.state in (STATE_LOADING, STATE_RECORDING, STATE_PROCESSING,
+                          STATE_UPDATING):
+            return self._retry_refused(self.tr("notify.wait_cycle"))
+        if self._retry_busy or self._draft_busy:
+            self.log.info("Draft retry ignored: a draft action is in flight")
+            self._touch_draft()
+            return ""
+        if not str(self.live.get("draft") or "").strip():
+            return ""
+        if self._draft_wav is None:
+            return self._retry_refused(
+                self.tr("notify.retranscribe_no_audio"))
+        self._retry_busy = True
+        try:
+            threading.Thread(target=self._retranscribe_draft_worker,
+                             daemon=True).start()
+        except Exception as e:  # a failed spawn is a notice
+            self._retry_busy = False
+            self.log.exception("Draft retry worker failed to start: %s", e)
+            return self._retry_refused(self.tr("notify.retranscribe_failed"))
+        return ""
+
+    def _retry_refused(self, message: str) -> str:
+        """A localized reason in the panel; a click that did nothing re-arms."""
+        self.set_last(message)
+        if self.live.get("draft"):
+            self._touch_draft()
+        return ""
+
+    def _wav_samples(self, data: bytes) -> Any:
+        """WAV bytes to 16 kHz float32 samples through ``audio.load_wav_16k``.
+
+        The loader reads a path, so the holder's bytes land in a temporary
+        file for exactly one read and are removed at once. A broken WAV is a
+        log line and ``None``; the caller turns it into a notice.
+        """
+        import tempfile
+
+        import audio as audio_mod
+        fd, path = tempfile.mkstemp(prefix="vibeforma-retry-", suffix=".wav")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            return audio_mod.load_wav_16k(path)
+        except Exception as e:  # noqa: BLE001 - a broken take is a notice
+            self.log.warning("Draft audio unreadable: %s", e)
+            return None
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+
+    def _retranscribe_draft_worker(self) -> None:
+        """One wider pass over the draft's take, in a worker thread.
+
+        The draft revision and the held bytes are captured first: a new
+        take, a cancel or an insert that lands mid-pass makes the result
+        stale, and a stale result is dropped instead of replacing another
+        take's text. A failed pass leaves the draft exactly as it was and
+        says so in the status line; the retry stays available.
+        """
+        gen = int(self.live.get("draft_rev") or 0)
+        wav = self._draft_wav
+        old_text = str(self.live.get("draft") or "")
+        old_uncertain = list(self.live.get("draft_uncertain") or [])
+        old_offer = bool(self.live.get("draft_offer"))
+        failed = False
+        try:
+            if self.state in (STATE_LOADING, STATE_RECORDING,
+                              STATE_PROCESSING, STATE_UPDATING):
+                self.set_last(self.tr("notify.wait_cycle"))
+                failed = True
+                return
+            if wav is None or self.asr is None:
+                self.set_last(self.tr("notify.retranscribe_no_audio"))
+                failed = True
+                return
+            samples = self._wav_samples(wav)
+            if samples is None:
+                self.set_last(self.tr("notify.retranscribe_failed"))
+                failed = True
+                return
+            if samples.shape[0] == 0:
+                self.set_last(self.tr("notify.retranscribe_no_speech"))
+                failed = True
+                return
+            text = str(self.asr.retranscribe(samples) or "").strip()
+            rows = list(getattr(self.asr, "last_segments", None) or [])
+            if not text:
+                self.set_last(self.tr("notify.retranscribe_no_speech"))
+                failed = True
+                return
+            if (int(self.live.get("draft_rev") or 0) != gen
+                    or self._draft_wav is not wav):
+                self.log.info("Draft retry dropped: the draft changed mid-pass")
+                return
+            uncertain = transcript.uncertain_words(rows)
+            self._draft_prev_text = old_text
+            self._draft_prev_uncertain = old_uncertain
+            self._draft_prev_offer = old_offer
+            self.live["draft"] = text
+            self.live["draft_uncertain"] = uncertain
+            self.live["draft_offer"] = bool(
+                transcript.needs_review(rows) or uncertain)
+            self.live["draft_rollback"] = True
+            self.live["draft_audio"] = True
+            self._touch_draft()
+            self.set_last(self.tr("draft.retranscribed", n=len(text)))
+            self.log.info("Draft retranscribed: %d chars", len(text))
+        except Exception as e:
+            self.log.exception("Draft retranscription failed: %s", e)
+            self.set_last(self.tr("notify.retranscribe_failed"))
+            failed = True
+        finally:
+            self._retry_busy = False
+            if (failed
+                    and int(self.live.get("draft_rev") or 0) == gen):
+                # Re-render the same text so the HUD re-arms its buttons.
+                self._touch_draft()
+
+    def rollback_draft(self) -> str:
+        """Restore the draft's text from before the last wider pass.
+
+        The snapshot is exact: the same characters and the same doubtful
+        words, byte for byte. The take's WAV is kept, so the wider pass may
+        be offered again when the restored take was doubtful; the rollback
+        offer itself is spent. Returns the restored text, or "" when there
+        is nothing to roll back to.
+        """
+        if not self.live.get("draft_rollback"):
+            return ""
+        if self._draft_busy or self._retry_busy:
+            self.log.info("Rollback ignored: a draft action is in flight")
+            return ""
+        text = self._draft_prev_text
+        uncertain = list(self._draft_prev_uncertain)
+        offer = bool(self._draft_prev_offer)
+        self.live["draft"] = text
+        self.live["draft_uncertain"] = uncertain
+        self.live["draft_offer"] = offer
+        self.live["draft_rollback"] = False
+        self.live["draft_audio"] = self._draft_wav is not None
+        self._draft_prev_text = ""
+        self._draft_prev_uncertain = []
+        self._draft_prev_offer = False
+        self._touch_draft()
+        self.set_last(self.tr("draft.rolled_back"))
+        self.log.info("Draft rolled back: %d chars", len(text))
+        return text
 
     # -- history browsing ---------------------------------------------------
     def browse_history(self, step: int) -> None:
@@ -583,15 +1520,23 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 self.set_last(self.tr("history.at_newest"))
                 return
             self._history_saved = str(self.live.get("draft") or "")
+            self._history_saved_wav = self._draft_wav
+            self._history_saved_uncertain = list(
+                self.live.get("draft_uncertain") or [])
             self._history_total = len(newest)
             self._history_cursor = 0
         else:
             nxt = self._history_cursor + (1 if step < 0 else -1)
             if nxt < 0:
                 saved = self._history_saved
+                saved_wav = self._history_saved_wav
+                saved_uncertain = self._history_saved_uncertain
                 self._exit_history()
                 if saved:
                     self.live["draft"] = saved
+                    self.live["draft_uncertain"] = list(saved_uncertain)
+                    self._draft_wav = saved_wav
+                    self._clear_draft_offers()
                     self._touch_draft()
                     self.set_last(self.tr("hud.draft_ready"))
                 else:
@@ -604,6 +1549,12 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             self._history_cursor = nxt
         record = newest[self._history_cursor]
         self.live["draft"] = str(record.get("text") or "")
+        # A browsed entry is not this draft's take: never attach the open
+        # take's sound or its doubtful words to a stored record, and never
+        # leave a retry or rollback button pointing at another take.
+        self.live["draft_uncertain"] = []
+        self._draft_wav = None
+        self._clear_draft_offers()
         self._touch_draft()
         self.set_last(self.tr("history.browsing",
                               n=self._history_cursor + 1,
@@ -614,7 +1565,113 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
     def _exit_history(self) -> None:
         self._history_cursor = None
         self._history_saved = ""
+        self._history_saved_uncertain = []
+        self._history_saved_wav = None
         self._history_total = 0
+
+    # -- retranscription ----------------------------------------------------
+    def retranscribe_last(self, model: str = "", prompt: str = "") -> str:
+        """Re-recognize the newest dictation with another model and prompt.
+
+        The take comes from the WAV saved beside the newest history entry
+        (the ``history_audio`` option). A temporary ASR is built for
+        ``model`` — the configured one when empty — and released after the
+        pass, so the live engine and its loaded weights are never touched.
+        ``prompt`` becomes the initial prompt; empty keeps the configured
+        one. The new text waits in the panel draft for review.
+
+        Returns the new text, or "" when the take is missing, the model
+        fails or nothing was recognized; the reason lands in the panel
+        status line either way.
+        """
+        if not self.cfg.get("history", False):
+            return self._retranscribe_notice(self.tr("history.off"))
+        if self.state in (STATE_RECORDING, STATE_PROCESSING, STATE_LOADING):
+            return self._retranscribe_notice(self.tr("notify.wait_cycle"))
+        records = self.history.load()
+        if not records:
+            return self._retranscribe_notice(self.tr("history.empty"))
+        path = self.history.record_audio_path(records[-1])
+        if not path or not os.path.isfile(path):
+            return self._retranscribe_notice(self.tr("history.no_audio"))
+        import audio as audio_mod
+        try:
+            samples = audio_mod.load_wav_16k(path)
+        except Exception as e:  # noqa: BLE001 - a broken WAV is a notice
+            self.log.warning("History audio unreadable: %s", e)
+            return self._retranscribe_notice(self.tr("history.audio_broken"))
+        wanted = str(model or "").strip() or str(self.cfg.get("model") or "")
+        import asr as asr_mod
+        temp = asr_mod.ASR({**self.cfg, "model": wanted}, self.log)
+        try:
+            temp.load()
+            t0 = time.monotonic()
+            segments = temp.transcribe_array(
+                samples, len(samples) / float(audio_mod.SAMPLE_RATE),
+                language=str(self.cfg.get("language") or "") or None,
+                initial_prompt=str(prompt or "").strip() or None)
+            text = "".join(seg.text for seg in segments).strip()
+            took = time.monotonic() - t0
+        except Exception as e:  # a failed model is a notice, not a crash
+            self.log.exception("Retranscription failed: %s", e)
+            return self._retranscribe_notice(
+                errors.last_line(self.cfg, "recognition", e))
+        finally:
+            # One dictation-sized pass only: the temporary weights go now.
+            with contextlib.suppress(Exception):
+                temp.model = None
+            gc.collect()
+        if not text:
+            return self._retranscribe_notice(
+                self.tr("notify.not_recognized_short"))
+        self.log.info("Retranscribed the last dictation: %d chars in %.1f s, "
+                      "model=%s", len(text), took, wanted)
+        self._show_draft(text)
+        message = self.tr("history.retranscribed", n=len(text))
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+        return text
+
+    def _retranscribe_notice(self, message: str) -> str:
+        """Panel status and tray notice for a pass that produced no text."""
+        self.set_last(message)
+        if self.tray:
+            self.tray.notify(message)
+        return ""
+
+    def retranscribe_last_dialog(self) -> None:
+        """Tray: ask for the prompt, then re-recognize the newest take.
+
+        The dialog runs in its own thread with its own Tk root, like the file
+        dialogs, so the HUD loop and the hotkey stay free. Cancelling the
+        dialog does nothing; the model is the configured one, so another
+        model is picked in the tray before the pass.
+        """
+        threading.Thread(target=self._retranscribe_last_dialog_worker,
+                         daemon=True).start()
+
+    def _retranscribe_last_dialog_worker(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import simpledialog
+
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                prompt = simpledialog.askstring(
+                    self.tr("dialog.retranscribe_prompt"),
+                    self.tr("dialog.retranscribe_prompt_hint"),
+                    initialvalue=str(self.cfg.get("hotwords") or ""),
+                    parent=root)
+            finally:
+                root.destroy()
+        except Exception as e:  # noqa: BLE001 - a broken dialog must not kill the HUD
+            self.log.warning("Retranscribe dialog failed: %s", e)
+            return
+        if prompt is None:   # the person cancelled the dialog
+            return
+        self.retranscribe_last(prompt=prompt)
 
     def copy_draft(self, text: str) -> None:
         """Put the reviewed panel text into the clipboard and close it."""
@@ -625,7 +1682,8 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         insert_mod.copy_text(text)
         if self.cfg.get("clipboard_exclude_history", True):
             insert_mod.exclude_from_clipboard_history()
-        self._remember(text, way=history.WAY_COPY)
+        wav = getattr(self, "_draft_wav", None)
+        self._remember(text, way=history.WAY_COPY, wav=wav)
         self._forget_draft()
         message = self.tr("history.copied")
         self.set_last(message)
@@ -680,6 +1738,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 if self.tray:
                     self.tray.notify(message)
                 return
+            wav = self._draft_wav
             self._forget_draft()
             self._target_hwnd = target_hwnd
             self._target_title = title or ""
@@ -690,7 +1749,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 "prev": undo_state.get("prev"),
                 "prev_known": bool(undo_state.get("prev_known")),
             }
-            self._remember(text)
+            self._remember(text, wav=wav)
             message = self.inserted_message(text)
             self.set_last(message)
             if self.tray:
@@ -1030,6 +2089,11 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                 formats=formats,
                 out=str(request.get("out") or ""),
                 force=bool(request.get("force")),
+                prompt=str(request.get("prompt") or ""),
+                word_timestamps=(bool(request.get("word_timestamps"))
+                                 if request.get("word_timestamps") is not None
+                                 else None),
+                clip_timestamps=str(request.get("clip_timestamps") or ""),
             )
         except asr_mod.ModelNotInstalled as e:
             self.log.warning("CLI file job refused: %s", e)
@@ -1037,7 +2101,10 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         except FilePathError as e:
             self.log.warning("CLI file job refused: %s", e)
             return {"event": "error", "ok": False, "code": 2, "error": str(e)}
-        except (OSError, ValueError) as e:
+        except ValueError as e:
+            self.log.warning("CLI file job refused: %s", e)
+            return {"event": "error", "ok": False, "code": 2, "error": str(e)}
+        except OSError as e:
             self.log.warning("CLI file job refused: %s", e)
             return {"event": "error", "ok": False, "code": 1, "error": str(e)}
         while True:

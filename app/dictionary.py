@@ -2,9 +2,15 @@
 
 Entries live in config.json under "dictionary": a list of
 {"from": <term as recognized>, "to": <replacement>}. An entry without "to"
-only biases the model (its term goes into the initial prompt). Replacement
-is literal and case-insensitive; the longest term wins; one pass, so a
-replacement is never re-processed by another rule.
+only biases the model. Replacement is literal and case-insensitive; the
+longest term wins; one pass, so a replacement is never re-processed by
+another rule.
+
+The prompt side is ``hotwords``: faster-whisper copies it into the prompt of
+every 30 s window, while ``initial_prompt`` seeds the first one only. A pair
+therefore teaches the target form (``to``), and the list is ranked by how
+often the same correction was made (corrections.json) before it is trimmed
+to the library's half-prompt budget.
 """
 import json
 import re
@@ -12,7 +18,10 @@ import re
 MAX_ENTRIES = 500
 MAX_FROM = 80
 MAX_TO = 200
-MAX_PROMPT = 500
+# Hotwords are copied into every window's prompt, where the library truncates
+# them only at 448 // 2 = 224 tokens (faster_whisper.transcribe.get_prompt).
+# One token of headroom stays for the leading space that the library adds.
+MAX_PROMPT = 223
 
 
 def _clean(entry):
@@ -44,6 +53,16 @@ def normalize(entries):
         if len(out) >= MAX_ENTRIES:
             break
     return out
+
+
+def merge(base, profile):
+    """The global entries with a profile's entries on top, one per "from".
+
+    An app profile may rename a term the global list already carries: the
+    profile entry wins and the global duplicate is gone, so one window never
+    runs two rules for the same word. Everything else keeps its order.
+    """
+    return normalize([*(profile or []), *(base or [])])
 
 
 def _pattern(term):
@@ -95,28 +114,74 @@ def changes(text, entries):
     return out
 
 
-def hotword_terms(entries):
-    """Terms for the recognition prompt: every entry, replacement or not."""
-    return [e["from"] for e in normalize(entries)]
+def estimate_tokens(text):
+    """A conservative Whisper-BPE token estimate for a hotwords string.
+
+    The real tokenizer arrives only with a loaded model, so selection must
+    work before a transcription. Latin words average about four characters
+    per token and Cyrillic about two; every word costs at least one token.
+    """
+    total = 0
+    for word in str(text or "").split():
+        width = 4 if word.isascii() else 2
+        total += max(1, -(-len(word) // width))
+    return total
 
 
-def merge_hotwords(base, entries):
-    """Append dictionary terms to the user's hotwords without duplicates."""
+def _weight(weights, term):
+    """How often the term was corrected; junk in the store counts as zero."""
+    try:
+        return max(0, int(weights.get(term.casefold(), 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def hotword_terms(entries, weights=None):
+    """Terms for the recognition prompt: the target form, replacement or not.
+
+    A pair "as heard -> as needed" teaches the model the form it must
+    produce, so the ``to`` side goes to the prompt; an entry without one
+    keeps its ``from`` (bias only). ``weights`` maps a casefolded term to how
+    often that correction was made: the most frequent go first, dictionary
+    order breaks ties.
+    """
+    items = [(entry["to"] or entry["from"], index)
+             for index, entry in enumerate(normalize(entries))]
+    if isinstance(weights, dict) and weights:
+        items.sort(key=lambda item: (-_weight(weights, item[0]), item[1]))
+    return [term for term, _index in items]
+
+
+def _base_terms(base):
+    """The user's own hotwords string as separate terms."""
+    return [chunk.strip() for chunk in str(base or "").split(",") if chunk.strip()]
+
+
+def merge_hotwords(base, entries, weights=None, token_counter=None):
+    """The user's hotwords plus dictionary target forms, within the budget.
+
+    Every window gets this string, so it must fit the library's half-prompt
+    limit. The user's own hotwords come first, then dictionary terms ranked
+    by correction frequency; a term that no longer fits is skipped, never cut
+    mid-word, and a shorter one later may still fit. ``token_counter`` counts
+    one term when the caller has the real tokenizer; ``estimate_tokens``
+    stands in before a model is loaded.
+    """
+    counter = token_counter or estimate_tokens
     parts = []
     seen = set()
-    for chunk in str(base or "").split(","):
-        term = chunk.strip()
-        if not term or term.casefold() in seen:
+    used = 0
+    for term in _base_terms(base) + hotword_terms(entries, weights):
+        key = term.casefold()
+        if key in seen:
             continue
-        seen.add(term.casefold())
-        parts.append(term)
-    for term in hotword_terms(entries):
-        if term.casefold() in seen:
+        cost = counter(term) + 1    # the separator before the next term
+        if used + cost > MAX_PROMPT:
             continue
-        seen.add(term.casefold())
+        seen.add(key)
         parts.append(term)
-    merged = ", ".join(parts)
-    return merged[:MAX_PROMPT]
+        used += cost
+    return ", ".join(parts)
 
 
 def to_json(entries):

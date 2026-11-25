@@ -294,6 +294,7 @@ class FakeText:
         self.value = value
         self.state = "normal"
         self.height = hud.BASE_TEXT_LINES
+        self.tags = {}
 
     def configure(self, **kw):
         if "state" in kw:
@@ -312,6 +313,15 @@ class FakeText:
 
     def insert(self, _index, text):
         self.value = text
+
+    def tag_configure(self, *_args, **_kw):
+        pass
+
+    def tag_remove(self, tag, *_args):
+        self.tags.pop(tag, None)
+
+    def tag_add(self, tag, start, end):
+        self.tags.setdefault(tag, []).append((start, end))
 
     def focus_set(self):
         pass
@@ -348,12 +358,14 @@ def make_hud(text="hello"):
     """A Hud with only the widgets and service calls the draft methods touch."""
     h = hud.Hud.__new__(hud.Hud)
     h.cfg = {}
+    h.log = RecordingLog()
     h.text = FakeText(text)
     h.root = FakeRoot()
     h.svc = FakeDraftSvc()
     h._draft_active = True
     h._draft_edit = False
     h._draft_text = text
+    h._draft_rev = 0
     h._last_foreign_hwnd = None
     h._want = hud.BASE_TEXT_LINES
     h._edit_label = False
@@ -504,3 +516,40 @@ def test_cancel_closes_the_draft_and_tells_the_service():
 
     assert h.svc.cancelled == 1
     assert h._draft_active is False
+
+
+def test_a_doubtful_word_is_marked_inside_the_draft():
+    h = make_hud("")
+
+    hud.Hud._show_draft(h, "the noisy phrase", ["noisy"])
+
+    assert h.text.value == "the noisy phrase"
+    assert h.text.tags[hud.DRAFT_UNCERTAIN_TAG] == [("1.0+4c", "1.0+9c")]
+
+
+def test_the_live_draft_carries_its_doubtful_words_into_the_panel():
+    h = make_hud("")
+    st = {"draft_rev": 1, "draft": "a murky phrase",
+          "draft_uncertain": ["murky"]}
+
+    hud.Hud._sync_draft(h, st)
+
+    assert h.text.value == "a murky phrase"
+    assert h.text.tags[hud.DRAFT_UNCERTAIN_TAG] == [("1.0+2c", "1.0+7c")]
+
+
+def test_a_confident_draft_carries_no_marks():
+    h = make_hud("")
+
+    hud.Hud._show_draft(h, "hello panel")
+
+    assert h.text.tags.get(hud.DRAFT_UNCERTAIN_TAG) is None
+
+
+def test_insert_from_a_marked_draft_pastes_the_whole_phrase():
+    h = make_hud("")
+
+    hud.Hud._show_draft(h, " hi there ", ["hi"])
+    hud.Hud._on_ctrl_enter(h)
+
+    assert h.svc.inserted == [("hi there", None)]

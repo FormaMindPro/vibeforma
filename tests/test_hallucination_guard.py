@@ -1,0 +1,275 @@
+"""Hallucination guard: thresholds and a stop-list against invented text.
+
+Card-240 (F3, closes B4): silence and music must not turn into text. The
+guard has two entrances -- the engine's own options (silence skip, ratio) and
+a post-filter that cuts a segment only when ``no_speech_prob`` says the
+window is non-speech and the text is a known false phrase or a loop. The F0
+reference is the line the guard must not cross: clean Russian speech carries
+ratio 1.476 and ``no_speech_prob`` 0.02, both untouched.
+
+The repository is ASCII-only outside its localization resources, so the
+Russian phrases are ``\\u`` escapes.
+"""
+from __future__ import annotations
+
+import pytest
+
+np = pytest.importorskip("numpy")
+
+import asr  # noqa: E402 - asr imports numpy; skip the module first
+import hallucination  # noqa: E402 - imported after numpy
+from transcript import Segment  # noqa: E402
+
+# "subscribe to the channel", as the card names it.
+SUBSCRIBE = (" \u041f\u043e\u0434\u043f\u0438\u0441\u044b\u0432\u0430\u0439"
+             "\u0442\u0435\u0441\u044c \u043d\u0430 \u043a\u0430\u043d\u0430\u043b!")
+SUBSCRIBE_NORM = ("\u043f\u043e\u0434\u043f\u0438\u0441\u044b\u0432\u0430\u0439"
+                  "\u0442\u0435\u0441\u044c \u043d\u0430 \u043a\u0430\u043d\u0430\u043b")
+# "thanks for watching"
+THANKS = (" \u0421\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 "
+          "\u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440")
+
+
+class _Log:
+    def __init__(self):
+        self.lines = []
+
+    def _add(self, level, fmt, *args):
+        self.lines.append((level, fmt % args if args else str(fmt)))
+
+    def info(self, fmt, *args):
+        self._add("info", fmt, *args)
+
+    def warning(self, fmt, *args):
+        self._add("warning", fmt, *args)
+
+    def debug(self, fmt, *args):
+        pass
+
+    def exception(self, fmt, *args):
+        self._add("error", fmt, *args)
+
+
+class _Info:
+    language = "ru"
+    duration = 4.0
+
+
+class _Row:
+    """faster-whisper's segment shape, readings included."""
+
+    def __init__(self, segment=None, **extra):
+        self.seek = 0
+        self.start = getattr(segment, "start", 0.0)
+        self.end = getattr(segment, "end", 0.0)
+        self.text = getattr(segment, "text", "")
+        self.words = getattr(segment, "words", None)
+        for name in ("avg_logprob", "compression_ratio", "no_speech_prob",
+                     "temperature"):
+            setattr(self, name, getattr(segment, name, None))
+        for key, value in extra.items():
+            setattr(self, key, value)
+
+
+class _Model:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append((audio, kwargs))
+
+        def _rows():
+            for row in self.rows:
+                yield _Row(row)
+
+        return _rows(), _Info()
+
+
+def _engine(rows, language="ru"):
+    engine = asr.ASR({"language": language, "model": "fake", "hotwords": "",
+                      "dictionary": []}, _Log())
+    engine.model = _Model(rows)
+    return engine
+
+
+def _audio(seconds=3.0):
+    return np.zeros((int(seconds * 16000),), dtype=np.float32)
+
+
+def _spoken(text, **readings):
+    return Segment(0.0, 1.0, text, **readings)
+
+
+# -- the post-filter alone ----------------------------------------------
+def test_a_stop_phrase_on_silence_is_dropped():
+    segment = _spoken(SUBSCRIBE, no_speech_prob=0.9, compression_ratio=1.1)
+
+    verdict = hallucination.judge(segment)
+
+    assert verdict is not None
+    assert verdict[0] == hallucination.DROP
+    assert SUBSCRIBE_NORM in verdict[1]
+
+
+def test_the_same_stop_phrase_in_real_speech_is_kept():
+    segment = _spoken(SUBSCRIBE, no_speech_prob=0.05, compression_ratio=1.1)
+
+    assert hallucination.judge(segment) is None
+
+
+@pytest.mark.parametrize("text", [
+    pytest.param(" Thanks for watching!", id="en-thanks"),
+    pytest.param(" Subtitles by the Amara.org community", id="en-amara"),
+    pytest.param(" Please subscribe to my channel", id="en-subscribe"),
+    pytest.param(" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+                 "\u0441\u0434\u0435\u043b\u0430\u043b DimaTorzok",
+                 id="ru-subtitles-made"),
+    pytest.param(" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+                 "\u043f\u043e\u0434\u043e\u0433\u043d\u0430\u043b ...",
+                 id="ru-subtitles-fitted"),
+    pytest.param(" \u0420\u0435\u0434\u0430\u043a\u0442\u043e\u0440 "
+                 "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u043e\u0432 "
+                 "\u0410. \u0421\u0438\u043d\u0435\u0446\u043a\u0430\u044f, "
+                 "\u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043e\u0440 "
+                 "\u0410. \u0415\u0433\u043e\u0440\u043e\u0432\u0430",
+                 id="ru-credits"),
+])
+def test_the_known_false_phrases_are_stop_phrases(text):
+    segment = _spoken(text, no_speech_prob=0.9, compression_ratio=1.1)
+
+    verdict = hallucination.judge(segment)
+
+    assert verdict is not None and verdict[0] == hallucination.DROP
+
+
+def test_ordinary_text_with_high_no_speech_is_kept():
+    """The guard must not turn every quiet window into a cut."""
+    segment = _spoken(" unclear phrase", no_speech_prob=0.7,
+                      compression_ratio=1.2, temperature=0.0)
+
+    assert hallucination.judge(segment) is None
+
+
+def test_the_f0_reference_readings_are_untouched():
+    """The F0 fixture's measured readings: ratio 1.476, no_speech 0.02.
+
+    The text is an English stand-in: the guard reads the ratio the engine
+    reported, never recomputing it from the text, and the phrase list is not
+    language-gated.
+    """
+    segment = _spoken(
+        " The quick brown fox jumps over the lazy dog and then asks whether "
+        "the dictation works on a Tuesday afternoon.",
+        no_speech_prob=0.019, compression_ratio=1.476, avg_logprob=-0.137,
+        temperature=0.0)
+
+    assert hallucination.judge(segment) is None
+
+
+def test_a_loop_on_non_speech_is_dropped():
+    segment = _spoken(" music plays music plays music plays",
+                      no_speech_prob=0.9, compression_ratio=3.2)
+
+    verdict = hallucination.judge(segment)
+
+    assert verdict is not None and verdict[0] == hallucination.DROP
+    assert "repetition on non-speech" in verdict[1]
+
+
+def test_a_loop_the_engine_reads_as_speech_is_flagged_not_cut():
+    """A real repeated phrase must never be cut on the ratio alone."""
+    segment = _spoken(" music plays music plays music plays",
+                      no_speech_prob=0.05, compression_ratio=3.2)
+
+    verdict = hallucination.judge(segment)
+
+    assert verdict is not None and verdict[0] == hallucination.FLAG
+    assert "repetition loop" in verdict[1]
+
+
+def test_a_repeated_short_answer_is_not_a_loop():
+    segment = _spoken(" yes, yes, yes.", no_speech_prob=0.05,
+                      compression_ratio=0.9)
+
+    assert hallucination.judge(segment) is None
+
+
+def test_normalization_ignores_case_and_punctuation():
+    shout = ("\u041f\u041e\u0414\u041f\u0418\u0421\u042b\u0412\u0410\u0419"
+             "\u0422\u0415\u0421\u042c, \u041d\u0410 \u041a\u0410\u041d\u0410"
+             "\u041b!!!")
+    assert hallucination.stop_phrase(shout) == SUBSCRIBE_NORM
+
+    made = ("\u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u2014 "
+            "\u0441\u0434\u0435\u043b\u0430\u043b: DimaTorzok")
+    assert hallucination.stop_phrase(made) == (
+        "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u0441\u0434\u0435"
+        "\u043b\u0430\u043b")
+
+
+# -- the engine options -------------------------------------------------
+def test_the_silence_guard_reaches_the_engine_with_word_timestamps():
+    engine = _engine([_spoken(" hello")])
+
+    engine.transcribe(_audio())
+
+    _audio_arg, kwargs = engine.model.calls[-1]
+    assert kwargs["word_timestamps"] is True
+    assert kwargs["hallucination_silence_threshold"] == (
+        hallucination.HALLUCINATION_SILENCE_S)
+
+
+def test_the_ratio_threshold_goes_to_the_language_it_was_calibrated_on():
+    russian = _engine([_spoken(" hello")], language="ru")
+    russian.transcribe(_audio())
+
+    _audio_arg, kwargs = russian.model.calls[-1]
+    assert "compression_ratio_threshold" not in kwargs
+
+    english = _engine([_spoken(" hello")], language="en")
+    english.transcribe(_audio())
+
+    _audio_arg, kwargs = english.model.calls[-1]
+    assert kwargs["compression_ratio_threshold"] == (
+        hallucination.COMPRESSION_RATIO_THRESHOLD)
+
+
+# -- the filter on both entrances ---------------------------------------
+def test_a_file_drops_invented_text_and_keeps_the_speech():
+    engine = _engine([
+        Segment(0.0, 1.0, " first phrase"),
+        Segment(1.0, 2.0, SUBSCRIBE, no_speech_prob=0.91,
+                compression_ratio=1.2),
+        Segment(2.0, 3.0, " third phrase"),
+    ])
+
+    segments = list(engine.transcribe_array(_audio(), 3.0))
+
+    assert [s.text for s in segments] == ["first phrase", "third phrase"]
+    assert any("Dropped invented text" in line
+               for _level, line in engine.log.lines)
+
+
+def test_a_dictation_take_drops_invented_text_before_the_service_sees_it():
+    engine = _engine([
+        Segment(0.0, 1.0, " first phrase"),
+        Segment(1.0, 2.0, THANKS, no_speech_prob=0.93,
+                compression_ratio=1.1),
+    ])
+
+    text = engine.transcribe(_audio())
+
+    assert text == "first phrase"
+    assert [s.text for s in engine.last_segments] == [" first phrase"]
+
+
+def test_a_partial_keeps_the_raw_preview():
+    engine = _engine([
+        Segment(0.0, 1.0, SUBSCRIBE, no_speech_prob=0.93,
+                compression_ratio=1.1),
+    ])
+
+    text = engine.transcribe(_audio(1.0), partial=True)
+
+    assert text == SUBSCRIBE.strip()

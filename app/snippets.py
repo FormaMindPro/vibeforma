@@ -70,6 +70,16 @@ def normalize(entries):
     return out
 
 
+def merge(base, profile):
+    """The global snippets with a profile's snippets on top, one per trigger.
+
+    An app profile may redraw a phrase the global list already expands: the
+    profile entry wins and the global duplicate is gone, so one window never
+    runs two rules for the same trigger. Everything else keeps its order.
+    """
+    return normalize([*(profile or []), *(base or [])])
+
+
 def _pattern(trigger):
     """Literal trigger with word boundaries where the trigger has them."""
     body = re.escape(trigger)

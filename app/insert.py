@@ -20,6 +20,9 @@ PASTE_DELAY_S = 0.03   # before the paste, let the clipboard settle
 AFTER_DELAY_S = 0.06   # after the paste so slow apps register it
 RESTORE_DELAY_S = 1.0  # give the target app time to read the clipboard
 UNDO_VK = 0x5A         # VK_Z: layout-independent Ctrl+Z
+SELECTION_MAX_CHARS = 400  # a selected term or phrase, never a document
+SELECTION_POLL_S = 0.02    # clipboard settle step after the copy keystroke
+SELECTION_POLLS = 10       # the copy never blocks a take for more than ~0.2 s
 
 RESULT_PASTED = "pasted"
 RESULT_COPIED = "copied"
@@ -29,6 +32,70 @@ RESULT_CANCELLED = "cancelled"
 def copy_text(value: str):
     """Put text into the clipboard (history actions, restore)."""
     pyperclip.copy(value)
+
+
+def read_selected_text(log: logging.Logger | None = None) -> str:
+    """The selected text of the focused window, read through the clipboard.
+
+    Ctrl+Insert copies under any keyboard layout; Ctrl+C is a character
+    shortcut and was measured to fail on a non-Latin layout (2026-11-19).
+    The user's clipboard is saved first and put back when the copy left our
+    own reading there, so a take never leaves a foreign selection on the
+    clipboard. No selection, an app without a copy shortcut or a failed
+    platform call all return "" and never raise: this is a prompt hint, not
+    a required input. The text is flattened and bounded; the caller decides
+    how much of it reaches the engine.
+    """
+    prev = None
+    prev_known = False
+    try:
+        prev = pyperclip.paste()
+        prev_known = True
+    except Exception as e:  # noqa: BLE001 - no readable clipboard means no selection
+        if log:
+            log.debug("Selected text: clipboard unreadable: %s", e)
+    before = clipboard_sequence()
+    try:
+        kb = Controller()
+        with kb.pressed(Key.ctrl):
+            kb.press(Key.insert)
+            kb.release(Key.insert)
+    except Exception as e:  # noqa: BLE001 - no keyboard hook means no selection
+        if log:
+            log.debug("Selected text: copy keystroke failed: %s", e)
+        return ""
+    changed = False
+    for _attempt in range(SELECTION_POLLS):
+        if before and clipboard_sequence() != before:
+            changed = True
+            break
+        time.sleep(SELECTION_POLL_S)
+    try:
+        text = pyperclip.paste() or ""
+    except Exception as e:  # noqa: BLE001 - an unreadable clipboard is an empty selection
+        if log:
+            log.debug("Selected text: clipboard read failed: %s", e)
+        return ""
+    if before and not changed:
+        return ""
+    if not text or text == prev:
+        return ""
+    flat = " ".join(text.split())
+    if len(flat) > SELECTION_MAX_CHARS:
+        flat = flat[:SELECTION_MAX_CHARS]
+        cut = flat.rfind(" ")
+        if cut > 0:
+            flat = flat[:cut]
+    if prev_known:
+        try:
+            # Only put the previous clipboard back when nothing else has
+            # replaced our reading meanwhile.
+            if pyperclip.paste() == text:
+                pyperclip.copy(prev)
+        except Exception as e:  # noqa: BLE001 - a restore failure must not break a take
+            if log:
+                log.debug("Selected text: clipboard restore failed: %s", e)
+    return flat.strip()
 
 
 def send_undo():
@@ -48,18 +115,30 @@ def send_undo():
 def foreground_window() -> str:
     """Title of the window that will receive the paste (for the log)."""
     try:
-        import ctypes
-        user32 = ctypes.windll.user32
-        user32.GetForegroundWindow.restype = ctypes.c_void_p
-        user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
-                                          ctypes.c_int]
-        hwnd = user32.GetForegroundWindow()
-        buf = ctypes.create_unicode_buffer(256)
-        user32.GetWindowTextW(hwnd, buf, 256)
-        title = buf.value.strip()
+        title = window_title(get_foreground_hwnd())
         return title[:80] if title else "(untitled)"
     except Exception:  # noqa: BLE001 - the title lookup fails on unusual windows
         return "(unknown)"
+
+
+def window_title(hwnd) -> str:
+    """Title text of one window; "" when the handle cannot be read.
+
+    The window is named by the address captured at recording start, so a
+    dead handle or a window on another desktop yields "" and never raises.
+    """
+    if not hwnd:
+        return ""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+                                          ctypes.c_int]
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(ctypes.c_void_p(hwnd), buf, 256)
+        return buf.value.strip()
+    except Exception:  # noqa: BLE001 - a foreign or closed window is unnamed
+        return ""
 
 
 def get_foreground_hwnd():
@@ -86,6 +165,55 @@ def window_process_id(hwnd) -> int:
         return int(pid.value)
     except (AttributeError, OSError, TypeError, ValueError):
         return 0
+
+
+def window_process_name(hwnd) -> str:
+    """Executable name of the process that owns the window; "" if unreadable.
+
+    The "Code.exe"-style basename is what an app profile matches, with or
+    without the suffix. Query-limited rights are enough on Windows Vista+;
+    a protected or elevated window may refuse and yields "".
+    """
+    pid = window_process_id(hwnd)
+    if not pid:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            ctypes.c_void_p, wintypes.DWORD, ctypes.c_wchar_p,
+            ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
+        if not handle:
+            return ""
+        try:
+            size = wintypes.DWORD(1024)
+            buf = ctypes.create_unicode_buffer(size.value)
+            if not kernel32.QueryFullProcessImageNameW(
+                    handle, 0, buf, ctypes.byref(size)):
+                return ""
+            return os.path.basename(buf.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 - a closed handle or a protected process
+        return ""
+
+
+def window_identity(hwnd) -> tuple[str, str]:
+    """(process name, window title) of one window; ("", "") when unreadable.
+
+    An app profile matches this pair. The address is the one captured at
+    recording start, so the profile follows the window the dictation was
+    aimed at, never the window that is foreground later.
+    """
+    if not hwnd:
+        return "", ""
+    return window_process_name(hwnd), window_title(hwnd)
 
 
 def is_own_window(hwnd) -> bool:

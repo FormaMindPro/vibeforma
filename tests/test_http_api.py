@@ -241,3 +241,140 @@ def test_api_mints_and_saves_a_token_when_missing(service, tmp_path, monkeypatch
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# -- the agent contract: prompt, words and the clip range -----------------
+BOUNDARY = "----vibeforma-test"
+
+
+def _multipart(fields):
+    body = b""
+    for name, (filename, payload) in fields.items():
+        body += f"--{BOUNDARY}\r\n".encode()
+        if filename:
+            body += (f'Content-Disposition: form-data; name="{name}"; '
+                     f'filename="{filename}"\r\n\r\n').encode()
+        else:
+            body += (f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                     ).encode()
+        body += payload + b"\r\n"
+    body += f"--{BOUNDARY}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={BOUNDARY}"
+
+
+class FakeQueue:
+    """A job queue that records the contract and reports one job back."""
+
+    def __init__(self):
+        self.submitted = None
+        self.job = types.SimpleNamespace(
+            id="job-1", state="queued", progress=0.0, source="",
+            language="", engine_model="fake", duration=0.0, segments=[],
+            outputs=[], prompt="", word_timestamps=None,
+            clip_timestamps="", error=None)
+
+    def submit(self, source, **kwargs):
+        self.submitted = {"source": source, **kwargs}
+        self.job.source = source
+        self.job.prompt = kwargs.get("prompt", "")
+        self.job.word_timestamps = kwargs.get("word_timestamps")
+        self.job.clip_timestamps = kwargs.get("clip_timestamps", "")
+        return self.job
+
+    def get(self, job_id):
+        return self.job if job_id == self.job.id else None
+
+
+def test_jobs_accept_prompt_words_and_clip(server, service):
+    queue = FakeQueue()
+    service.file_jobs = queue
+    body, ctype = _multipart({
+        "file": ("clip.wav", b"RIFF"),
+        "prompt": ("", b"names: Forma"),
+        "word_timestamps": ("", b"true"),
+        "clip_timestamps": ("", b"2,5"),
+    })
+
+    status, payload = _post(server, path="/jobs", body=body,
+                            content_type=ctype)
+
+    assert status == 202, payload
+    assert queue.submitted["prompt"] == "names: Forma"
+    assert queue.submitted["word_timestamps"] is True
+    assert queue.submitted["clip_timestamps"] == "2,5"
+    status, payload = _get(server, path="/jobs/job-1")
+    job = json.loads(payload)
+    assert job["prompt"] == "names: Forma"
+    assert job["word_timestamps"] is True
+    assert job["clip_timestamps"] == "2,5"
+
+
+def test_jobs_json_contract_and_refusals(server, service):
+    queue = FakeQueue()
+    service.file_jobs = queue
+    request = {"path": r"D:\audio\a.wav", "prompt": "hint",
+               "word_timestamps": True, "clip_timestamps": [2, 5]}
+
+    status, payload = _post(server, path="/jobs",
+                            body=json.dumps(request).encode(),
+                            content_type="application/json")
+
+    assert status == 202, payload
+    assert queue.submitted["prompt"] == "hint"
+    assert queue.submitted["word_timestamps"] is True
+    assert queue.submitted["clip_timestamps"] == "2,5"
+
+    for bad in ({"clip_timestamps": "5,2"}, {"clip_timestamps": "two,5"},
+                {"prompt": "x" * 1025}):
+        status, payload = _post(server, path="/jobs",
+                                body=json.dumps({**request, **bad}).encode(),
+                                content_type="application/json")
+        assert status == 400, (bad, payload)
+
+
+class VerboseASR(FakeASR):
+    """One segment with the engine readings and one word with probability."""
+
+    def __init__(self):
+        self.calls = []
+
+    def transcribe_array(self, _audio, _duration, **kwargs):
+        from transcript import Segment, Word
+        self.calls.append(kwargs)
+        return [Segment(0.0, 1.0, " hello",
+                        words=[Word(0.0, 0.5, " hello", 0.75)],
+                        avg_logprob=-0.3, compression_ratio=1.2,
+                        no_speech_prob=0.05, temperature=0.0)]
+
+
+def test_v1_verbose_json_matches_the_openai_schema(server, service,
+                                                   monkeypatch):
+    import asr
+    monkeypatch.setattr(asr, "decode_audio_file",
+                        lambda *_args, **_kwargs: (object(), 1.0))
+    engine = VerboseASR()
+    service.asr = engine
+    service.file_jobs = object()
+    body, ctype = _multipart({
+        "file": ("clip.wav", b"RIFF"),
+        "response_format": ("", b"verbose_json"),
+        "timestamp_granularities[]": ("", b"word"),
+        "clip_timestamps": ("", b"0,1"),
+    })
+
+    status, payload = _post(server, path="/v1/audio/transcriptions", body=body,
+                            content_type=ctype)
+
+    assert status == 200, payload
+    answer = json.loads(payload)
+    segment = answer["segments"][0]
+    assert segment["avg_logprob"] == -0.3
+    assert segment["no_speech_prob"] == 0.05
+    assert segment["compression_ratio"] == 1.2
+    assert segment["temperature"] == 0.0
+    assert answer["words"] == [{"word": " hello", "start": 0.0, "end": 0.5,
+                                "probability": 0.75}]
+    assert engine.calls[0]["word_timestamps"] is True
+    assert engine.calls[0]["clip_timestamps"] == "0,1"
+    # No prompt in the request: the engine keeps the configured preset.
+    assert engine.calls[0]["initial_prompt"] is None

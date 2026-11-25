@@ -312,3 +312,24 @@ def test_corpus_precision_and_recall(corpus):
     metrics = corpus_metrics(corpus)
     assert metrics["precision"] >= 0.9
     assert metrics["recall"] >= 0.8
+
+
+def test_cleanup_runs_after_the_rules_and_the_snippets():
+    source = SERVICE.read_text(encoding="utf-8")
+    rules_at = source.index("textrules.apply(")
+    snippet_at = source.index("snippets.apply(")
+    cleanup_at = source.index("textclean.apply(")
+    draft_at = source.index("self._show_draft(")
+    insert_at = source.index("insert_mod.insert_text(")
+    assert rules_at < snippet_at < cleanup_at < draft_at < insert_at
+
+
+def test_cleanup_finishes_the_rules_output():
+    svc = make_service(text_rules=True, text_cleanup=True, language="ru")
+    svc.asr = _ASR("\u0432\u0441\u0442\u0440\u0435\u0447\u0430\u0435\u043c\u0441\u044f \u0432 \u0448\u0435\u0441\u0442\u044c, \u043d\u0435\u0442, \u0442\u043e\u0447\u043d\u0435\u0435, \u044d\u044d\u044d, \u0432 \u0441\u0435\u043c\u044c")
+    svc._panel_mode = True
+    svc.state = "processing"
+
+    svc._transcribe_worker(object(), _Recorder())
+
+    assert svc.live["draft"] == "\u0412 \u0441\u0435\u043c\u044c"

@@ -25,7 +25,17 @@ import stats_ui
 import update_control
 import window_layout
 import winfx
-from config import DEFAULTS, INSTALL_DIR, LANG_NAMES, LANGS, MODEL_GB, MODELS, VERSION
+from config import (
+    DEFAULTS,
+    INSTALL_DIR,
+    LANG_NAMES,
+    LANGS,
+    MAX_APP_PROFILES,
+    MODEL_GB,
+    MODELS,
+    VERSION,
+    normalize_app_profiles,
+)
 from vibeforma import connect
 
 BG = "#16181D"
@@ -795,6 +805,102 @@ class SettingsWindow:
         self._full(f, self.dic_status)
         self._refresh_dictionary()
         self._refresh_suggestions()
+        self._build_profiles_section(f)
+
+
+    def _build_profiles_section(self, f):
+        """By-app profiles: their own terms and snippets per window (F14)."""
+        self._head(f, self.tr("profiles.g"))
+        self._note(f, self.tr("profiles.note"))
+        self.app_profiles = normalize_app_profiles(
+            self.cfg.get("app_profiles"))
+        self.profile_list = tk.Listbox(f, height=5, width=46, bg=FIELD_BG,
+                                       fg=FG, relief="flat",
+                                       highlightthickness=0,
+                                       selectbackground="#2E86DE",
+                                       exportselection=False,
+                                       font=("Segoe UI", 9))
+        self._full(f, self.profile_list)
+        self.profile_list.bind("<<ListboxSelect>>", self._load_profile)
+        self.v_profile_name = tk.StringVar(value="")
+        self.v_profile_process = tk.StringVar(value="")
+        self.v_profile_window = tk.StringVar(value="")
+        for key, var in (("profiles.name", self.v_profile_name),
+                         ("profiles.process", self.v_profile_process),
+                         ("profiles.window", self.v_profile_window)):
+            self._row(f, self.tr(key),
+                tk.Entry(f, textvariable=var, width=26, bg=FIELD_BG,
+                         fg=FG, insertbackground=FG, relief="flat"))
+        self.profile_status = tk.Label(f, text="", font=("Segoe UI", 9),
+                                       fg="#9FE0A8", bg=BG,
+                                       wraplength=self._px(420),
+                                       justify="left", anchor="w")
+        profile_btns = tk.Frame(f, bg=BG)
+        for text, command in (
+                (self.tr("profiles.add"), self._add_profile),
+                (self.tr("profiles.apply"), self._apply_profile),
+                (self.tr("profiles.remove"), self._remove_profile)):
+            tk.Button(profile_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        self._full(f, profile_btns)
+        self._full(f, self.profile_status)
+
+        self._head(f, self.tr("profiles.terms"))
+        self.profile_term_list = tk.Listbox(
+            f, height=4, width=46, bg=FIELD_BG, fg=FG, relief="flat",
+            highlightthickness=0, selectbackground="#2E86DE",
+            exportselection=False, font=("Segoe UI", 9))
+        self._full(f, self.profile_term_list)
+        self.v_profile_from = tk.StringVar(value="")
+        self.v_profile_to = tk.StringVar(value="")
+        for key, var in (("dictionary.from", self.v_profile_from),
+                         ("dictionary.to", self.v_profile_to)):
+            self._row(f, self.tr(key),
+                tk.Entry(f, textvariable=var, width=26, bg=FIELD_BG,
+                         fg=FG, insertbackground=FG, relief="flat"))
+        term_btns = tk.Frame(f, bg=BG)
+        for text, command in (
+                (self.tr("dictionary.add"), self._add_profile_term),
+                (self.tr("dictionary.remove"), self._remove_profile_term)):
+            tk.Button(term_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        self._full(f, term_btns)
+        self.profile_term_status = tk.Label(
+            f, text="", font=("Segoe UI", 9), fg="#9FE0A8", bg=BG,
+            wraplength=self._px(420), justify="left", anchor="w")
+        self._full(f, self.profile_term_status)
+
+        self._head(f, self.tr("profiles.snippets"))
+        self.profile_snippet_list = tk.Listbox(
+            f, height=4, width=46, bg=FIELD_BG, fg=FG, relief="flat",
+            highlightthickness=0, selectbackground="#2E86DE",
+            exportselection=False, font=("Segoe UI", 9))
+        self._full(f, self.profile_snippet_list)
+        self.v_profile_trigger = tk.StringVar(value="")
+        self.v_profile_text = tk.StringVar(value="")
+        for key, var in (("snippets.trigger", self.v_profile_trigger),
+                         ("snippets.text", self.v_profile_text)):
+            self._row(f, self.tr(key),
+                tk.Entry(f, textvariable=var, width=26, bg=FIELD_BG,
+                         fg=FG, insertbackground=FG, relief="flat"))
+        snippet_btns = tk.Frame(f, bg=BG)
+        for text, command in (
+                (self.tr("snippets.add"), self._add_profile_snippet),
+                (self.tr("snippets.remove"), self._remove_profile_snippet)):
+            tk.Button(snippet_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        self._full(f, snippet_btns)
+        self.profile_snippet_status = tk.Label(
+            f, text="", font=("Segoe UI", 9), fg="#9FE0A8", bg=BG,
+            wraplength=self._px(420), justify="left", anchor="w")
+        self._full(f, self.profile_snippet_status)
+        self._refresh_profiles()
 
 
     def _build_history_tab(self, f):
@@ -1199,7 +1305,11 @@ class SettingsWindow:
             pass
 
     def _reset(self):
-        """Restore option defaults; the model, dictionary and history stay."""
+        """Restore option defaults; the model, dictionary and history stay.
+
+        The by-app profile list is an option of this window and is cleared:
+        Reset returns it to empty, Save applies that.
+        """
         d = DEFAULTS
         self.v_silence.set(d["silence_ms"])
         self.v_source.set(self._source_display(d["audio_source"]))
@@ -1229,6 +1339,7 @@ class SettingsWindow:
         self.v_hook.set(d["hook_command"])
         self.v_hook_timeout.set(d["hook_timeout_s"])
         self.snippets_tab.reset()
+        self._reset_profiles()
         self.save_status.configure(text=self.tr("settings.reset_done"))
 
     def _poll_model(self, progress):
@@ -1357,6 +1468,221 @@ class SettingsWindow:
         else:
             text = self.tr("dictionary.preview_same", text=result)
         self.dic_status.configure(text=text)
+
+    # -- app profiles (card-252) ---------------------------------------------
+    def _profile_fields(self):
+        """The three target fields as one raw profile, cleaned on its own."""
+        return {
+            "name": self.v_profile_name.get(),
+            "process": self.v_profile_process.get(),
+            "window": self.v_profile_window.get(),
+        }
+
+    def _clear_profile_fields(self):
+        for var in (self.v_profile_name, self.v_profile_process,
+                    self.v_profile_window, self.v_profile_from,
+                    self.v_profile_to, self.v_profile_trigger,
+                    self.v_profile_text):
+            var.set("")
+
+    def _selected_profile(self):
+        """The index under the profile list's cursor, or None with a hint."""
+        selected = self.profile_list.curselection()
+        if not selected:
+            self.profile_status.configure(text=self.tr("profiles.select"))
+            return None
+        index = int(selected[0])
+        if not 0 <= index < len(self.app_profiles):
+            return None
+        return index
+
+    def _profile_name_taken(self, name, skip=None):
+        key = str(name or "").strip().casefold()
+        return any(profile["name"].casefold() == key
+                   for index, profile in enumerate(self.app_profiles)
+                   if index != skip)
+
+    def _refresh_profiles(self, select=None):
+        """Redraw the profile list; a selected row shows its own lists."""
+        self.profile_list.delete(0, "end")
+        for profile in self.app_profiles:
+            target = " · ".join(part for part in
+                               (profile.get("process"), profile.get("window"))
+                               if part)
+            self.profile_list.insert("end", profile["name"] + " — " + target)
+        if select is not None and 0 <= select < len(self.app_profiles):
+            self.profile_list.selection_set(select)
+            self.profile_list.see(select)
+            self._load_profile()
+            return
+        self._refresh_profile_lists(None)
+        if not self.app_profiles:
+            self.profile_status.configure(text=self.tr("profiles.empty"))
+
+    def _load_profile(self, _event=None):
+        """The selected profile fills the target fields and the two lists."""
+        selected = self.profile_list.curselection()
+        index = int(selected[0]) if selected else -1
+        if not 0 <= index < len(self.app_profiles):
+            self._refresh_profile_lists(None)
+            return
+        profile = self.app_profiles[index]
+        self.v_profile_name.set(profile["name"])
+        self.v_profile_process.set(profile["process"])
+        self.v_profile_window.set(profile["window"])
+        self._refresh_profile_lists(profile)
+
+    def _refresh_profile_lists(self, profile):
+        """The selected profile's own terms and snippets, in their lists."""
+        self.profile_term_list.delete(0, "end")
+        for entry in (profile or {}).get("dictionary") or []:
+            line = entry["from"]
+            if entry["to"]:
+                line += "  ->  " + entry["to"]
+            self.profile_term_list.insert("end", line)
+        self.profile_snippet_list.delete(0, "end")
+        for entry in (profile or {}).get("snippets") or []:
+            text = entry["text"].replace("\n", " ")
+            self.profile_snippet_list.insert(
+                "end", entry["trigger"] + "  ->  " + text)
+
+    def _add_profile(self):
+        candidate = normalize_app_profiles([self._profile_fields()])
+        if not candidate:
+            self.profile_status.configure(text=self.tr("profiles.no_target"))
+            return
+        profile = candidate[0]
+        if len(self.app_profiles) >= MAX_APP_PROFILES:
+            self.profile_status.configure(
+                text=self.tr("profiles.limit", n=MAX_APP_PROFILES))
+            return
+        if self._profile_name_taken(profile["name"]):
+            self.profile_status.configure(
+                text=self.tr("profiles.dup_name", name=profile["name"]))
+            return
+        self.app_profiles.append(profile)
+        self._clear_profile_fields()
+        self._refresh_profiles(select=len(self.app_profiles) - 1)
+        self.profile_status.configure(
+            text=self.tr("profiles.added", name=profile["name"]))
+
+    def _apply_profile(self):
+        """Write the target fields back to the selected profile."""
+        index = self._selected_profile()
+        if index is None:
+            return
+        candidate = normalize_app_profiles([self._profile_fields()])
+        if not candidate:
+            self.profile_status.configure(text=self.tr("profiles.no_target"))
+            return
+        profile = candidate[0]
+        profile["dictionary"] = self.app_profiles[index]["dictionary"]
+        profile["snippets"] = self.app_profiles[index]["snippets"]
+        if self._profile_name_taken(profile["name"], skip=index):
+            self.profile_status.configure(
+                text=self.tr("profiles.dup_name", name=profile["name"]))
+            return
+        self.app_profiles[index] = profile
+        self._refresh_profiles(select=index)
+        self.profile_status.configure(
+            text=self.tr("profiles.updated", name=profile["name"]))
+
+    def _remove_profile(self):
+        index = self._selected_profile()
+        if index is None:
+            return
+        removed = self.app_profiles.pop(index)
+        self._clear_profile_fields()
+        self._refresh_profiles()
+        self.profile_status.configure(
+            text=self.tr("profiles.removed", name=removed["name"]))
+
+    def _add_profile_term(self):
+        index = self._selected_profile()
+        if index is None:
+            return
+        entry = dictionary.normalize([{
+            "from": self.v_profile_from.get(),
+            "to": self.v_profile_to.get(),
+        }])
+        if not entry:
+            self.profile_term_status.configure(
+                text=self.tr("dictionary.no_from"))
+            return
+        profile = self.app_profiles[index]
+        profile["dictionary"] = dictionary.normalize(
+            profile["dictionary"] + entry)
+        self.v_profile_from.set("")
+        self.v_profile_to.set("")
+        self._refresh_profile_lists(profile)
+        self.profile_term_status.configure(
+            text=self.tr("profiles.term_added", term=entry[0]["from"]))
+
+    def _remove_profile_term(self):
+        index = self._selected_profile()
+        if index is None:
+            return
+        selected = self.profile_term_list.curselection()
+        if not selected:
+            self.profile_term_status.configure(
+                text=self.tr("profiles.select_entry"))
+            return
+        profile = self.app_profiles[index]
+        term = profile["dictionary"].pop(int(selected[0]))
+        self._refresh_profile_lists(profile)
+        self.profile_term_status.configure(
+            text=self.tr("profiles.term_removed", term=term["from"]))
+
+    def _add_profile_snippet(self):
+        index = self._selected_profile()
+        if index is None:
+            return
+        trigger = self.v_profile_trigger.get().strip()
+        text = self.v_profile_text.get().strip()
+        if not trigger:
+            self.profile_snippet_status.configure(
+                text=self.tr("snippets.no_trigger"))
+            return
+        if not text:
+            self.profile_snippet_status.configure(
+                text=self.tr("snippets.no_text"))
+            return
+        entry = snippets.normalize([{"trigger": trigger, "text": text}])
+        if not entry:
+            self.profile_snippet_status.configure(
+                text=self.tr("snippets.same"))
+            return
+        profile = self.app_profiles[index]
+        profile["snippets"] = snippets.normalize(
+            profile["snippets"] + entry)
+        self.v_profile_trigger.set("")
+        self.v_profile_text.set("")
+        self._refresh_profile_lists(profile)
+        self.profile_snippet_status.configure(
+            text=self.tr("profiles.snippet_added",
+                         trigger=entry[0]["trigger"]))
+
+    def _remove_profile_snippet(self):
+        index = self._selected_profile()
+        if index is None:
+            return
+        selected = self.profile_snippet_list.curselection()
+        if not selected:
+            self.profile_snippet_status.configure(
+                text=self.tr("profiles.select_entry"))
+            return
+        profile = self.app_profiles[index]
+        entry = profile["snippets"].pop(int(selected[0]))
+        self._refresh_profile_lists(profile)
+        self.profile_snippet_status.configure(
+            text=self.tr("profiles.snippet_removed",
+                         trigger=entry["trigger"]))
+
+    def _reset_profiles(self):
+        """The Reset button clears the by-app list (card-252)."""
+        self.app_profiles = []
+        self._clear_profile_fields()
+        self._refresh_profiles()
 
     # -- history tab ---------------------------------------------------------
     def _history_filter_value(self, key):
@@ -1566,6 +1892,7 @@ class SettingsWindow:
         c["clipboard_exclude_history"] = bool(self.v_exclude.get())
         c["notify_text"] = bool(self.v_notify_text.get())
         c["dictionary"] = dictionary.normalize(self.dictionary)
+        c["app_profiles"] = normalize_app_profiles(self.app_profiles)
         c["snippets"] = snippets.normalize(self.snippets)
         c["text_rules"] = bool(self.v_text_rules.get())
         c["hold_to_talk"] = bool(self.v_hold.get())

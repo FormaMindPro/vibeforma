@@ -37,6 +37,7 @@ class ServiceHost:
     _draft_busy: bool
     _history_cursor: int | None
     _history_saved: str
+    _history_saved_uncertain: list[str]
     _history_total: int
     _last_insert: dict[str, Any] | None
     _record_started: float

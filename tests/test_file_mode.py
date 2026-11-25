@@ -144,7 +144,10 @@ class _Row:
         self.start = getattr(segment, "start", 0.0)
         self.end = getattr(segment, "end", 0.0)
         self.text = getattr(segment, "text", "")
-        self.words = None
+        self.words = getattr(segment, "words", None)
+        for name in ("avg_logprob", "compression_ratio", "no_speech_prob",
+                     "temperature"):
+            setattr(self, name, getattr(segment, name, None))
         for key, value in extra.items():
             setattr(self, key, value)
 
@@ -159,6 +162,8 @@ def _fake_asr(rows=None):
 
 @pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
 def test_transcribe_file_feeds_an_array_and_yields_segments():
+    import asr
+
     engine = _fake_asr()
     progress = []
 
@@ -170,9 +175,34 @@ def test_transcribe_file_feeds_an_array_and_yields_segments():
     assert kwargs["vad_filter"] is True
     assert kwargs["condition_on_previous_text"] is False
     assert kwargs["word_timestamps"] is False
+    assert kwargs["hallucination_silence_threshold"] == (
+        asr.hallucination.HALLUCINATION_SILENCE_S)
+    # The ratio threshold is calibrated on one-byte text; Cyrillic keeps the
+    # engine's default and is guarded by the post-filter.
+    assert "compression_ratio_threshold" not in kwargs
     assert [(s.start, s.end, s.text) for s in segments] == [
         (0.26, 6.7, "first phrase"), (6.7, 11.66, "second phrase")]
     assert progress[-1] == 100.0
+
+
+def test_file_mode_drops_invented_text_on_silence():
+    engine = _fake_asr([
+        Segment(0.0, 1.0, " first phrase"),
+        # "subscribe to the channel", the phrase the card names.
+        Segment(1.0, 2.0,
+                " \u041f\u043e\u0434\u043f\u0438\u0441\u044b\u0432\u0430\u0439"
+                "\u0442\u0435\u0441\u044c \u043d\u0430 \u043a\u0430\u043d\u0430\u043b",
+                no_speech_prob=0.92, compression_ratio=1.1),
+        Segment(2.0, 3.0, " second phrase", no_speech_prob=0.02,
+                compression_ratio=1.2),
+    ])
+
+    segments = list(engine.transcribe_array(
+        np.zeros((int(3.0 * 16000),), dtype=np.float32), 3.0))
+
+    assert [s.text for s in segments] == ["first phrase", "second phrase"]
+    assert any("Dropped invented text" in line
+               for _level, line in engine.log.lines)
 
 
 @pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
@@ -343,6 +373,66 @@ def test_file_jobs_result_and_no_overwrite_without_force(tmp_path):
         queue.shutdown()
 
 
+class _RecordingASR(_SlowASR):
+    """A file engine that keeps the options the job handed it."""
+
+    def __init__(self):
+        super().__init__()
+        self.last: dict = {}
+
+    def transcribe_file(self, path, **kwargs):
+        self.last = dict(kwargs)
+        yield from super().transcribe_file(path, **kwargs)
+
+
+def test_file_job_carries_prompt_words_and_clip_to_the_engine(tmp_path):
+    source = tmp_path / "clip.wav"
+    source.write_bytes(b"RIFF")
+    asr = _RecordingASR()
+    queue = _jobs(asr=asr)
+    try:
+        job = queue.submit(str(source), prompt="names: Forma",
+                           word_timestamps=True, clip_timestamps="2, 5")
+        assert _wait(job) == "done"
+        assert asr.last["initial_prompt"] == "names: Forma"
+        assert asr.last["word_timestamps"] is True
+        assert asr.last["clip_timestamps"] == "2,5"
+
+        plain = queue.submit(str(source), formats=["txt"])
+        assert _wait(plain) == "done"
+        # No prompt means the engine keeps the configured preset; no flag
+        # means the configured word-timestamp setting; no clip means the file.
+        assert asr.last["initial_prompt"] is None
+        assert asr.last["word_timestamps"] is False
+        assert asr.last["clip_timestamps"] is None
+
+        with pytest.raises(ValueError):
+            queue.submit(str(source), clip_timestamps="5,2")
+        with pytest.raises(ValueError):
+            queue.submit(str(source), clip_timestamps="two,5")
+    finally:
+        queue.shutdown()
+
+
+@pytest.mark.skipif(not TEST_WAV.is_file(), reason="test_ru.wav is missing")
+def test_file_job_without_prompt_keeps_the_configured_preset(tmp_path):
+    engine = _fake_asr()
+    queue = _jobs(asr=engine)
+    try:
+        job = queue.submit(str(TEST_WAV))
+        assert _wait(job) == "done"
+        _audio, kwargs = engine.model.calls[0]
+        assert kwargs["initial_prompt"]   # the configured language preset
+
+        engine.model = _FakeModel()
+        hinted = queue.submit(str(TEST_WAV), prompt="names: Forma")
+        assert _wait(hinted) == "done"
+        _audio, kwargs = engine.model.calls[0]
+        assert kwargs["initial_prompt"] == "names: Forma"
+    finally:
+        queue.shutdown()
+
+
 def test_file_jobs_refuse_paths_outside_the_roots(tmp_path):
     import file_jobs
     outside = tmp_path / "root" / "clip.wav"
@@ -375,10 +465,11 @@ class _FakeASR:
         return "hello"
 
     def transcribe_array(self, _audio, _duration, language=None,
-                         initial_prompt=None, temperature=None):
+                         initial_prompt=None, temperature=None, **kwargs):
         self.calls.append({"language": language,
                            "initial_prompt": initial_prompt,
-                           "temperature": temperature})
+                           "temperature": temperature,
+                           **kwargs})
         if self.raise_error:
             raise RuntimeError("engine failure")
         return _segments()
@@ -831,7 +922,7 @@ def test_pipe_client_without_a_service_reports_unavailable():
 def test_config_has_file_mode_limits_and_version():
     import config
 
-    assert config.VERSION == "0.4.5"
+    assert config.VERSION == "0.5.0"
     for key in ("file_roots", "file_max_mb", "file_max_s", "file_max_sync_s",
                 "job_keep_s", "file_word_timestamps"):
         assert key in config.DEFAULTS
@@ -1178,6 +1269,56 @@ def test_engine_default_prompt_and_explicit_override():
     assert kwargs["temperature"] == 0.1
 
 
+def test_clip_timestamps_limit_the_audio_and_never_pass_the_file_end(monkeypatch):
+    import asr
+
+    monkeypatch.setattr(asr, "FILE_CHUNK_S", 1.0)
+    seen = []
+
+    class ClipModel:
+        def transcribe(self, audio, **kwargs):
+            seen.append((audio.shape[0], kwargs))
+
+            def rows():
+                yield _Row(Segment(0.0, audio.shape[0] / 16000.0, "block"))
+
+            return rows(), _Row(None, language="ru")
+
+    engine = asr.ASR({"language": "ru", "model": "fake", "hotwords": "",
+                      "dictionary": []}, FakeLog())
+    engine.model = ClipModel()
+    audio = np.zeros((10 * 16000,), dtype=np.float32)
+
+    segments = list(engine.transcribe_array(
+        audio, 10.0, clip_timestamps="2,4.5", initial_prompt="names: Forma"))
+
+    assert [samples for samples, _kwargs in seen] == [16000, 16000, 8000]
+    assert seen[0][1]["initial_prompt"] == "names: Forma"
+    assert [(round(s.start, 2), round(s.end, 2)) for s in segments] == [
+        (2.0, 3.0), (3.0, 4.0), (4.0, 4.5)]
+
+    seen.clear()
+    past_end = list(engine.transcribe_array(
+        audio, 10.0, clip_timestamps="8,60"))
+
+    assert [samples for samples, _kwargs in seen] == [16000, 16000]
+    assert past_end and max(segment.end for segment in past_end) == 10.0
+    assert all(segment.end <= 10.0 for segment in past_end)
+
+
+def test_clip_timestamps_refuse_a_reversed_range():
+    import asr
+
+    with pytest.raises(ValueError):
+        asr.parse_clip_timestamps("5,2")
+    with pytest.raises(ValueError):
+        asr.parse_clip_timestamps("two,5")
+    assert asr.parse_clip_timestamps("") == []
+    assert asr.parse_clip_timestamps("10", 20.0) == [(10.0, 20.0)]
+    assert asr.parse_clip_timestamps("10,40", 20.0) == [(10.0, 20.0)]
+    assert asr.format_clip_timestamps([(2.0, 5.0)]) == "2,5"
+
+
 def test_srt_clock_rounds_one_millisecond_total():
     cases = [(59.9994, "00:00:59,999"), (59.9995, "00:01:00,000"),
              (347.9995, "00:05:48,000"), (3599.9996, "01:00:00,000"),
@@ -1303,6 +1444,7 @@ def test_file_mode_uses_the_batched_pipeline(monkeypatch):
     assert kwargs["initial_prompt"]
     assert kwargs["condition_on_previous_text"] is False
     assert kwargs["no_speech_threshold"] == asr.NO_SPEECH_THRESHOLD
+    assert kwargs["log_prob_threshold"] == asr.LOG_PROB_THRESHOLD
     assert kwargs["vad_filter"] is True
     assert kwargs["vad_parameters"] == asr.VAD_PARAMETERS
     assert kwargs["word_timestamps"] is False

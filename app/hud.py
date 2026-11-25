@@ -17,6 +17,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 import winfx
+from transcript import uncertain_spans
 
 STATE_COLORS = {
     "loading": "#F39C12",
@@ -31,6 +32,10 @@ BG = "#16181D"
 FG = "#D5D9E0"
 DIM = "#7A8290"
 ACCENT = "#2E86DE"
+# A doubt in a draft is marked, never hidden: the word keeps its place and
+# reads underlined in a warm tone.
+UNCERTAIN = "#E5C07B"
+DRAFT_UNCERTAIN_TAG = "draft_uncertain"
 
 W = 380
 BASE_TEXT_LINES = 4
@@ -40,6 +45,9 @@ LINE_H = 20
 BASE_H = 190
 LAST_TTL_S = 30
 ACTION_ROW_H = 68   # insert button + edit/cancel row, at 100% scaling
+# The retry/rollback row of a doubtful draft: it exists only while the
+# service offers the wider pass or a rollback of the last one.
+OFFER_ROW_H = 27
 
 # Recognition overlay: the panel turns into a short "preloader" while the
 # model turns speech into text. There is no measured percentage in the
@@ -65,6 +73,41 @@ PROG_FADE_MS = 170
 FILE_PANEL_H = 46
 FILE_PANEL_HOLD_S = 8.0
 FILE_BAR_MS = 1200
+# A language hint belongs to the take just recognized: it clears itself after
+# this many seconds instead of sitting under the mic line forever.
+LANGUAGE_HINT_TTL_S = 20.0
+
+
+def language_name(code):
+    """A language code as its own name; an unknown code stays as it came."""
+    import config
+    return str(config.LANG_NAMES.get(code) or code)
+
+
+def language_hint_text(hint, tr, now=None, ttl=LANGUAGE_HINT_TTL_S):
+    """The hint line's language note, or "" when there is no fresh hint.
+
+    The note carries both probabilities: the pinned language is what
+    recognition used, the other one is what the take sounded like. A stale
+    hint reads as the current take if it lingers, so it never does.
+    """
+    if not hint:
+        return ""
+    try:
+        ts = float(hint.get("ts") or 0.0)
+        age = (time.time() if now is None else float(now)) - ts
+        if ts <= 0.0 or age < 0.0 or age >= ttl:
+            return ""
+        pinned = language_name(str(hint.get("pinned") or ""))
+        other = language_name(str(hint.get("other") or ""))
+        pinned_pct = round(float(hint.get("pinned_prob") or 0.0) * 100.0)
+        other_pct = round(float(hint.get("other_prob") or 0.0) * 100.0)
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    if not pinned or not other or pinned == other:
+        return ""
+    return tr("hud.language_hint", pinned=pinned, pinned_pct=pinned_pct,
+              other=other, other_pct=other_pct)
 
 
 def progress_percent(elapsed, ramp=PROG_RAMP_S, cap=PROG_CAP):
@@ -226,6 +269,10 @@ class Hud:
         self._draft_active = False
         self._draft_edit = False
         self._draft_text = ""
+        self._offers_visible = False
+        self._retry_visible = False
+        self._rollback_visible = False
+        self._offer_h = 0
         self._last_foreign_hwnd = None
         # recognition overlay state (created only while the model is busy)
         self._prog = None
@@ -312,6 +359,8 @@ class Hud:
                             relief="flat", padx=px(8), pady=px(6))
         self.text.pack(fill="both", expand=True, padx=px(12), pady=(px(6), px(4)))
         self.text.insert("1.0", "…")
+        self.text.tag_configure(DRAFT_UNCERTAIN_TAG, foreground=UNCERTAIN,
+                                underline=True)
         self.text.configure(state="disabled")
         # a closed window raises TclError while measuring the font
         with contextlib.suppress(tk.TclError):
@@ -333,6 +382,21 @@ class Hud:
             activeforeground="#FFFFFF", relief="flat", bd=0,
             cursor="hand2", padx=px(8), pady=px(5))
         self.insert_btn.pack(fill="x", padx=px(12), pady=(0, px(4)))
+        # A doubtful draft offers one wider pass and one rollback of it
+        # (card-247). The row exists only while the service offers either.
+        self.offers = tk.Frame(self.actions, bg=BG)
+        self.retry_btn = tk.Button(
+            self.offers, text=self.svc.tr("draft.retry"),
+            command=self._retranscribe_draft, font=("Segoe UI", 9),
+            fg=FG, bg="#2A2F38", activebackground="#3A4048",
+            activeforeground="#FFFFFF", relief="flat", bd=0,
+            cursor="hand2", padx=px(6), pady=px(5))
+        self.rollback_btn = tk.Button(
+            self.offers, text=self.svc.tr("draft.rollback"),
+            command=self._rollback_draft, font=("Segoe UI", 9),
+            fg=FG, bg="#2A2F38", activebackground="#3A4048",
+            activeforeground="#FFFFFF", relief="flat", bd=0,
+            cursor="hand2", padx=px(6), pady=px(5))
         row = tk.Frame(self.actions, bg=BG)
         row.pack(fill="x", padx=px(12), pady=(0, px(8)))
         self.edit_btn = tk.Button(
@@ -360,7 +424,8 @@ class Hud:
             relief="flat", bd=0, cursor="hand2", padx=px(6), pady=px(5))
         self.cancel_btn.pack(side="right")
         for widget in (self.actions, self.insert_btn, self.edit_btn,
-                       self.copy_btn, self.dict_btn, self.cancel_btn):
+                       self.copy_btn, self.dict_btn, self.cancel_btn,
+                       self.offers, self.retry_btn, self.rollback_btn):
             widget.bind("<Enter>", lambda e: self._track_foreign_window(),
                         add="+")
 
@@ -520,12 +585,17 @@ class Hud:
         self._draft_rev = rev
         text = st.get("draft") or ""
         if text:
-            self._show_draft(text)
+            self._show_draft(text, st.get("draft_uncertain") or (), st)
         else:
             self._clear_draft()
 
-    def _show_draft(self, text):
-        """Show the recognized text read-only with the action row below."""
+    def _show_draft(self, text, uncertain=(), st=None):
+        """Show the recognized text read-only with the action row below.
+
+        ``uncertain`` names the words the engine doubted; they are marked
+        inside the draft, so the text is read before it is pasted. ``st`` is
+        the live state the retry and rollback offers come from.
+        """
         self._draft_active = True
         self._draft_edit = False
         self._draft_text = text
@@ -535,11 +605,23 @@ class Hud:
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         self.text.insert("1.0", text)
+        self._mark_uncertain(text, uncertain)
         self.text.configure(state="disabled")
         self._set_edit_label(False)
         self._set_actions_enabled(True)
         self._show_actions()
+        self._sync_offer_buttons(st)
         self._autogrow(text, draft=True)
+
+    def _mark_uncertain(self, text, words):
+        """Underline the doubtful words; a failure never costs the draft."""
+        try:
+            self.text.tag_remove(DRAFT_UNCERTAIN_TAG, "1.0", "end")
+            for start, end in uncertain_spans(text, list(words or ())):
+                self.text.tag_add(DRAFT_UNCERTAIN_TAG, f"1.0+{start}c",
+                                  f"1.0+{end}c")
+        except Exception as e:  # noqa: BLE001 - the draft must still show
+            self.log.debug("Draft highlight: %s", e)
 
     def _clear_draft(self):
         self._draft_active = False
@@ -552,13 +634,15 @@ class Hud:
         self.text.configure(state="disabled")
         self._set_edit_label(False)
         self._hide_actions()
+        self._sync_offer_buttons({})
         self._autogrow("…")
 
     def _show_actions(self):
         if self._actions_visible:
             return
         self._actions_visible = True
-        self._extra_h = self._px(ACTION_ROW_H)
+        self._extra_h = (self._px(ACTION_ROW_H)
+                         + int(getattr(self, "_offer_h", 0)))
         self.actions.pack(fill="x")
         self._apply_height()
 
@@ -572,9 +656,60 @@ class Hud:
 
     def _set_actions_enabled(self, enabled):
         state = "normal" if enabled else "disabled"
-        for button in (self.insert_btn, self.edit_btn, self.copy_btn,
-                       self.dict_btn, self.cancel_btn):
-            button.configure(state=state)
+        for name in ("insert_btn", "edit_btn", "copy_btn", "dict_btn",
+                     "cancel_btn", "retry_btn", "rollback_btn"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state=state)
+
+    def _sync_offer_buttons(self, offers=None):
+        """Show the wider pass and the rollback only where they apply.
+
+        The retry needs both the service's offer and the take's held WAV;
+        the rollback needs the snapshot the last pass left behind. Both are
+        hidden while the draft is edited: the editor's text is not the
+        pass's text, and a button acting under it would replace work in
+        progress.
+        """
+        if getattr(self, "offers", None) is None:
+            return
+        state = offers if offers is not None else getattr(self, "state", {})
+        active = bool(getattr(self, "_draft_active", False))
+        editing = bool(getattr(self, "_draft_edit", False))
+        retry = (active and not editing
+                 and bool(state.get("draft_offer"))
+                 and bool(state.get("draft_audio")))
+        rollback = (active and not editing
+                    and bool(state.get("draft_rollback")))
+        if retry != bool(getattr(self, "_retry_visible", False)):
+            self._retry_visible = retry
+            if retry:
+                self.retry_btn.pack(side="left")
+            else:
+                self.retry_btn.pack_forget()
+        if rollback != bool(getattr(self, "_rollback_visible", False)):
+            self._rollback_visible = rollback
+            if rollback:
+                self.rollback_btn.pack(side="left", padx=(self._px(6), 0))
+            else:
+                self.rollback_btn.pack_forget()
+        shown = retry or rollback
+        if shown != bool(getattr(self, "_offers_visible", False)):
+            self._offers_visible = shown
+            if shown:
+                self.offers.pack(fill="x", padx=self._px(12),
+                                 pady=(0, self._px(4)),
+                                 after=self.insert_btn)
+            else:
+                self.offers.pack_forget()
+            self._reserve_offers(shown)
+
+    def _reserve_offers(self, shown):
+        """Grow the reserved action height by the offer row, or drop it."""
+        self._offer_h = self._px(OFFER_ROW_H) if shown else 0
+        if getattr(self, "_actions_visible", False):
+            self._extra_h = self._px(ACTION_ROW_H) + self._offer_h
+            self._apply_height()
 
     def _set_edit_label(self, editing):
         label = self.svc.tr("draft.done" if editing else "draft.edit")
@@ -589,6 +724,8 @@ class Hud:
             self._save_edit()
             return
         self._draft_edit = True
+        # Editing replaces the pass's text: both offers wait until it is saved.
+        self._sync_offer_buttons({})
         self.text.configure(state="normal")
         self._set_edit_label(True)
         with contextlib.suppress(Exception):
@@ -603,6 +740,28 @@ class Hud:
         self._draft_edit = False
         self.text.configure(state="disabled")
         self._set_edit_label(False)
+        self._sync_offer_buttons()
+
+    def _retranscribe_draft(self):
+        """Ask the service for one wider pass over the draft's own take.
+
+        The pass runs in the service's worker; the buttons go quiet until
+        the draft revision moves, so a second click cannot start another.
+        """
+        if not self._draft_active or self._draft_edit:
+            return
+        if not getattr(self, "_retry_visible", False):
+            return
+        self._set_actions_enabled(False)
+        self.svc.retranscribe_draft()
+
+    def _rollback_draft(self):
+        """Restore the draft text the wider pass replaced; instant, in memory."""
+        if not self._draft_active or self._draft_edit:
+            return
+        if not getattr(self, "_rollback_visible", False):
+            return
+        self.svc.rollback_draft()
 
     def _read_draft(self):
         try:
@@ -929,6 +1088,13 @@ class Hud:
             hint = self.svc.tr("hud.mic_hint", device=st.get("device") or "")
             if (key == "recording" and float(st.get("level", 0)) < 0.003):
                 hint += self.svc.tr("hud.silence_warn")
+            # The language note belongs to this line too, and takes it over
+            # while fresh: it is the one thing to read after the take. It
+            # names what the take sounded like, never what recognition used.
+            language_note = language_hint_text(st.get("language_hint"),
+                                               self.svc.tr)
+            if language_note:
+                hint = language_note
             # The file progress lives in the strip below, never in this hint:
             # the two percentages must not be read as one number.
             self.hint.configure(text=hint)
@@ -936,13 +1102,21 @@ class Hud:
             privacy = bool(st.get("privacy"))
             self.eye.configure(text="🙈" if privacy else "👁")
             if not self._draft_active:
-                partial = (self.svc.tr("hud.privacy_hint") if privacy
-                           else (st.get("partial") or "…"))
+                # System audio publishes live subtitles, never a partial: the
+                # plate carries the last phrases while the take runs. The
+                # privacy hint still hides them, and a microphone partial
+                # keeps its old place when no plate is present.
+                if privacy:
+                    shown = self.svc.tr("hud.privacy_hint")
+                else:
+                    plate = st.get("subtitles") or []
+                    shown = ("\n".join(str(phrase) for phrase in plate)
+                             if plate else (st.get("partial") or "…"))
                 self.text.configure(state="normal")
                 self.text.delete("1.0", "end")
-                self.text.insert("1.0", partial)
+                self.text.insert("1.0", shown)
                 self.text.configure(state="disabled")
-                self._autogrow(partial)
+                self._autogrow(shown)
 
             last = st.get("last") or ""
             age = time.time() - float(st.get("last_ts") or 0)

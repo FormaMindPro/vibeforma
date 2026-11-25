@@ -11,3 +11,6 @@ pynput>=1.7.6
 pystray>=0.19.5
 Pillow>=10.0
 pyperclip>=1.8.2
+# Spoken-to-written numbers for text cleanup (ru/en ITN), pure Python over kaldifst.
+# 0.x API: the upper bound keeps a recompile from silently changing the call shape.
+wetext>=0.2.1,<0.3

@@ -177,6 +177,69 @@ def test_system_source_records_and_never_auto_stops(monkeypatch):
     assert len(buf) % audio.FRAME == 0
 
 
+def test_system_take_ignores_max_record_s():
+    audio = pytest.importorskip("audio")
+    pytest.importorskip("sounddevice")
+    stopped = []
+    cfg = _cfg(audio_source="system", auto_stop=True, silence_ms=50,
+               max_record_s=10)
+    rec = audio.Recorder(cfg, logging.getLogger("test_audio_quality"),
+                         _fake_vad, stopped.append)
+    rec._source = "system"
+    rec._continuous = False
+    rec._t_start = time.monotonic() - 1000.0
+    rec._has_speech = True
+    rec._t_last_voice = time.monotonic() - 100.0
+
+    rec._check_timeouts()
+
+    assert stopped == []
+    assert not rec._stop_evt.is_set()
+
+
+def test_system_partial_fires():
+    audio = pytest.importorskip("audio")
+    pytest.importorskip("sounddevice")
+    calls = []
+    cfg = _cfg(audio_source="system", partial_every_s=1.5)
+    rec = audio.Recorder(cfg, logging.getLogger("test_audio_quality"),
+                         _fake_vad, _no_stop, on_partial=calls.append)
+    rec._source = "system"
+    rec._has_speech = True
+    rec._t_last_partial = 0.0
+    rec._frames = [np.zeros(audio.FRAME, dtype=np.float32) for _ in range(100)]
+
+    rec._maybe_partial(1.5)
+
+    deadline = time.time() + 2.0
+    while not calls and time.time() < deadline:
+        time.sleep(0.01)
+    assert calls
+    assert len(calls[0]) <= int(audio.PARTIAL_WINDOW_S * SAMPLE_RATE)
+
+
+def test_system_frames_stay_within_the_buffer():
+    audio = pytest.importorskip("audio")
+    pytest.importorskip("sounddevice")
+    limit = int(audio.SYSTEM_BUFFER_S * SAMPLE_RATE) // audio.FRAME
+    system = audio.Recorder(_cfg(audio_source="system"),
+                            logging.getLogger("test_audio_quality"),
+                            _fake_vad, _no_stop)
+    system._source = "system"
+    for _ in range(limit + 300):
+        system._ingest(np.zeros(audio.FRAME, dtype=np.float32))
+    assert len(system._frames) <= limit
+
+    # The microphone path is untouched: its buffer is the chunk path's.
+    mic = audio.Recorder(_cfg(audio_source="microphone"),
+                         logging.getLogger("test_audio_quality"),
+                         _fake_vad, _no_stop)
+    mic._t_start = time.monotonic()
+    for _ in range(limit + 300):
+        mic._ingest(np.zeros(audio.FRAME, dtype=np.float32))
+    assert len(mic._frames) == limit + 300
+
+
 def test_microphone_take_resets_the_source_after_system(monkeypatch):
     audio = pytest.importorskip("audio")
     pytest.importorskip("sounddevice")

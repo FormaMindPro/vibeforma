@@ -60,17 +60,56 @@ def test_normalize_caps_the_entry_list():
     assert len(dictionary.normalize(raw)) == dictionary.MAX_ENTRIES
 
 
-def test_hotwords_merge_without_duplicates():
+def test_hotwords_use_the_target_form():
+    entries = [{"from": "vibra", "to": "VibeForma"},
+               {"from": "bias", "to": ""}]
+    assert dictionary.hotword_terms(entries) == ["VibeForma", "bias"]
+
+
+def test_hotwords_merge_target_forms_without_duplicates():
     merged = dictionary.merge_hotwords(
         "alpha, Beta",
-        [{"from": "gamma", "to": "G"}, {"from": "beta", "to": "B"}])
-    assert merged == "alpha, Beta, gamma"
+        [{"from": "gamma", "to": "Gamma"}, {"from": "beta", "to": "B"}])
+    assert merged == "alpha, Beta, Gamma, B"
 
 
-def test_hotwords_stay_within_the_prompt_cap():
+def test_hotwords_put_frequent_corrections_first():
+    entries = [{"from": "alpha", "to": "Alpha"},
+               {"from": "vibra", "to": "VibeForma"}]
+    terms = dictionary.hotword_terms(entries, {"vibeforma": 7})
+    assert terms == ["VibeForma", "Alpha"]
+
+
+def test_hotwords_stay_within_the_prompt_budget():
     raw = [{"from": f"term{i:03d}", "to": ""} for i in range(200)]
     merged = dictionary.merge_hotwords("", raw)
-    assert len(merged) <= dictionary.MAX_PROMPT
+    assert dictionary.estimate_tokens(merged) <= dictionary.MAX_PROMPT
+
+
+# -- the profile merge (card-251) ------------------------------------------
+def test_profile_merge_puts_its_entries_over_the_global_list():
+    merged = dictionary.merge(
+        [{"from": "term", "to": "Global"}, {"from": "other", "to": "Other"}],
+        [{"from": "TERM", "to": "Profile"}])
+    assert merged == [{"from": "TERM", "to": "Profile"},
+                      {"from": "other", "to": "Other"}]
+
+
+def test_profile_merge_without_a_profile_keeps_the_global_list():
+    assert dictionary.merge([{"from": "a", "to": "b"}], None) == [
+        {"from": "a", "to": "b"}]
+    assert dictionary.merge(None, None) == []
+
+
+def test_hotwords_selection_keeps_a_frequent_correction_before_the_cut():
+    raw = [{"from": f"misspelling{i:03d}", "to": f"Term{i:03d}"}
+           for i in range(dictionary.MAX_ENTRIES - 1)]
+    raw.append({"from": "vibra", "to": "VibeForma"})
+    merged = dictionary.merge_hotwords("", raw, {"vibeforma": 50})
+    terms = [t.strip() for t in merged.split(",")]
+    assert terms[0] == "VibeForma"
+    assert dictionary.estimate_tokens(merged) <= dictionary.MAX_PROMPT
+    assert "Term498" not in terms
 
 
 def test_json_roundtrip():

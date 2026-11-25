@@ -5,6 +5,141 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.5.0 — 2026-11-25
+
+### Added
+- **Live subtitles of system audio.** Switch the sound source to **System
+  audio** and the same hotkey starts a take that shows the last one or two
+  phrases in the panel instead of inserting text. The take has no auto-stop
+  on silence and no 120 s cut, keeps a 30 s buffer and refreshes the plate
+  no more often than every 4 s; the same hotkey stops it. Nothing reaches
+  the active window, the draft, the history or the statistics. Two live
+  takes of 409.5 s and 844.4 s held. Known limits: the subtitle filter
+  drops only short stop phrases and repeated loops, so invented text over
+  music can still reach the plate; the system mode does not write an audio
+  or subtitle file yet, and that is the next round.
+- **A doubtful draft offers "Recognize more precisely".** When the final
+  pass ran with `temperature > 0` or the phrase looks uncertain, the panel
+  keeps it as a draft, underlines the doubtful words and offers **Recognize
+  more precisely** and **Restore previous**. The retry runs the same
+  recording through the same loaded model with beam 10, temperature 0 and
+  word timestamps; it replaces only the engine text — dictionary, rules,
+  snippets and voice actions are not re-applied — and **Restore previous**
+  returns the exact previous text and marking. The offer needs the take's
+  WAV, so a long take in continuous mode without history sound cannot be
+  retried; the rollback is one level.
+- **Optional text cleanup.** `text_cleanup` (off by default, no settings tab
+  yet) turns numbers and dates spoken as words into digits for ru and en
+  through `wetext` 0.2.1 (Apache-2.0, installed with the app), removes a
+  curated list of ru and en filler words as whole words only, and
+  capitalizes sentence starts. Protected fragments — code, snake_case and
+  camelCase names, dotted paths, URLs, e-mail, Windows paths and backticked
+  text — stay byte for byte. The step runs after the dictionary, text rules,
+  snippets and voice actions, before the draft and the insertion;
+  punctuation stays Whisper's. Limits: a lone small numeral outside a
+  recognized phrase stays words (wetext's own rule), and a wetext failure
+  leaves the words as said and is not logged.
+- **Application profiles.** `app_profiles` ties a profile to a process name
+  and/or a window-title fragment; a profile carries its own dictionary and
+  snippets. The profile of the window that will receive the text — the one
+  active at the hotkey — applies, not the window active when recognition
+  ends; profile rules merge over the global ones without duplicates, and
+  other windows keep the global rules. The **Dictionary** tab has an
+  **Application profiles** section: the list, add/edit/remove, the profile's
+  terms and snippets, save and reset; the limit is 50 profiles.
+- **History with sound and re-recognition of the last take.**
+  `history_audio` (off by default) keeps a WAV of each dictation in
+  `history_audio\` next to `history.jsonl` when `history` is on too, under a
+  200 MiB cap; deleting a record or clearing the history deletes its WAV,
+  and turning the option off removes the stored sound. The tray item
+  **Re-recognize the last dictation** asks for a prompt (prefilled with
+  `hotwords`), runs a temporary ASR with the current or another model and
+  leaves the new text in the panel draft.
+- **Voice actions.** `actions` in `config.json` — a whole dictated phrase,
+  matched after the dictionary and snippets — runs `hook_command`, switches
+  the model or runs its own command for an external agent. A matched action
+  is not inserted as text; a failed command leaves the normal insertion and
+  writes a status line with the exit code to the log. The phrase still
+  counts in the statistics. Config-only for now.
+- **Dictation context, opt-in.** `dictation_context` (off by default) sends
+  the previous phrase (a 160-character tail) and the text selected in the
+  target window (up to 400 characters, read through Ctrl+Insert) into the
+  window's hotwords, so a name keeps its spelling; with the option off
+  nothing is read. Config-only.
+- **Punctuation presets for all 26 menu languages.** The recognition prompt
+  preset now covers every language code in the menu (it covered six), each
+  written in its own script and alphabet.
+- **A language hint.** After the final pass the panel can say "looks like X
+  (..%), Y is pinned (..%)" for 20 s when the pinned language's probability
+  is below 0.5 and another language leads with at least 0.5. Recognition
+  stays on the pinned language; a failed detection or an English-only model
+  simply gives no hint.
+- **A CT2 model from a folder.** `model` accepts a folder path as well as a
+  catalog name or a Hugging Face repo id. The folder is loaded with
+  `local_files_only=True` and checked structurally — `model.bin` with its
+  CT2 header, `config.json` as a JSON object, `tokenizer.json` and the
+  vocabulary; a broken folder raises a named error instead of silently
+  downloading the catalog model.
+- **Sentence captions in SRT and VTT.** With word timestamps on, cues are
+  cut by sentences: a sentence end or a pause of 0.6 s or longer closes a
+  cue, a shorter pause glues words across engine windows and 600 s blocks; a
+  segment without words stays its own cue; without word timestamps the
+  engine segments stand. TXT and JSON are unchanged.
+- **The agent contract reaches the engine.** `prompt`, `word_timestamps` and
+  `clip_timestamps` are accepted by `/jobs`, `/v1/audio/transcriptions`, the
+  CLI (`--prompt`, `--words`, `--clip`) and the MCP tools; a job reports the
+  applied prompt and range. `verbose_json` follows the OpenAI schema with
+  `segments[].avg_logprob`, `no_speech_prob`, `compression_ratio` and
+  `temperature`, plus a top-level `words[]` with `probability`.
+- **Confidence is no longer discarded.** Segment readings and word
+  probability are published in JSON and `verbose_json`; a low-confidence or
+  `temperature > 0` phrase waits in the panel draft with its doubtful words
+  highlighted instead of a blind paste. Thresholds: `avg_logprob -1.0`,
+  `no_speech_prob 0.6`, `compression_ratio 2.4`, word probability 0.6.
+- **A local WER/CER reference for the engine.** `tests/wer/manifest.json`
+  lists 24 short ru+en recordings with the correct text (names, numbers,
+  terms, noise, music, silence) and `tools/wer_cer.py` measures WER and CER
+  with `--self-test`, `--transcribe`, `--hyp-dir` and `--baseline`. The
+  baseline `test_ru.wav` reads WER 0.00 % / CER 0.00 % on large-v3, CPU
+  int8. The recordings themselves are not in the repository; the tool lists
+  the missing files and exits 2 until they are recorded.
+
+### Changed
+- **Long dictation is continuous by default.** `continuous` (default true)
+  lifts the `max_record_s` cut: the take is cut at a pause of at least 400 ms
+  after at least 1 s of speech, or at 30 s with the last 0.3 s carried into
+  the next chunk so a split word stays whole; chunks are recognized by the
+  final pass in order, seams drop duplicated words and carry a sentence mark
+  across, and the text is inserted once. Turning the option off restores the
+  old stop at `max_record_s`; the system-audio take has its own path. When
+  recognition falls behind and the receiver does not take a chunk, the buffer
+  stops growing at 240 s: the buffered audio is dropped whole and the log
+  carries a warning ("Continuous chunk dropped: ... while recognition is
+  behind"). That is a memory guard, not the normal phrase limit — a very slow
+  pass can cost up to those 240 s of audio instead of growing memory without
+  bound.
+- **The dictionary reaches every window.** Terms go to the `hotwords`
+  parameter on dictation, the live partial, the sequential and the batched
+  file path, not only to the first 30-second window; the recognition prompt
+  carries the language preset only; terms use their target form and are
+  selected by correction frequency within a 223-token budget. A term that
+  does not fit is skipped whole, not cut mid-word, and each dictation window
+  writes one INFO line with the number of terms.
+- **File blocks continue each other.** A 200-character tail of the previous
+  block joins the prompt of the next block on both the sequential and the
+  batched path, so a name set in the first block survives into the second
+  and third. The tail does not accumulate — the prompt length stays
+  constant — and a gap in `clip_timestamps` resets it.
+- **The batched file path is checked like the sequential one.** Every
+  batched segment is measured against the same thresholds; a segment that
+  fails is re-recognized sequentially over its own slice of the block, the
+  replacement passes the same post-filter, and the failure and the retry are
+  written to the log. The 1.35 `compression_ratio` threshold applies to
+  English; other languages keep the library's 2.4 in this guard and the 1.35
+  post-filter under `no_speech_prob`, because a clean Russian sample
+  measures 1.466–1.476. On the reference phrase both paths read WER 0.00 %
+  and CER 0.00 %.
+
 ### Fixed
 - **The bootstrap hashes archives without `Get-FileHash`.** `install.ps1`
   computes SHA-256 through .NET, so the checksum gate works even when
@@ -14,6 +149,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   into a fresh subfolder with `ZipFile.ExtractToDirectory`, avoiding the
   PowerShell `Expand-Archive` overload failure on some runners and keeping
   the downloaded checksum files out of the release tree.
+- **A word-timestamp crash no longer fails a file job.** `IndexError` from
+  faster-whisper's `find_alignment` (issue #1342) is caught at the block
+  when word timestamps are on: the block is retried without them, the retry
+  is logged, already delivered segments are not repeated, and the following
+  blocks still ask for words. Without word timestamps the crash is not
+  hidden and the job fails as before.
+- **Invented text is filtered from files and system audio.** A stop list of
+  typical ru and en false phrases (subscribe lines, "thanks for watching",
+  subtitle credits, Amara.org and similar), a 2.0 s silence threshold with
+  word timestamps, and a compression-ratio guard drop a segment when
+  `no_speech_prob` is at least 0.6 and the phrase is a known fake or the
+  ratio is above 1.35; a loop the engine still reads as speech stays and is
+  flagged. The guard works on the sequential and batched file paths and in
+  the final dictation pass; on the reference phrase it kept 17/17 words with
+  no drops.
+
+### Not included
+- **Silero text enhancement.** Punctuation stays Whisper's: the Silero
+  punctuation model is not part of 0.5.0. Its license is CC BY-NC-SA 4.0
+  (non-commercial), torch and the model would add about 219 MB, the quality
+  on Russian was not confirmed and there is no official ONNX build; the
+  decision and the rejected options are recorded as ADR 0001 in the
+  project's decision log. A commercial license or a punctuation model under
+  MIT/Apache would reopen the question.
 
 ## 0.4.5 — 2026-11-24
 

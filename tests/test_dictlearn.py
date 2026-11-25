@@ -125,6 +125,22 @@ def test_a_broken_store_reads_empty_and_keeps_working(tmp_path):
     assert rows and rows[0]["from"] == "wrld" and rows[0]["count"] == 2
 
 
+def test_frequency_weights_the_target_forms(tmp_path):
+    path = str(tmp_path / "corrections.json")
+    dictlearn.collect_correction("a wrld", "a world", path)
+    dictlearn.collect_correction("b wrld", "b world", path)
+    dictlearn.collect_correction("a wrng", "a wrong", path)
+
+    assert dictlearn.frequency(path) == {"world": 2, "wrong": 1}
+
+
+def test_frequency_of_a_broken_store_is_empty(tmp_path):
+    path = tmp_path / "corrections.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    assert dictlearn.frequency(str(path)) == {}
+
+
 def test_junk_rows_are_ignored(tmp_path):
     path = tmp_path / "corrections.json"
     path.write_text(

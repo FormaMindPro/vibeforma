@@ -295,3 +295,19 @@ def test_dictionary_runs_before_snippets():
     svc._transcribe_worker(object(), FakeRecorder())
 
     assert svc.live["draft"] == "EXPANDED"
+
+
+# -- the profile merge (card-251) ------------------------------------------
+def test_profile_merge_puts_its_snippets_over_the_global_list():
+    merged = snippets.merge(
+        [{"trigger": "sig", "text": "Global"},
+         {"trigger": "date", "text": "Today"}],
+        [{"trigger": "SIG", "text": "Profile"}])
+    assert merged == [{"trigger": "SIG", "text": "Profile"},
+                      {"trigger": "date", "text": "Today"}]
+
+
+def test_profile_merge_without_a_profile_keeps_the_global_list():
+    assert snippets.merge([{"trigger": "a b", "text": "c"}], None) == [
+        {"trigger": "a b", "text": "c"}]
+    assert snippets.merge(None, None) == []

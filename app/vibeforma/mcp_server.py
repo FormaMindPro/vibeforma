@@ -80,6 +80,29 @@ TOOLS: list[dict[str, Any]] = [
                     "enum": list(FILE_FORMATS),
                     "description": "Output format; txt by default.",
                 },
+                "prompt": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "description": (
+                        "Recognition hint for this file (names, terms, "
+                        "punctuation). Empty follows the service config."
+                    ),
+                },
+                "word_timestamps": {
+                    "type": "boolean",
+                    "description": (
+                        "Return word-level timestamps and probabilities in "
+                        "the JSON result."
+                    ),
+                },
+                "clip_timestamps": {
+                    "type": "string",
+                    "description": (
+                        "Only transcribe this time range: start,end in "
+                        "seconds, comma-separated pairs. Empty means the "
+                        "whole file."
+                    ),
+                },
                 "timeout_s": {
                     "type": "integer",
                     "description": "How long to wait for the job, seconds.",
@@ -91,7 +114,11 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "vibeforma_job_status",
-        "description": "Read the state of a queued or running transcription job.",
+        "description": (
+            "Read the state of a queued or running transcription job, "
+            "including its applied prompt, word_timestamps and "
+            "clip_timestamps."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -246,12 +273,22 @@ def tool_capabilities(service: Service) -> dict[str, Any]:
 def tool_transcribe(service: Service, path: str, language: str = "",
                     fmt: str = "txt",
                     timeout_s: float = DEFAULT_TIMEOUT_S,
-                    poll_s: float = POLL_INTERVAL_S) -> dict[str, Any]:
+                    poll_s: float = POLL_INTERVAL_S,
+                    prompt: str = "",
+                    word_timestamps: bool = False,
+                    clip_timestamps: str = "") -> dict[str, Any]:
     """Queue a file, wait for the job and return its rendered text."""
     if fmt not in FILE_FORMATS:
         raise ServiceError("format must be txt, json, srt or vtt")
-    created = api_json(service, "POST", "/jobs",
-                       {"path": path, "language": language, "formats": [fmt]})
+    request: dict[str, Any] = {"path": path, "language": language,
+                               "formats": [fmt]}
+    if prompt:
+        request["prompt"] = prompt
+    if word_timestamps:
+        request["word_timestamps"] = True
+    if clip_timestamps:
+        request["clip_timestamps"] = clip_timestamps
+    created = api_json(service, "POST", "/jobs", request)
     job_id = str(created.get("job_id") or "")
     if not job_id:
         raise ServiceError("VibeForma did not return a job id")
@@ -354,6 +391,9 @@ class McpServer:
                     language=str(args.get("language") or ""),
                     fmt=str(args.get("format") or "txt"),
                     timeout_s=float(args.get("timeout_s") or DEFAULT_TIMEOUT_S),
+                    prompt=str(args.get("prompt") or ""),
+                    word_timestamps=bool(args.get("word_timestamps")),
+                    clip_timestamps=str(args.get("clip_timestamps") or ""),
                 )
             elif name == "vibeforma_job_status":
                 job_id = str(args.get("job_id") or "").strip()

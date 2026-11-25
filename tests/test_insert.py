@@ -333,3 +333,59 @@ def test_activate_window_restores_a_minimized_window(monkeypatch):
 
     assert ("show", 9) in user32.calls
     assert ("fg", TARGET) in user32.calls
+
+
+# -- the selection read (dictation context, F11) ---------------------------
+
+class _CopyingController(Controller):
+    """The target app copies the selection on Ctrl+Insert, as Windows does."""
+
+    state = None
+    copied = None
+
+    def release(self, key):
+        super().release(key)
+        if key == "insert" and not self.copied:
+            self.copied = True
+            pyperclip.clip = self.state["selection"]
+            self.state["seq"] += 1
+
+
+class _QuietController(Controller):
+    """An app that ignores Ctrl+Insert: the clipboard does not change."""
+
+
+def test_selected_text_is_read_and_the_clipboard_put_back(monkeypatch):
+    state = {"seq": 1, "selection": "VibeForma"}
+    _CopyingController.state = state
+    _CopyingController.copied = False
+    monkeypatch.setattr(insert, "Controller", _CopyingController)
+    monkeypatch.setattr(insert, "clipboard_sequence", lambda: state["seq"])
+    pyperclip.clip = "old"
+
+    assert insert.read_selected_text() == "VibeForma"
+    assert pyperclip.clip == "old"
+
+
+def test_no_selection_leaves_the_clipboard_alone(monkeypatch):
+    monkeypatch.setattr(insert, "Controller", _QuietController)
+    monkeypatch.setattr(insert, "clipboard_sequence", lambda: 1)
+    pyperclip.clip = "old"
+
+    assert insert.read_selected_text() == ""
+    assert pyperclip.clip == "old"
+
+
+def test_a_multiline_selection_is_flattened_and_bounded(monkeypatch):
+    state = {"seq": 1, "selection": "first line\nsecond line " + "x" * 500}
+    _CopyingController.state = state
+    _CopyingController.copied = False
+    monkeypatch.setattr(insert, "Controller", _CopyingController)
+    monkeypatch.setattr(insert, "clipboard_sequence", lambda: state["seq"])
+    pyperclip.clip = "old"
+
+    text = insert.read_selected_text()
+
+    assert "\n" not in text
+    assert len(text) <= insert.SELECTION_MAX_CHARS
+    assert text.startswith("first line second line")

@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "title": "Локальный эталон WER/CER: 24 короткие записи ru+en",
+  "format": {
+    "container": "wav",
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+  "notes": [
+    "Порядок записи — порядок записей в массиве phrases.",
+    "Запишите каждый файл отдельно и положите в tests/wer/ под именем из поля file.",
+    "Речевые фразы читайте целиком, обычным темпом, без спешки и без лишних слов.",
+    "Шум, музыка и тишина записываются без речи: любое распознанное слово там — ложное срабатывание.",
+    "Формат — WAV, 16 кГц, моно. Имя файла менять нельзя: по нему скрипт находит запись.",
+    "Верный текст каждой речевой фразы — поле text; если при записи фраза изменилась, правьте text до замера.",
+    "Запуск замера: .venv\\Scripts\\python tools\\wer_cer.py --transcribe"
+  ],
+  "phrases": [
+    {
+      "id": "ru-01",
+      "file": "ru-01.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["baseline"],
+      "text": "Привет! Это проверка диктовки.",
+      "instruction": "Прочитайте фразу целиком, обычным темпом."
+    },
+    {
+      "id": "ru-02",
+      "file": "ru-02.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["names"],
+      "text": "Позвони Анне Сергеевне и передай привет от Дмитрия Кузнецова.",
+      "instruction": "Прочитайте имена так, как написали бы их в документе."
+    },
+    {
+      "id": "ru-03",
+      "file": "ru-03.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "Заказ номер 47 стоит 250 рублей.",
+      "instruction": "Числа произнесите словами: сорок семь и двести пятьдесят."
+    },
+    {
+      "id": "ru-04",
+      "file": "ru-04.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["terms"],
+      "text": "Запусти pip install faster-whisper в терминале.",
+      "instruction": "Технические слова произнесите по-английски, как на лекции."
+    },
+    {
+      "id": "ru-05",
+      "file": "ru-05.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["names"],
+      "text": "Встреча с Михаилом в офисе на Ленинском проспекте.",
+      "instruction": "Прочитайте название улицы полностью."
+    },
+    {
+      "id": "ru-06",
+      "file": "ru-06.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "Создай восемь папок и удали три файла.",
+      "instruction": "Числа произнесите словами, без пауз между словами и цифрами."
+    },
+    {
+      "id": "ru-07",
+      "file": "ru-07.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["terms"],
+      "text": "Включи CUDA и выбери модель large-v3-turbo.",
+      "instruction": "Название модели произнесите как одно слово: large-v3-turbo."
+    },
+    {
+      "id": "ru-08",
+      "file": "ru-08.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["names", "numbers"],
+      "text": "Перезвони Ирине Петровне в 14:30.",
+      "instruction": "Время произнесите словами: четырнадцать тридцать."
+    },
+    {
+      "id": "ru-09",
+      "file": "ru-09.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "Купи два килограмма яблок и один литр молока.",
+      "instruction": "Числа и единицы произнесите полностью, без сокращений."
+    },
+    {
+      "id": "ru-10",
+      "file": "ru-10.wav",
+      "language": "ru",
+      "kind": "speech",
+      "tags": ["baseline"],
+      "text": "Сегодня мы проверяем, насколько точно локальное распознавание понимает русскую речь без интернета.",
+      "instruction": "Длинная фраза: читайте целиком, не обрывая на запятой."
+    },
+    {
+      "id": "en-01",
+      "file": "en-01.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["baseline"],
+      "text": "Hello! This is a dictation check.",
+      "instruction": "Read the whole sentence at a normal pace."
+    },
+    {
+      "id": "en-02",
+      "file": "en-02.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["names"],
+      "text": "Ask Michael Johnson to call Anna Smith tomorrow.",
+      "instruction": "Say both full names clearly."
+    },
+    {
+      "id": "en-03",
+      "file": "en-03.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "The order number is 47 and the total is 25 dollars.",
+      "instruction": "Say the numbers as words: forty seven and twenty five."
+    },
+    {
+      "id": "en-04",
+      "file": "en-04.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["terms"],
+      "text": "Open the README file and run pip install faster-whisper.",
+      "instruction": "Read the technical terms in English, without spelling them out."
+    },
+    {
+      "id": "en-05",
+      "file": "en-05.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["names", "terms"],
+      "text": "Send the report to Sarah Connor at OpenAI.",
+      "instruction": "Say the person and the company name clearly."
+    },
+    {
+      "id": "en-06",
+      "file": "en-06.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "Create eight folders and delete three files.",
+      "instruction": "Say the numbers as words, not as digits."
+    },
+    {
+      "id": "en-07",
+      "file": "en-07.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["terms"],
+      "text": "Enable CUDA and select the large-v3-turbo model.",
+      "instruction": "Say the model name as one term: large-v3-turbo."
+    },
+    {
+      "id": "en-08",
+      "file": "en-08.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["names", "numbers"],
+      "text": "Call Irene at 2:30.",
+      "instruction": "Say the time as words: two thirty."
+    },
+    {
+      "id": "en-09",
+      "file": "en-09.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["numbers"],
+      "text": "Buy two kilograms of apples and one liter of milk.",
+      "instruction": "Say the amounts in full, without abbreviations."
+    },
+    {
+      "id": "en-10",
+      "file": "en-10.wav",
+      "language": "en",
+      "kind": "speech",
+      "tags": ["baseline"],
+      "text": "Today we are checking how accurately local speech recognition understands English without an internet connection.",
+      "instruction": "A long sentence: read it whole, without stopping at the comma."
+    },
+    {
+      "id": "noise-01",
+      "file": "noise-01.wav",
+      "language": "",
+      "kind": "noise",
+      "tags": ["noise"],
+      "text": "",
+      "instruction": "Запишите 5 секунд фонового шума комнаты (вентилятор, клавиатура) без речи."
+    },
+    {
+      "id": "noise-02",
+      "file": "noise-02.wav",
+      "language": "",
+      "kind": "noise",
+      "tags": ["noise"],
+      "text": "",
+      "instruction": "Запишите 5 секунд уличного шума или чужого разговора вдалеке, сами не говорите."
+    },
+    {
+      "id": "music-01",
+      "file": "music-01.wav",
+      "language": "",
+      "kind": "music",
+      "tags": ["music"],
+      "text": "",
+      "instruction": "Запишите 10 секунд музыки (можно с вокалом) без своей речи."
+    },
+    {
+      "id": "silence-01",
+      "file": "silence-01.wav",
+      "language": "",
+      "kind": "silence",
+      "tags": ["silence"],
+      "text": "",
+      "instruction": "Запишите 5 секунд тишины: не говорите и не шумите."
+    }
+  ],
+  "baseline": {
+    "file": "../../test_ru.wav",
+    "language": "ru",
+    "text": "Привет! Это тестовая фраза для проверки локального распознавания русской речи. Номер 12. И вопрос: работает ли диктовка.",
+    "source": "text reconstructed from the card-111/114/116 selftest outputs; not re-confirmed by the human in card-236"
+  }
+}
