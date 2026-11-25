@@ -235,9 +235,9 @@ def _normalizer(lang):
 def _case_forms(span, lang):
     """The span as spoken and, behind it, its lowercased forms.
 
-    wetext reads a capital as part of the word: "Двадцать три" is not a
-    numeral for it, "двадцать три" is. The original form is tried first, so
-    a successful reading is never retold in another case.
+    wetext reads a capital as part of the word: a capitalized phrase is not
+    a numeral for it, its lowercased form is. The original form is tried
+    first, so a successful reading is never retold in another case.
     """
     forms = [span]
     if lang == "ru":

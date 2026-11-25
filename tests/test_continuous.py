@@ -4,6 +4,10 @@ import sys
 import time
 import types
 
+import pytest
+
+pytest.importorskip("sounddevice")
+
 import audio
 import numpy as np
 from vibeforma import STATE_IDLE, STATE_PROCESSING, STATE_RECORDING
@@ -160,8 +164,10 @@ def test_repeated_seam_words_are_dropped():
             == "hello world how are you")
     assert (join_chunks(["one two three", "two three four"])
             == "one two three four")
-    assert (join_chunks(["Привет, мир", "мир как дела"])
-            == "Привет, мир как дела")
+    privet = "\u041f\u0440\u0438\u0432\u0435\u0442, \u043c\u0438\u0440"
+    mir = "\u043c\u0438\u0440 \u043a\u0430\u043a \u0434\u0435\u043b\u0430"
+    assert (join_chunks([privet, mir])
+            == privet + " \u043a\u0430\u043a \u0434\u0435\u043b\u0430")
 
 
 def test_a_sentence_end_survives_the_seam():

@@ -1,4 +1,5 @@
 """Opt-in text cleanup: numbers, fillers, capitals, protection (card-254)."""
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -14,6 +15,10 @@ SERVICE = ROOT / "app" / "vibeforma" / "service.py"
 ON_RU = {"text_cleanup": True, "language": "ru"}
 ON_EN = {"text_cleanup": True, "language": "en"}
 OFF_RU = {"text_cleanup": False, "language": "ru"}
+
+needs_wetext = pytest.mark.skipif(
+    importlib.util.find_spec("wetext") is None,
+    reason="wetext is a Windows runtime dependency")
 
 
 class _Log:
@@ -90,6 +95,7 @@ def test_apply_is_off_by_default(cfg):
     assert textclean.apply(text, cfg) == (text, 0)
 
 
+@needs_wetext
 def test_the_human_verdict_phrase():
     text = "\u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438 \u0440\u0443\u0431\u043b\u044f, \u044d\u044d\u044d, \u0437\u0430\u0432\u0442\u0440\u0430"
     cleaned, changes = textclean.apply(text, ON_RU)
@@ -100,6 +106,7 @@ def test_the_human_verdict_phrase():
 # -- numbers and dates ------------------------------------------------------
 
 
+@needs_wetext
 @pytest.mark.parametrize("text, expected", [
     ("\u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438", "23"),
     ("\u0441\u0442\u043e \u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438", "123"),
@@ -112,6 +119,7 @@ def test_russian_numbers_and_dates_become_digits(text, expected):
     assert textclean.apply(text, ON_RU)[0] == expected
 
 
+@needs_wetext
 @pytest.mark.parametrize("text, expected", [
     ("twenty three", "23"),
     ("one thousand two hundred thirty four", "1234"),
@@ -122,6 +130,7 @@ def test_english_numbers_and_dates_become_digits(text, expected):
     assert textclean.apply(text, ON_EN)[0] == expected
 
 
+@needs_wetext
 def test_a_sentence_start_capital_still_converts():
     text = "\u0414\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438 \u0440\u0443\u0431\u043b\u044f, \u044d\u044d\u044d, \u0437\u0430\u0432\u0442\u0440\u0430"
     assert textclean.apply(text, ON_RU)[0] == (
@@ -129,6 +138,7 @@ def test_a_sentence_start_capital_still_converts():
     assert textclean.apply("\u041f\u0435\u0440\u0432\u043e\u0433\u043e \u044f\u043d\u0432\u0430\u0440\u044f", ON_RU)[0] == "01.01"
 
 
+@needs_wetext
 def test_english_sentence_start_and_month_case():
     assert textclean.apply("Twenty three", ON_EN)[0] == "23"
     assert textclean.apply("March twenty third", ON_EN)[0] == "March 23rd"
@@ -136,6 +146,7 @@ def test_english_sentence_start_and_month_case():
         "The 23rd of March")
 
 
+@needs_wetext
 def test_the_word_next_to_a_number_keeps_its_spelling():
     text = "\u0441\u0442\u043e \u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438 \u0440\u0443\u0431\u043b\u044f"
     assert textclean.apply(text, ON_RU)[0] == "123 \u0440\u0443\u0431\u043b\u044f"
@@ -285,6 +296,7 @@ def test_service_keeps_the_text_when_cleanup_is_off():
         "\u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438, \u044d\u044d\u044d, \u0437\u0430\u0432\u0442\u0440\u0430")
 
 
+@needs_wetext
 def test_the_panel_draft_receives_the_cleaned_text():
     svc = make_service(text_cleanup=True)
     svc.asr = _ASR("\u0434\u0432\u0430\u0434\u0446\u0430\u0442\u044c \u0442\u0440\u0438 \u0440\u0443\u0431\u043b\u044f, \u044d\u044d\u044d, \u0437\u0430\u0432\u0442\u0440\u0430")
@@ -296,6 +308,7 @@ def test_the_panel_draft_receives_the_cleaned_text():
     assert svc.live["draft"] == "23 \u0440\u0443\u0431\u043b\u044f, \u0437\u0430\u0432\u0442\u0440\u0430"
 
 
+@needs_wetext
 def test_cleanup_runs_after_a_snippet_expands():
     svc = make_service(text_cleanup=True, snippets=[
         {"trigger": "send the report",
@@ -309,6 +322,7 @@ def test_cleanup_runs_after_a_snippet_expands():
     assert svc.live["draft"] == "23 \u0440\u0443\u0431\u043b\u044f, \u0437\u0430\u0432\u0442\u0440\u0430"
 
 
+@needs_wetext
 def test_insertion_receives_the_cleaned_text(monkeypatch):
     captured = []
     fake = types.ModuleType("insert")

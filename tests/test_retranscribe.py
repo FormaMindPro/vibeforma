@@ -13,11 +13,14 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("sounddevice")
+
 import asr
 import audio
 import hud
 import numpy as np
-import pytest
 import transcript
 from transcript import Segment, Word
 from vibeforma import service as service_mod

@@ -8,11 +8,14 @@ import sys
 import types
 import wave
 
+import pytest
+
+pytest.importorskip("sounddevice")
+
 import audio
 import history
 import main
 import numpy as np
-import pytest
 
 
 def take(seconds: float = 0.2) -> np.ndarray:

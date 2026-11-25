@@ -11,8 +11,9 @@ from __future__ import annotations
 import importlib.metadata
 
 import pytest
-import wetext
-from wetext import Normalizer
+
+wetext = pytest.importorskip("wetext")
+Normalizer = wetext.Normalizer
 
 LOCKED_VERSION = "0.2.1"
 # "twenty three" in Cyrillic letters; kept as escapes: the source stays ASCII.
