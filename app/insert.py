@@ -23,6 +23,15 @@ UNDO_VK = 0x5A         # VK_Z: layout-independent Ctrl+Z
 SELECTION_MAX_CHARS = 400  # a selected term or phrase, never a document
 SELECTION_POLL_S = 0.02    # clipboard settle step after the copy keystroke
 SELECTION_POLLS = 10       # the copy never blocks a take for more than ~0.2 s
+# A take is stopped with the same combo that starts it, so the paste can be
+# sent while Ctrl and Alt are still physically held. The target then sees
+# Ctrl+Alt+Shift+Insert and inserts nothing (measured 2026-11-26 in Chromium:
+# Shift+Insert pastes, Ctrl+Alt+Shift+Insert does not) — the phrase silently
+# stays on the clipboard while the log says "Pasted". Waiting for the release
+# costs a few milliseconds and makes the paste land every time.
+MODIFIER_WAIT_S = 1.0      # longest wait for the combo keys to come up
+MODIFIER_POLL_S = 0.01     # how often the physical state is read meanwhile
+MODIFIER_VKS = (0x10, 0x11, 0x12, 0x5B, 0x5C)  # shift, ctrl, alt, win l/r
 
 RESULT_PASTED = "pasted"
 RESULT_COPIED = "copied"
@@ -54,6 +63,10 @@ def read_selected_text(log: logging.Logger | None = None) -> str:
     except Exception as e:  # noqa: BLE001 - no readable clipboard means no selection
         if log:
             log.debug("Selected text: clipboard unreadable: %s", e)
+    # The take was just opened with the combo: Ctrl and Alt may still be
+    # down, and Ctrl+Alt+Insert copies nothing. A short wait keeps the
+    # selection read working on the first attempt.
+    wait_for_modifiers_released(0.6, log=log)
     before = clipboard_sequence()
     try:
         kb = Controller()
@@ -106,6 +119,7 @@ def send_undo():
     """
     kb = Controller()
     time.sleep(PASTE_DELAY_S)
+    wait_for_modifiers_released(0.5)
     with kb.pressed(Key.ctrl):
         kb.press(KeyCode.from_vk(UNDO_VK))
         kb.release(KeyCode.from_vk(UNDO_VK))
@@ -260,6 +274,46 @@ def clipboard_sequence() -> int:
         return 0
 
 
+def modifier_down() -> bool:
+    """True while a physical modifier key is held (Ctrl, Alt, Shift, Win).
+
+    GetAsyncKeyState is the ground truth for the keyboard the person is
+    holding, not the state this process injected; a platform without it
+    reads as "nothing held", and the caller pastes right away.
+    """
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        return any(user32.GetAsyncKeyState(vk) & 0x8000
+                   for vk in MODIFIER_VKS)
+    except (AttributeError, OSError):
+        return False
+
+
+def wait_for_modifiers_released(timeout: float | None = None,
+                                log: logging.Logger | None = None) -> bool:
+    """Wait until the combo keys are up; False when the wait timed out.
+
+    The paste keystroke must not carry a still-held Ctrl or Alt: Shift+Insert
+    with them becomes a shortcut no app treats as paste. The wait is bounded,
+    so a person who keeps the combo held still gets the paste — late, and the
+    log names the reason.
+    """
+    if timeout is None:
+        timeout = MODIFIER_WAIT_S
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while modifier_down():
+        if time.monotonic() >= deadline:
+            if log:
+                log.info("Modifiers still held after %.1f s — pasting anyway",
+                         timeout)
+            return False
+        time.sleep(MODIFIER_POLL_S)
+    return True
+
+
 def exclude_from_clipboard_history() -> bool:
     """Mark the current clipboard content as private for history and cloud.
 
@@ -350,9 +404,17 @@ def insert_text(text: str, restore_clipboard: bool = True,
         undo_state["prev"] = prev
         undo_state["prev_known"] = prev_known
     pyperclip.copy(text)
-    own_seq = clipboard_sequence()
     if exclude_history and not exclude_from_clipboard_history() and log:
         log.info("Clipboard history exclusion is not available here")
+    # Read after our own last clipboard write: the history exclusion
+    # registers formats of its own, and a sequence taken before it would look
+    # like a foreign write to the restore thread below.
+    own_seq = clipboard_sequence()
+
+    # The stopping combo may still be held: a paste sent under Ctrl+Alt is
+    # not a paste in any app (measured in Chromium 2026-11-26). The window is
+    # checked again after the wait, so the aim stays the latest one.
+    keys_clean = wait_for_modifiers_released(log=log)
 
     target = foreground_window() if log_title else None
     if target_hwnd and get_foreground_hwnd() != target_hwnd:
@@ -379,9 +441,13 @@ def insert_text(text: str, restore_clipboard: bool = True,
         else:
             log.info("Pasted %d chars", len(text))
 
-    if restore_clipboard and prev_known:
+    if restore_clipboard and prev_known and keys_clean:
         threading.Thread(target=_restore, args=(prev, own_seq, text, log),
                          daemon=True).start()
+    elif restore_clipboard and prev_known and log:
+        # The shortcut may have gone missing under the held combo: the text
+        # stays on the clipboard as the fallback the person can paste by hand.
+        log.info("Paste may have missed — the text stays in the clipboard")
     return RESULT_PASTED
 
 

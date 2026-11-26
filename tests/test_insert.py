@@ -98,6 +98,9 @@ def fast_paths(monkeypatch):
     monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: TARGET)
     monkeypatch.setattr(insert, "clipboard_sequence", lambda: 3)
     monkeypatch.setattr(insert, "exclude_from_clipboard_history", lambda: True)
+    # The machine may hold a real modifier while the tests run; the physical
+    # key state is never what a unit test is about.
+    monkeypatch.setattr(insert, "modifier_down", lambda: False)
 
 
 def test_shift_insert_pastes_and_leaves_the_text():
@@ -211,6 +214,69 @@ def test_history_exclusion_can_be_disabled(monkeypatch):
     insert.insert_text("hello", restore_clipboard=False, exclude_history=False)
 
     assert calls == []
+
+
+# -- the held combo (measured 2026-11-26) ----------------------------------
+
+def test_paste_waits_until_the_combo_is_released(monkeypatch):
+    """A held Ctrl+Alt turns Shift+Insert into a shortcut no app pastes."""
+    held = [True, True, False]
+    seen = []
+
+    def modifier_down():
+        seen.append(1)
+        return held.pop(0) if held else False
+
+    monkeypatch.setattr(insert, "modifier_down", modifier_down)
+
+    result = insert.insert_text("hello", restore_clipboard=False)
+
+    assert result == insert.RESULT_PASTED
+    assert len(seen) >= 3          # it waited, then pasted
+    assert Controller.last.events == [
+        ("press", "shift"), ("press", "insert"),
+        ("release", "insert"), ("release", "shift"),
+    ]
+
+
+def test_paste_goes_ahead_after_the_wait_times_out(monkeypatch):
+    monkeypatch.setattr(insert, "modifier_down", lambda: True)
+    monkeypatch.setattr(insert, "MODIFIER_WAIT_S", 0.0)
+    log = RecordingLog()
+
+    insert.insert_text("hello", restore_clipboard=False, log=log)
+
+    assert Controller.last.events
+    assert "Modifiers still held after 0.0 s — pasting anyway" in log.lines
+
+
+def test_the_text_stays_on_the_clipboard_when_the_shortcut_may_miss(monkeypatch):
+    monkeypatch.setattr(insert, "modifier_down", lambda: True)
+    monkeypatch.setattr(insert, "MODIFIER_WAIT_S", 0.0)
+    monkeypatch.setattr(insert.threading, "Thread", ImmediateThread)
+    log = RecordingLog()
+
+    insert.insert_text("hello", restore_clipboard=True, log=log)
+
+    assert pyperclip.clip == "hello"
+    assert "Paste may have missed — the text stays in the clipboard" in log.lines
+
+
+def test_the_restore_compares_against_the_state_our_own_writes_left(monkeypatch):
+    """The history exclusion writes to the clipboard too; that write is ours."""
+    seq = {"n": 3}
+
+    def exclude():
+        seq["n"] += 1      # registering the private formats bumps the counter
+        return True
+
+    monkeypatch.setattr(insert, "exclude_from_clipboard_history", exclude)
+    monkeypatch.setattr(insert, "clipboard_sequence", lambda: seq["n"])
+    monkeypatch.setattr(insert.threading, "Thread", ImmediateThread)
+
+    insert.insert_text("hello", restore_clipboard=True)
+
+    assert pyperclip.clip == "old"
 
 
 class RecordingLog:
@@ -389,3 +455,43 @@ def test_a_multiline_selection_is_flattened_and_bounded(monkeypatch):
     assert "\n" not in text
     assert len(text) <= insert.SELECTION_MAX_CHARS
     assert text.startswith("first line second line")
+
+
+def test_selected_text_waits_for_the_combo_release(monkeypatch):
+    """The take is opened with the combo; Ctrl+Alt+Insert would copy nothing."""
+    order = []
+
+    class _RecordingController(_QuietController):
+        def __init__(self):
+            super().__init__()
+            order.append("keys")
+
+    def wait(*_args, **_kwargs):
+        order.append("wait")
+        return True
+
+    monkeypatch.setattr(insert, "wait_for_modifiers_released", wait)
+    monkeypatch.setattr(insert, "Controller", _RecordingController)
+    monkeypatch.setattr(insert, "clipboard_sequence", lambda: 1)
+    pyperclip.clip = "old"
+
+    assert insert.read_selected_text() == ""
+    assert order == ["wait", "keys"]
+
+
+def test_send_undo_waits_for_the_combo_release(monkeypatch):
+    order = []
+
+    def wait(*_args, **_kwargs):
+        order.append("wait")
+        return True
+
+    monkeypatch.setattr(insert, "wait_for_modifiers_released", wait)
+
+    insert.send_undo()
+
+    assert order == ["wait"]
+    assert Controller.last.events == [
+        ("press", "ctrl"), ("press", ("vk", insert.UNDO_VK)),
+        ("release", ("vk", insert.UNDO_VK)), ("release", "ctrl"),
+    ]
