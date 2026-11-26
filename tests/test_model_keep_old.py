@@ -233,6 +233,8 @@ def test_a_foreign_drive_or_unc_spelling_is_never_a_target(tmp_path):
         assert model_folders.removal_target(value, str(models_dir)) is None
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="drive letters and UNC names are Windows-only")
 def test_a_foreign_drive_cannot_become_a_target_even_as_a_name(
         tmp_path, monkeypatch):
     models_dir = tmp_path / "models"
