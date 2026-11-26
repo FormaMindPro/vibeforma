@@ -344,6 +344,11 @@ def target_state(target):
         raise InstallError(f"the target folder cannot be read: {error}") from None
     if not entries:
         return "fresh"
+    # a failed run leaves only its log folder behind; the install itself was
+    # cleaned up, so the target is reusable and must not block a rerun
+    if (len(entries) == 1 and entries[0] == "logs"
+            and os.path.isdir(os.path.join(target, "logs"))):
+        return "fresh"
     if os.path.isfile(os.path.join(target, INSTALL_MARKER)):
         return "existing"
     if looks_like_install(target):

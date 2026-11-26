@@ -235,6 +235,9 @@ def run(args, log):
         log.write(f"[X] Preflight failed: {error}")
         log.write("Nothing was written.")
         if created and os.path.exists(target):
+            # drop the handle first: a locked logs/install.log makes the
+            # cleanup leave the target behind and block the next run
+            log.close()
             shutil.rmtree(target, ignore_errors=True)
         return 1
     log.start()
@@ -305,14 +308,20 @@ def run(args, log):
             except OSError as restore_error:
                 log.write(f"   [X] rollback failed: {restore_error}")
         else:
+            # the log handle would keep logs/install.log locked, so the
+            # fresh-install cleanup could not remove the target folder
+            log.close()
             cleanup_fresh(target, created)
+            log.start()
             log.write("   partial installation removed")
         log.write(f"Log: {log.path}")
         return 1
     except InstallError as error:
         log.write(f"[X] Installation could not start: {error}")
         if state == "fresh":
+            log.close()
             cleanup_fresh(target, created)
+            log.start()
         log.write(f"Log: {log.path}")
         return 1
     finally:
@@ -359,10 +368,9 @@ def main():
     args = ap.parse_args()
     if not args.target.strip():
         args.target = choose_target()
-    default_log = os.path.join(
-        os.path.abspath(os.path.expandvars(args.target)),
-        "logs", INSTALL_LOG_NAME)
-    log_path = args.log or default_log
+    # the default log lives outside the target folder, so a failed run can
+    # always remove what it created; an explicit --log keeps priority
+    log_path = args.log or log_path_default()
     log = InstallLog(log_path if (args.log or not args.dry_run) else None,
                      persist=not args.dry_run or bool(args.log))
     try:

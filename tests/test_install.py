@@ -1,4 +1,6 @@
 """Installer logic with a substituted subprocess (no venv, pip or network)."""
+import os
+import shutil
 import subprocess
 import sys
 
@@ -105,3 +107,66 @@ def test_selftest_flag_runs_the_service_gate(monkeypatch, tmp_path):
     flat = [" ".join(str(part) for part in call)
             for call in calls if isinstance(call, list)]
     assert any("main.py --selftest" in line for line in flat)
+
+
+def test_default_log_path_fresh_logs_lives_outside_the_target(tmp_path, monkeypatch):
+    """The default log must not sit in the target: a failed run deletes it."""
+    local = tmp_path / "localappdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    target = tmp_path / "vf"
+
+    default = os.path.abspath(install.log_path_default())
+
+    assert default.endswith(os.path.join("logs", install.INSTALL_LOG_NAME))
+    assert default.startswith(os.path.abspath(str(local)))
+    assert os.path.commonpath([default, os.path.abspath(str(target))]) \
+        != os.path.abspath(str(target))
+
+
+@pytest.mark.windows
+def test_default_log_fresh_logs_is_not_written_into_the_target(
+        monkeypatch, tmp_path):
+    local = tmp_path / "localappdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    target = tmp_path / "vf"
+    monkeypatch.setattr(sys, "argv", [
+        "install.py", "--model", "small", "--language", "xx",
+        "--target", str(target), "--no-run"])
+
+    assert install.main() == 1
+
+    assert not target.exists()
+    assert not (target / "logs").exists()
+    assert (local / "VibeForma" / "logs" / "install.log").is_file()
+
+
+def test_log_close_fresh_logs_releases_a_log_inside_the_target(tmp_path):
+    """An open handle keeps logs/install.log locked, so rmtree cannot pass."""
+    target = tmp_path / "vf"
+    log = install.InstallLog(os.path.join(str(target), "logs", "install.log"))
+    log.start()
+    log.write("written inside the target")
+
+    log.close()
+    log.close()          # safe on a repeated call
+    unstarted = install.InstallLog(os.path.join(str(tmp_path), "idle.log"))
+    unstarted.close()    # safe before start()
+
+    shutil.rmtree(str(target))
+    assert not target.exists()
+
+
+def test_log_close_fresh_logs_keeps_the_lines_written_while_closed(tmp_path):
+    path = tmp_path / "install.log"
+    log = install.InstallLog(str(path))
+    log.start()
+    log.write("before the cleanup")
+    log.close()
+    log.write("buffered during the cleanup")
+    log.start()
+    log.write("after the cleanup")
+    log.close()
+
+    text = path.read_text(encoding="utf-8")
+    assert text.index("before the cleanup") < text.index("buffered during the cleanup")
+    assert text.index("buffered during the cleanup") < text.index("after the cleanup")

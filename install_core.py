@@ -1,4 +1,5 @@
 """Installer core: constants, errors, logging, subprocess helpers."""
+import contextlib
 import datetime
 import os
 import re
@@ -145,9 +146,9 @@ def log_path_default():
 class InstallLog:
     """Console echo plus an append-only install log (no secrets, no audio).
 
-    The file opens on start(), not in __init__: the default log lives inside
-    the default target, and creating it before the preflight made a fresh
-    folder look non-empty. Lines written before start() are buffered.
+    The file opens on start(), not in __init__: creating it before the
+    preflight made a fresh folder look non-empty. Lines written before
+    start() are buffered.
     """
 
     def __init__(self, path=None, persist=True):
@@ -165,8 +166,9 @@ class InstallLog:
             folder = os.path.dirname(self.path)
             if folder:
                 os.makedirs(folder, exist_ok=True)
-            # the handle lives for the whole install, by design
-            self._handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 - lives for the install
+            # held open until close(); the installer closes it before it
+            # deletes anything inside the target folder
+            self._handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 - owns the handle until close()
         except OSError:
             self._handle = None
         pending, self._pending = self._pending, []
@@ -190,9 +192,20 @@ class InstallLog:
         self._handle.flush()
 
     def close(self):
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
+        """Release the handle; safe before start() and on a repeated call.
+
+        A live handle keeps logs/install.log locked on Windows, so a target
+        cleanup with rmtree(ignore_errors=True) silently leaves the folder
+        behind and the next run no longer sees a fresh target. Writes made
+        while the log is closed are buffered and flushed when it starts again.
+        """
+        handle, self._handle = self._handle, None
+        self._started = False
+        if handle is None:
+            return
+        with contextlib.suppress(OSError):
+            handle.flush()
+            handle.close()
 
 
 def app_version():

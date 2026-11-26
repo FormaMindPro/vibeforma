@@ -265,3 +265,48 @@ def test_install_ps1_has_no_main_branch_fallback():
     assert "refs/heads/main" not in text
     assert "codeload.github.com" not in text
     assert "No released VibeForma build" in text
+
+
+def test_target_state_fresh_logs_only_folder_is_not_a_blocker(tmp_path):
+    """A failed run may leave its log folder behind; the target stays fresh."""
+    target = tmp_path / "vf"
+    (target / "logs").mkdir(parents=True)
+    assert install.target_state(target) == "fresh"
+    (target / "logs" / "install.log").write_text("run stopped", encoding="utf-8")
+    assert install.target_state(target) == "fresh"
+    (target / "notes.txt").write_text("keep me", encoding="utf-8")
+    with pytest.raises(install.InstallError, match="not empty"):
+        install.target_state(target)
+
+
+def test_target_state_fresh_logs_path_but_not_a_folder(tmp_path):
+    target = tmp_path / "vf"
+    target.mkdir()
+    (target / "logs").write_text("a file, not the log folder", encoding="utf-8")
+    with pytest.raises(install.InstallError, match="not empty"):
+        install.target_state(target)
+
+
+@pytest.mark.windows
+def test_failed_run_fresh_logs_left_behind_still_allows_a_rerun(
+        monkeypatch, tmp_path):
+    """A log inside the target must not keep the folder from being cleaned."""
+    target = tmp_path / "vf"
+    log = target / "logs" / "install.log"
+    install_argv(monkeypatch, target, log)
+    first = FakeRun(failures=[("-m pip install", 1, "boom")])
+    monkeypatch.setattr(install.subprocess, "run", first)
+
+    assert install.main() == 1
+    assert install.target_state(target) == "fresh"
+    assert not (target / "main.py").exists()
+    assert "partial installation removed" in log.read_text(encoding="utf-8")
+
+    second = FakeRun()
+    monkeypatch.setattr(install.subprocess, "run", second)
+    assert install.main() == 0
+
+    assert (target / "main.py").is_file()
+    marker = json.loads(
+        (target / install.INSTALL_MARKER).read_text(encoding="utf-8"))
+    assert marker["complete"] is True
