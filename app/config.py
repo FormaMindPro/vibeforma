@@ -6,7 +6,7 @@ import os
 import dictionary
 import snippets
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # The service folder holds run.cmd and main.py both in a source checkout

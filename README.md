@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.1** turns a system-audio take into files, adds a take clock to the panel, recognition-quality presets, a list of local model folders, per-entry re-recognition in history and a complete uninstall. 0.5.0 brought live subtitles of system audio, a **Recognize more precisely** retry, continuous dictation, per-app profiles, text cleanup, history with sound and sentence-level captions. See [What's new](#whats-new-in-051).
+> **VibeForma 0.5.2** makes insertion wait for the hotkey instead of racing it. 0.5.1 brought system-audio takes into files, a take clock, quality presets, local model folders, per-entry re-recognition and a complete uninstall. See [What's new](#whats-new-in-052).
 
 ## What is VibeForma
 
@@ -58,6 +58,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.2
+
+- **Insertion waits for the hotkey instead of racing it.** A take is stopped with the same `Ctrl+Alt+Space` that starts it, and the paste could go out while the combo was still held: the window received `Ctrl+Alt+Shift+Insert`, which no app treats as paste, so the phrase silently stayed on the clipboard while the panel reported an insert. VibeForma now waits for the combo to come up — one second at most — checks the target window again and then pastes; the selected-text read at the start of a take and the `Ctrl+Z` undo wait the same way. When the wait times out, the text is deliberately left in the clipboard for a manual paste. The previous clipboard is restored after a successful paste again: the counter used to be read before the private-format writes of the same call, so every restore looked like a foreign change and was skipped.
+
 ## What's new in 0.5.1
 
 - **A system-audio take becomes files.** With the source set to **System audio**, the take is written as a 16-bit, 16 kHz mono WAV — `Documents\VibeForma\Recordings` by default, a date subfolder, the file named by the start time — and on stop TXT and SRT are queued beside it. The path shows on the panel, in the tray and in the HUD; nothing is inserted and the dictation history stays untouched, while the 30 s live buffer still feeds the subtitles. Limits: a take over 6 hours or 4 GB keeps its WAV but gets no transcript; `Esc` and exit close the WAV without queueing it.
@@ -67,18 +71,6 @@ The same engine also transcribes audio and video files, including whole folders,
 - **A user model folder survives a switch.** With `model_keep_old: false` only downloaded models inside `models\` are deleted. A folder you added is never a deletion target, and a `..` step, an absolute path, another drive or a link leading outside is refused.
 - **"Recognize more precisely" for one history entry.** The history window offers the button for one selected entry whose WAV is on disk; without the sound it stays disabled with the reason. The pass runs in the background with beam 10 at temperature 0, keeps the table usable, and replaces the entry's text and confidence; a failed or empty pass leaves the entry as it was.
 - **A complete uninstall.** `uninstall.cmd --remove-data` removes what the installer and the app created — the `vibeforma\` package, `mcp.cmd`, the requirements files, history and its sound, statistics, `status.json`, `location.json`, corrections, the top-level `.py` files, `__pycache__` and `.venv` — and leaves the folder ready for a fresh install. `--keep-data` keeps models, configuration, logs, history, statistics and corrections; removal never follows a link out of the install folder.
-
-## What's new in 0.5.0
-
-- **Live subtitles of system audio.** Switch the sound source to **System audio** and the hotkey starts a take that shows the last phrases in the panel instead of inserting text: no auto-stop, no 120 s cut, a 30 s buffer, a stop with the second hotkey, and nothing in the active window, the draft or the history. Two live takes of 409.5 s and 844.4 s held. Honest limits: the filter drops only short stop phrases and repeated loops, so invented text over music can still reach the plate, and no audio or subtitle file is written yet — that is the next round.
-- **A doubtful phrase offers "Recognize more precisely".** A low-confidence or `temperature > 0` pass waits in the draft with the doubtful words underlined; the button re-runs the same recording through the same model with beam 10 and temperature 0, and **Restore previous** returns the exact prior text. The rollback is one level, and the offer needs the take's WAV.
-- **Long dictation is continuous.** Continuous mode is on by default: a take is cut at pauses and at 30 s with a carried tail, so the 120 s limit no longer interrupts speech, and the text is inserted once. If recognition falls behind and does not take a chunk, the buffer is capped: at 240 s the buffered audio is dropped whole with a warning in the log — a memory guard, not the phrase limit.
-- **The dictionary goes everywhere, and per app.** Terms reach every 30-second window; **Application profiles** on the Dictionary tab give one window its own terms and snippets; the prompt preset now covers all 26 menu languages; a hint says "looks like X, Y is pinned" when another language leads.
-- **Optional text cleanup.** `text_cleanup` (config, off by default) turns numbers and dates into digits for ru and en through wetext, removes filler words and capitalizes sentence starts, while code, names, paths and URLs stay untouched; punctuation stays Whisper's.
-- **Your archive gets the sound back.** `history_audio` (off by default) keeps a WAV of each dictation under a 200 MiB cap and deletes it with the record; the tray re-recognizes the last take with a prompt and another model. Voice actions and opt-in dictation context join the config.
-- **Files get sentence cues and a guard.** SRT and VTT are cut by sentences from word timestamps; invented phrases on silence and music are filtered; a batched segment that fails a threshold is re-recognized sequentially; a file's blocks carry the previous tail; word timestamps no longer crash on the library bug; `model` accepts a converted CT2 folder.
-- **Agents get the engine.** `/jobs`, `/v1/audio/transcriptions`, the CLI and the MCP tools take `prompt`, `word_timestamps` and `clip_timestamps`; `verbose_json` carries segment confidence and a top-level `words[]`.
-- **Silero is not included.** Punctuation remains Whisper's: the Silero model's license is non-commercial, the dependency and model add about 219 MB, and Russian quality was not confirmed (ADR 0001).
 
 ## Quick start
 
@@ -115,7 +107,7 @@ The bootstrap installs released builds only: when no release zip can be download
 | Area | What VibeForma does |
 | --- | --- |
 | Dictation | `Ctrl+Alt+Space` (remappable) starts a take; the phrase closes on a pause of silence, on the second keypress, or on release in hold-to-talk mode. Continuous mode is on by default, so a long take is cut at pauses and at 30 s with a carried tail and the 120 s limit no longer interrupts speech; the text is inserted once. `Esc` cancels. |
-| Insertion | The text goes to the window that had focus when you pressed the hotkey. If the window changed, VibeForma offers paste here / copy / cancel instead of pasting into a stranger. |
+| Insertion | The text goes to the window that had focus when you pressed the hotkey. If the window changed, VibeForma offers paste here / copy / cancel instead of pasting into a stranger. The paste waits for the hotkey to come up, so a held combo never turns Shift+Insert into a dead shortcut. |
 | Clipboard care | Layout-independent Shift+Insert; the previous clipboard is restored after 1 s if you have not copied something new; dictated text is excluded from Windows clipboard history and cloud sync. |
 | Monitoring panel | Microphone level, a take clock (countdown or elapsed), VAD indicator, streaming text near-real-time, a privacy mode, a microphone button, history arrows and draft actions (Edit, Copy, Insert, Cancel). A doubtful phrase waits in the draft with uncertain words highlighted and offers **Recognize more precisely** / **Restore previous**; a language hint appears when another language leads; a system-audio take shows its last phrases as live subtitles and records the take to a WAV with TXT and SRT beside it. |
 | System audio | Records the default output through WASAPI loopback (Bluetooth, USB, HDMI). The take runs without auto-stop on silence and without the 120 s cut, shows the last phrases as live subtitles, and is written to a 16-bit / 16 kHz mono WAV with TXT and SRT queued beside it on stop (default `Documents\VibeForma\Recordings`, a date subfolder); the path is shown on the panel, in the tray and in the HUD. Nothing goes to the active window, the draft or the dictation history; the same hotkey stops it, a 30 s buffer keeps memory flat, and an unavailable loopback or folder shows a clear error. Limits: over 6 h or 4 GB the take keeps its WAV but gets no transcript; `Esc` and exit close the WAV without queueing it. |

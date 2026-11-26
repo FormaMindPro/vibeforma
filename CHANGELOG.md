@@ -3,6 +3,23 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.2 — 2026-11-26
+
+### Fixed
+- **Insertion no longer races the hotkey.** Stopping a dictation with the
+  same combo that started it could send the paste while Ctrl and Alt were
+  still physically held: the window received Ctrl+Alt+Shift+Insert, which no
+  app treats as paste, and the phrase silently stayed on the clipboard while
+  the log said "Pasted" (measured 2026-11-26 in Chromium: Shift+Insert pastes,
+  Ctrl+Alt+Shift+Insert does not). VibeForma now waits for the combo to come
+  up — at most one second — and checks the target window again after the
+  wait; when the wait times out the text is deliberately left on the
+  clipboard as the manual fallback. The same wait covers the selected-text
+  read at the start of a take and the undo keystroke. The previous clipboard
+  is restored after a successful paste again: the sequence number used to be
+  read before the private-format writes of the same call, so every restore
+  looked like a foreign change and was skipped.
+
 ## 0.5.1 — 2026-11-26
 
 ### Added
