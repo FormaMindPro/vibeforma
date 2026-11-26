@@ -801,6 +801,114 @@ class SettingsWindow:
                                      fg="#9FE0A8", bg=BG, wraplength=self._px(420),
                                      justify="left", anchor="w")
         self._full(f, self.model_status)
+        self._build_model_update_block(f)
+
+
+    # -- model revision updates (card-273) -----------------------------------
+    def _build_model_update_block(self, f):
+        """The revision proposal, the Update button and the manual check."""
+        self._head(f, self.tr("model.update_g"))
+        self.model_update_label = tk.Label(
+            f, text="", font=("Segoe UI", 9, "bold"), fg="#E5C07B", bg=BG,
+            wraplength=self._px(440), justify="left", anchor="w")
+        self._full(f, self.model_update_label)
+        row = tk.Frame(f, bg=BG)
+        self.model_update_button = tk.Button(
+            row, text=self.tr("model.update_now"), command=self._update_model_now,
+            bg="#22262E", fg=FG, relief="flat", activebackground="#2A2F38",
+            activeforeground=FG, disabledforeground=DIM, font=("Segoe UI", 9),
+            padx=self._px(10), cursor="hand2")
+        self.model_update_button.pack(side="left", padx=(0, 6))
+        self.model_decline_button = tk.Button(
+            row, text=self.tr("model.update_later"),
+            command=self._decline_model_update,
+            bg="#22262E", fg=FG, relief="flat", activebackground="#2A2F38",
+            activeforeground=FG, disabledforeground=DIM, font=("Segoe UI", 9),
+            padx=self._px(10), cursor="hand2")
+        self.model_decline_button.pack(side="left", padx=(0, 6))
+        self.model_check_button = tk.Button(
+            row, text=self.tr("model.update_check"),
+            command=self._check_model_updates,
+            bg="#22262E", fg=FG, relief="flat", activebackground="#2A2F38",
+            activeforeground=FG, font=("Segoe UI", 9), padx=self._px(10),
+            cursor="hand2")
+        self.model_check_button.pack(side="left")
+        self._full(f, row)
+        self.model_update_status = tk.Label(
+            f, text="", font=("Segoe UI", 9), fg=DIM, bg=BG,
+            wraplength=self._px(440), justify="left", anchor="w")
+        self._full(f, self.model_update_status)
+        self._refresh_model_update()
+        self.win.after(700, self._poll_model_update)
+
+    def _model_update_offer(self):
+        svc = getattr(self, "svc", None)
+        offers = getattr(svc, "pending_model_update", None) or {}
+        return next(iter(offers), "")
+
+    def _refresh_model_update(self):
+        svc = getattr(self, "svc", None)
+        offers = getattr(svc, "pending_model_update", None) or {}
+        state = str(getattr(svc, "model_update_state", "idle") or "idle")
+        model = next(iter(offers), "")
+        self.model_update_label.configure(
+            text=self.tr("model.update_found", model=model) if model else "")
+        flag = "normal" if model else "disabled"
+        self.model_update_button.configure(state=flag)
+        self.model_decline_button.configure(state=flag)
+        status_key = {
+            "checking": "model.update_checking",
+            "latest": "model.update_latest",
+            "updating": "model.update_downloading",
+            "done": "model.update_done",
+            "error": "model.update_failed",
+        }.get(state, "")
+        self.model_update_status.configure(
+            text=self.tr(status_key) if status_key else "")
+
+    def _check_model_updates(self):
+        svc = getattr(self, "svc", None)
+        if svc is not None:
+            try:
+                svc.check_model_updates_now()
+            except Exception as e:
+                self.log.exception("Model update check request: %s", e)
+        self._refresh_model_update()
+
+    def _update_model_now(self):
+        model = self._model_update_offer()
+        svc = getattr(self, "svc", None)
+        if not model or svc is None:
+            return
+        ok = False
+        try:
+            ok = bool(svc.apply_pending_model_update(model))
+        except Exception as e:
+            self.log.exception("Model update request: %s", e)
+        self._refresh_model_update()
+        if not ok:
+            self.model_update_status.configure(text=self.tr("model.update_busy"))
+
+    def _decline_model_update(self):
+        model = self._model_update_offer()
+        svc = getattr(self, "svc", None)
+        if not model or svc is None:
+            return
+        try:
+            svc.decline_pending_model_update(model)
+        except Exception as e:
+            self.log.exception("Model update decline: %s", e)
+        self._refresh_model_update()
+
+    def _poll_model_update(self):
+        try:
+            if not self.win.winfo_exists():
+                return
+            self._refresh_model_update()
+        except tk.TclError:
+            return
+        self.win.after(700, self._poll_model_update)
+
 
 
     # -- local model folders (card-264) --------------------------------------

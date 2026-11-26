@@ -151,6 +151,11 @@ DEFAULTS = {
     "update_check": True,               # background check for newer releases
     "update_interval_h": 2,             # hours between checks
     "auto_update": "notify",            # notify (ask) | auto (explicit opt-in)
+    # Whisper models from Hugging Face (card-273): a background pass compares
+    # the repo's commit sha with the sidecar marker of each catalog folder
+    # under MODELS_DIR; the update itself is always by consent.
+    "model_update_check": True,         # background model revision check
+    "model_update_interval_h": 24,      # hours between model revision checks
     "model_keep_old": True,             # keep the previous model on disk (fast switching)
     "onboarding_done": False,           # the first-run wizard has run
 }

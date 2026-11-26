@@ -32,6 +32,7 @@ from . import (
     STATE_UPDATING,
 )
 from .actions import HistoryActions
+from .model_updates import MODEL_UPDATE_IDLE, ModelUpdateActions
 from .settings_ops import SettingsOps
 from .status import write_status
 from .update_ops import UpdateActions
@@ -255,7 +256,7 @@ def take_limit_s(cfg: dict[str, Any]) -> float:
         return 0.0
 
 
-class Service(HistoryActions, SettingsOps, UpdateActions):
+class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     def __init__(self, cfg: dict[str, Any], log: Any, *,
                  status_file: str | None = None) -> None:
         self.cfg = cfg
@@ -307,6 +308,13 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.pending_update = None
         self.update_check_state = "idle"
         self.update_check_tag = ""
+        # Model revisions (card-273): an offer waits for consent; an update
+        # holds the service and returns it to idle on success and failure.
+        self.model_update_state = MODEL_UPDATE_IDLE
+        self.pending_model_update: dict[str, str] = {}
+        self._model_check_busy = False
+        self._model_update_busy = False
+        self._model_update_request: dict[str, str] | None = None
         # A voice action (card-250) may ask for another model; the switch
         # waits for the idle state set_model needs.
         self._pending_model = ""
@@ -406,6 +414,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             self.tray.set_state(state)
         self._maybe_apply_pending_update()
         self._maybe_apply_pending_model()
+        self._maybe_apply_pending_model_update()
 
     def _sync_cancel_watcher(self, state: str) -> None:
         """The global Esc binding lives only while a dictation is in flight.

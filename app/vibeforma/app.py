@@ -14,6 +14,7 @@ from typing import Any, TextIO
 from config import LOCK_PATH, VERSION, load
 
 from .http_api import publish_location, start_http_api
+from .model_updates import start_model_update_checker
 from .pipe import PipeUnavailable
 from .pipe import request as pipe_request
 from .selftest import selftest
@@ -693,6 +694,7 @@ def main() -> None:
                      pipe_started=pipe_ready)
 
     start_update_checker(cfg, svc, log)
+    start_model_update_checker(cfg, svc, log)
 
     svc.load_model_async()
     if cfg.get("hud", True):
