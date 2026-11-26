@@ -1354,23 +1354,27 @@ class ASR:
         )
 
     def reload_model(self, name) -> bool:
-        """Swap the model in place (tray menu); returns success."""
-        with self._lock:
-            try:
-                old = self.model
-                self.model = None
-                self._batched = None
-                self._batch_error = None
-                del old
-                gc.collect()
-                self.cfg["model"] = name
-                self.log.info("Switching model to %s", name)
+        """Swap the model in place (tray menu); returns success.
 
-                t0 = time.time()
-                self.model = _make_model(name, self.cfg["device"],
-                                         self.cfg["compute_type"], self.log)
-                self.log.info("Model %s loaded in %.1f s", name, time.time() - t0)
-                return True
+        The new model is built first: a failed load keeps the previous one
+        serving and leaves ``cfg["model"]`` pointing at the model that is
+        actually in memory, so a bad switch never kills dictation outright.
+        """
+        with self._lock:
+            self.log.info("Switching model to %s", name)
+            t0 = time.time()
+            try:
+                loaded = _make_model(name, self.cfg["device"],
+                                     self.cfg["compute_type"], self.log)
             except Exception as e:
                 self.log.exception("Model switch failed: %s", e)
                 return False
+            old = self.model
+            self.model = loaded
+            self._batched = None
+            self._batch_error = None
+            self.cfg["model"] = name
+            del old
+            gc.collect()
+            self.log.info("Model %s loaded in %.1f s", name, time.time() - t0)
+            return True

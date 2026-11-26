@@ -283,3 +283,93 @@ def test_a_genuine_downloaded_name_keeps_its_target(tmp_path):
     assert model_folders.removal_target(
         "large-v3-turbo", str(models_dir)) == str(target)
     assert model_folders.removal_target("", str(models_dir)) is None
+
+
+# -- reload_model keeps the old model when the switch fails (card-266) -----
+# The engine section: a failed switch must not unload the model that dictation
+# is serving, and cfg["model"] must never point at a model that is not there.
+import asr  # noqa: E402 - the appended section keeps the file's head untouched
+import numpy as np  # noqa: E402
+
+
+class _KeepRow:
+    """A faster-whisper segment stand-in."""
+
+    def __init__(self, start=0.0, end=1.0, text="", seek=0):
+        self.start = start
+        self.end = end
+        self.text = text
+        self.seek = seek
+        self.words = None
+
+
+class _KeepInfo:
+    language = "ru"
+    duration = 1.0
+
+
+class _KeepModel:
+    """A loaded-model stand-in: records every call, returns one row."""
+
+    def __init__(self, text):
+        self.text = text
+        self.calls = []
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append((audio, kwargs))
+        return iter([_KeepRow(0.5, 1.0, self.text)]), _KeepInfo()
+
+
+def _asr_engine(text=" hello"):
+    cfg = {"model": "old-model", "device": "cpu", "compute_type": "int8",
+           "language": "ru", "hotwords": "", "dictionary": []}
+    engine = asr.ASR(cfg, _Log())
+    engine.model = _KeepModel(text)
+    return engine
+
+
+def _audio():
+    return np.zeros(16000, dtype=np.float32)
+
+
+def test_a_reload_failure_keeps_the_previous_model_serving(monkeypatch):
+    engine = _asr_engine()
+    old = engine.model
+
+    def broken(name, device, compute_type, log):
+        raise RuntimeError("simulated load failure")
+
+    monkeypatch.setattr(asr, "_make_model", broken)
+
+    assert engine.reload_model("new-model") is False
+    assert engine.model is old
+    assert engine.cfg["model"] == "old-model"
+    assert any(level == "error" for level, _line in engine.log.lines)
+
+    assert engine.transcribe(_audio()) == "hello"
+    assert old.calls
+
+
+def test_a_reload_success_replaces_what_a_failure_keeps(monkeypatch):
+    engine = _asr_engine()
+    old = engine.model
+
+    def broken(name, device, compute_type, log):
+        raise RuntimeError("simulated load failure")
+
+    monkeypatch.setattr(asr, "_make_model", broken)
+    assert engine.reload_model("new-model") is False
+
+    loaded = _KeepModel(" replaced")
+    monkeypatch.setattr(asr, "_make_model",
+                        lambda name, device, compute_type, log: loaded)
+
+    assert engine.reload_model("new-model") is True
+    assert engine.model is loaded
+    assert engine.cfg["model"] == "new-model"
+    assert engine._batched is None
+    assert engine._batch_error is None
+
+    assert engine.transcribe(_audio()) == "replaced"
+    assert old.calls == []
+    assert loaded.calls
