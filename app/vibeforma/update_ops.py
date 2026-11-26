@@ -100,10 +100,6 @@ class UpdateActions(ServiceHost):
         webbrowser.open(url)
         return True
 
-    def update_if_newer(self, notify_latest: bool = False) -> None:
-        """Backward-compatible alias: a check never installs on its own."""
-        self.check_updates(notify_latest)
-
     def apply_pending_update(self, manual: bool = True) -> bool:
         """Install the pending release after consent (panel, tray, opt-in).
 

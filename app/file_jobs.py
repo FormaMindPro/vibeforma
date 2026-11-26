@@ -540,11 +540,6 @@ class FileJobs:
         self._refresh_batch(batch)
         return batch
 
-    def get_batch(self, batch_id: str) -> FileBatch | None:
-        with self._lock:
-            self._purge()
-            return self._batches.get(batch_id)
-
     def active_batches(self) -> list[FileBatch]:
         """Batches not yet done or cancelled, in creation order."""
         with self._lock:
@@ -622,25 +617,6 @@ class FileJobs:
             if self.cancel_batch(batch.id):
                 stopped += 1
         return stopped
-
-    def pause(self, job_id: str) -> bool:
-        job = self.get(job_id)
-        if job is None or job.state not in (QUEUED, RUNNING):
-            return False
-        job.paused = True
-        job.state = PAUSED
-        self._emit(job)
-        return True
-
-    def resume(self, job_id: str) -> bool:
-        job = self.get(job_id)
-        if job is None or job.state != PAUSED:
-            return False
-        job.paused = False
-        job.state = QUEUED if job.started_at is None else RUNNING
-        self._wake.set()
-        self._emit(job)
-        return True
 
     def result(self, job_id: str, fmt: str = "txt") -> str:
         """The named format for a finished job; ValueError while not done."""

@@ -3,30 +3,40 @@
 Usage:
   uninstall.cmd                 ask, keep models and config by default
   uninstall.cmd --keep-data     same without the question
-  uninstall.cmd --remove-data   remove models, config, hotwords and logs too
+  uninstall.cmd --remove-data   remove models, config, history, statistics
+                                and logs too
   uninstall.cmd --yes           no confirmation prompt
 
 The uninstaller removes the shortcuts, the per-user "Settings > Apps" entry
-and the service files. Models and config.json stay unless --remove-data is
-passed: they are user data, and a reinstall can reuse them offline.
+and everything the installer and the service created in the install folder.
+Without --remove-data the user's data stays - models, config.json, logs,
+history and statistics - so a reinstall can reuse them offline. With
+--remove-data the folder is emptied and removed, and the installer accepts
+the same path as a fresh install.
 """
 import argparse
 import contextlib
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 
+# What the installer copies into the target, plus the marker it writes.
 SERVICE_FILES = (
-    "run.cmd", "uninstall.cmd", "uninstall.py",
+    "run.cmd", "uninstall.cmd", "uninstall.py", "mcp.cmd",
     "requirements.txt", "requirements-cuda.txt",
-    "test_ru.wav", "service.lock",
-    ".vibeforma-install.json",
+    "requirements.in", "requirements-cuda.in",
+    "test_ru.wav", ".vibeforma-install.json",
 )
-SERVICE_DIRS = ("assets", "locales")
-DATA_FILES = ("config.json",)
-DATA_DIRS = ("models", "logs")
+# The copied folders, the bytecode cache of the first run and the venv.
+SERVICE_DIRS = ("assets", "locales", "vibeforma", "__pycache__", ".venv")
+# Runtime state: a stale status.json or location.json points at a service
+# that is no longer there, so these go even when the user's data is kept.
+RUNTIME_FILES = ("service.lock", "status.json", "location.json")
+# User data: kept by default, removed with --remove-data. Each of these is
+# written atomically, so a crashed write can leave its .tmp companion.
+DATA_FILES = ("config.json", "history.jsonl", "stats.json", "corrections.json")
+DATA_DIRS = ("models", "logs", "history_audio")
 SERVICE_LNK = "VibeForma.lnk"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\VibeForma"
 
@@ -90,6 +100,19 @@ def looks_like_vibeforma(target):
         os.path.join(target, "main.py"))
 
 
+def running_inside_venv(target):
+    """True when this process's Python lives in the folder being removed."""
+    venv = _canon(os.path.join(target, ".venv"))
+    return _canon(sys.executable).startswith(venv + os.sep)
+
+
+def _with_temp(paths):
+    """A path and the .tmp companion its atomic write can leave behind."""
+    for path in paths:
+        yield path
+        yield path + ".tmp"
+
+
 def removal_plan(target, keep_data):
     """Paths to delete, plus whether the folder itself can go."""
     items = []
@@ -101,10 +124,11 @@ def removal_plan(target, keep_data):
                 items.append(os.path.join(target, name))
     for name in SERVICE_DIRS:
         items.append(os.path.join(target, name))
-    items.append(os.path.join(target, ".venv"))
+    items.extend(_with_temp(
+        os.path.join(target, name) for name in RUNTIME_FILES))
     if not keep_data:
-        for name in DATA_FILES:
-            items.append(os.path.join(target, name))
+        items.extend(_with_temp(
+            os.path.join(target, name) for name in DATA_FILES))
         for name in DATA_DIRS:
             items.append(os.path.join(target, name))
     return items
@@ -143,17 +167,69 @@ def remove_uninstall_entry():
         return False
 
 
-def delete_paths(items):
+def _is_link(path):
+    """A symlink or a junction; os.path.islink does not see junctions."""
+    if os.path.islink(path):
+        return True
+    is_junction = getattr(os.path, "isjunction", None)
+    if is_junction is not None:
+        return is_junction(path)
+    try:
+        os.readlink(path)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _inside(base, path):
+    base = _canon(base)
+    real = _canon(path)
+    return real == base or real.startswith(base + os.sep)
+
+
+def _delete_tree(path):
+    """Delete one folder tree without ever following a link out of it.
+
+    shutil.rmtree steps into a junction and deletes files outside the
+    install folder; this walk removes a link as a link.
+    """
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if _is_link(entry.path):
+                if entry.is_dir(follow_symlinks=False):
+                    os.rmdir(entry.path)
+                else:
+                    os.remove(entry.path)
+            elif entry.is_dir(follow_symlinks=False):
+                _delete_tree(entry.path)
+            else:
+                os.remove(entry.path)
+    os.rmdir(path)
+
+
+def _delete(path, base):
+    if _is_link(path):
+        if os.path.isdir(path):
+            os.rmdir(path)
+        else:
+            os.remove(path)
+        return
+    if not _inside(base, path):
+        raise OSError(f"it resolves outside {base}")
+    if os.path.isdir(path):
+        _delete_tree(path)
+    else:
+        os.remove(path)
+
+
+def delete_paths(items, base):
     """Delete files and folders; return the ones that stayed and why."""
     failed = []
     for path in items:
-        if not os.path.exists(path):
+        if not os.path.lexists(path):
             continue
         try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
+            _delete(path, base)
         except OSError as error:
             failed.append((path, str(error)))
     return failed
@@ -165,9 +241,11 @@ def main(argv=None):
                     help="service folder (default: the folder of this script)")
     data = ap.add_mutually_exclusive_group()
     data.add_argument("--keep-data", action="store_true",
-                      help="keep models and config.json (default)")
+                      help="keep models, config.json, logs, history and "
+                           "statistics (default)")
     data.add_argument("--remove-data", action="store_true",
-                      help="remove models, config.json and logs too")
+                      help="remove models, config.json, logs, history and "
+                           "statistics too")
     ap.add_argument("--yes", action="store_true", help="do not ask")
     args = ap.parse_args(argv)
 
@@ -179,14 +257,19 @@ def main(argv=None):
     if reason:
         say(f"[X] Refusing to uninstall from {target}: it is {reason}.")
         return 1
+    if not os.path.exists(target):
+        say(f"{target} is not there - nothing to remove.")
+        return 0
     if not looks_like_vibeforma(target):
         say(f"[X] {target} does not look like a VibeForma install - "
             "nothing was removed.")
         return 1
     keep = not args.remove_data
     say(f"Uninstall VibeForma from {target}?")
-    say("Models and config.json will be kept." if keep
-        else "Models, config.json, hotwords and logs will be removed.")
+    say("Models, config.json (settings and hotwords), logs, history and "
+        "statistics will be kept." if keep
+        else "Models, config.json (settings and hotwords), logs, history and "
+             "statistics will be removed.")
     if not args.yes:
         try:
             answer = input("Continue? [y/N]: ").strip().lower()
@@ -195,13 +278,17 @@ def main(argv=None):
         if answer not in ("y", "yes"):
             say("Cancelled - nothing was removed.")
             return 0
+    if running_inside_venv(target):
+        say("[!] This uninstaller runs from the folder's .venv; Windows keeps "
+            "its python.exe locked while it runs, so .venv stays. Delete the "
+            "folder by hand to finish.")
 
     say("Removing shortcuts...")
     remove_shortcuts(target)
     say("Removing the Settings > Apps entry...")
     remove_uninstall_entry()
-    say("Removing service files...")
-    failed = delete_paths(removal_plan(target, keep))
+    say("Removing the installed files...")
+    failed = delete_paths(removal_plan(target, keep), target)
     for path, error in failed:
         say(f"  [X] {path}: {error}")
     remaining = []
@@ -211,8 +298,15 @@ def main(argv=None):
         with contextlib.suppress(OSError):
             os.rmdir(target)
     say("Done.")
-    if keep:
-        say("Models and config.json are still in the folder.")
+    data_names = set(DATA_FILES + DATA_DIRS)
+    failed_names = {os.path.basename(path) for path, _error in failed}
+    kept = sorted(name for name in remaining if keep and name in data_names)
+    foreign = sorted(name for name in remaining
+                     if name not in data_names and name not in failed_names)
+    if kept:
+        say("Kept your data: " + ", ".join(kept) + ".")
+    if foreign:
+        say("Kept (not created by VibeForma): " + ", ".join(foreign) + ".")
     if failed:
         say("Some files could not be removed - exit the service and repeat.")
         return 1

@@ -14,7 +14,6 @@ RESERVED = frozenset({
     "ctrl+shift+esc", "win+l", "win+d", "win+e",
 })
 DEFAULT_HOTKEY = "ctrl+alt+space"
-STEPS = ("language", "microphone", "hotkey")
 TEST_SECONDS = 4.0
 
 

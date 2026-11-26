@@ -19,7 +19,12 @@ from typing import Any
 
 import hallucination
 import numpy as np
-from config import MODELS_DIR, bootstrap_cuda_dlls
+from config import (
+    MODELS_DIR,
+    QUALITY_PRESET_DEFAULT,
+    QUALITY_PRESETS,
+    bootstrap_cuda_dlls,
+)
 from transcript import Segment, Word
 
 try:  # faster-whisper >= 1.1 ships the batched wrapper; older builds do not
@@ -39,8 +44,10 @@ NO_SPEECH_THRESHOLD = 0.6
 LOG_PROB_THRESHOLD = -1.0
 COMPRESSION_RATIO_DEFAULT = 2.4
 # Dictation presets: a live partial is greedy and single-temperature; the
-# final dictation pass keeps beam 5 and a short fallback ladder. File mode
-# does not use these values and keeps faster-whisper's full ladder.
+# final dictation pass defaults to beam 5 and a short fallback ladder (a
+# quality preset may widen or narrow it). File mode does not use these
+# values and keeps faster-whisper's full ladder.
+DICTATION_BEAM_SIZE = 5
 DICTATION_TEMPERATURES = (0.0, 0.2)
 PARTIAL_BEAM_SIZE = 1
 PARTIAL_TEMPERATURE = 0.0
@@ -50,6 +57,16 @@ PARTIAL_TEMPERATURE = 0.0
 # final dictation pass uses.
 RETRANSCRIBE_BEAM_SIZE = 10
 RETRANSCRIBE_TEMPERATURE = 0.0
+# Quality presets of the final dictation pass (card-265): normal is the
+# shipped behavior, accurate reuses the draft retry's wider search, fast
+# reuses the live partial's greedy search (no fallback ladder). The preset is
+# the only source of this pass's beam and temperature: the settings window
+# exposes no raw temperature, and nothing else overrides these values here.
+QUALITY_PRESET_PARAMS = {
+    "normal": (DICTATION_BEAM_SIZE, DICTATION_TEMPERATURES),
+    "accurate": (RETRANSCRIBE_BEAM_SIZE, RETRANSCRIBE_TEMPERATURE),
+    "fast": (PARTIAL_BEAM_SIZE, PARTIAL_TEMPERATURE),
+}
 # Language hint (F12): recognition always uses the pinned language and never
 # switches (card-118); the hint only tells the person the take sounded like
 # another one. It needs both readings at once: the pinned language below the
@@ -652,6 +669,26 @@ def _threshold_failure(segment: Segment, language: str) -> str | None:
     return None
 
 
+def quality_preset(cfg) -> tuple[str, int, tuple[float, ...] | float]:
+    """The final dictation pass settings read from ``quality_preset``.
+
+    Returns the effective preset name, beam size and temperature. Normal keeps
+    beam 5 and the 0.0 -> 0.2 fallback ladder, accurate uses beam 10 at one
+    temperature, fast decodes greedily at one temperature. A missing, empty
+    or unknown value reads as normal, so an old config without the key and a
+    hand-edited typo keep working instead of failing the pass.
+
+    This is the only place the final dictation pass takes its beam and
+    temperature from: the settings window exposes no raw temperature that
+    could override the preset.
+    """
+    name = str((cfg or {}).get("quality_preset") or "").strip().casefold()
+    if name not in QUALITY_PRESETS:
+        name = QUALITY_PRESET_DEFAULT
+    beam, temperature = QUALITY_PRESET_PARAMS[name]
+    return name, beam, temperature
+
+
 class ASR:
     def __init__(self, cfg, log: logging.Logger):
         self.cfg = cfg
@@ -895,9 +932,12 @@ class ASR:
         """Transcribe 16 kHz float32 mono audio; returns stripped text.
 
         A live partial reads a short window (see audio.partial_snapshot) and
-        decodes greedily at one temperature. The final dictation pass keeps
-        beam 5 and a two-step fallback ladder, and asks for word timestamps:
-        the panel draft marks the words the engine is unsure about.
+        decodes greedily at one temperature. The final dictation pass takes
+        its beam and temperature from the ``quality_preset`` config value
+        (see ``quality_preset``): normal keeps beam 5 and the two-step
+        fallback ladder, accurate reads wider at one temperature, fast
+        decodes greedily at one temperature. Word timestamps stay on, and the
+        panel draft marks the words the engine is unsure about.
 
         The final pass keeps the engine's own readings on ``last_segments``
         (see ``transcript.Segment``); the service decides from them whether
@@ -917,9 +957,12 @@ class ASR:
                     audio, lang, beam_size=PARTIAL_BEAM_SIZE,
                     temperature=PARTIAL_TEMPERATURE)
             else:
+                preset, beam, temperature = quality_preset(self.cfg)
                 segments, info = self._transcribe_impl(
-                    audio, lang, beam_size=5, word_timestamps=True,
-                    temperature=DICTATION_TEMPERATURES, log_windows=True)
+                    audio, lang, beam_size=beam, word_timestamps=True,
+                    temperature=temperature, log_windows=True)
+                self.log.info("Final pass preset: %s (beam %d)",
+                              preset, beam)
             collected = [_segment(seg) for seg in segments]
             if not partial:
                 collected = self._without_invented(collected)

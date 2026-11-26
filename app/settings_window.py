@@ -9,7 +9,9 @@ no cloud, no account.
 """
 import contextlib
 import ctypes
+import gc
 import os
+import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -18,6 +20,7 @@ import dictionary
 import dictlearn
 import history
 import i18n
+import model_folders
 import onboarding
 import snippets
 import snippets_ui
@@ -26,6 +29,7 @@ import update_control
 import window_layout
 import winfx
 from config import (
+    DEFAULT_MODEL,
     DEFAULTS,
     INSTALL_DIR,
     LANG_NAMES,
@@ -36,7 +40,13 @@ from config import (
     VERSION,
     normalize_app_profiles,
 )
-from vibeforma import connect
+from vibeforma import (
+    STATE_LOADING,
+    STATE_PROCESSING,
+    STATE_RECORDING,
+    STATE_UPDATING,
+    connect,
+)
 
 BG = "#16181D"
 FG = "#D5D9E0"
@@ -46,14 +56,6 @@ SIDE_BG = "#121419"
 LINE = "#242830"
 ACCENT = "#2E86DE"
 ACCENT_DARK = "#1B2532"
-
-
-def dpi_factor(win):
-    """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
-    try:
-        return max(1.0, win.winfo_fpixels("1i") / 96.0)
-    except Exception:  # noqa: BLE001 - the window must survive any Tk failure
-        return 1.0
 
 
 def history_row(record):
@@ -100,10 +102,13 @@ def process_ram_mb():
 
 
 def phase_text(tr, p):
-    """Localized model-switch phase, shared by the dialog and the inline label."""
+    """Localized model-switch phase for the inline status label."""
     ph = p.get("phase")
     if ph == "download":
         name = p.get("name", "")
+        if model_folders.folder_of(name) is not None:
+            # A local folder is validated and loaded, never downloaded.
+            return tr("dlg.phase_folder", name=name)
         return tr("dlg.phase_download", name=name, gb=MODEL_GB.get(name, "?"))
     if ph == "load":
         return tr("dlg.phase_load", name=p.get("name", ""))
@@ -113,6 +118,8 @@ def phase_text(tr, p):
         text = tr("dlg.phase_done", name=p.get("name", ""))
         if p.get("cache_note"):
             text += "\n" + tr("dlg.cache_note", name=p["cache_note"])
+        if p.get("local_note"):
+            text += "\n" + tr("dlg.local_note", name=p["local_note"])
         return text
     if ph == "busy":
         return tr("dlg.phase_busy")
@@ -121,58 +128,65 @@ def phase_text(tr, p):
     return "…"
 
 
-class ModelSwitchDialog:
-    """Progress dialog for a settings-driven model switch.
+def retranscription_confidence(segments):
+    """A wide pass's confidence: the mean word probability, or None.
 
-    The switch runs in a service thread that updates a plain dict; this
-    dialog (HUD thread) polls it.
+    The history record keeps one number instead of the whole segment shape.
+    A pass that returned no word readings stores None, so the entry never
+    claims a certainty the engine did not give.
+    """
+    values = []
+    for segment in segments or ():
+        for word in getattr(segment, "words", None) or ():
+            probability = getattr(word, "probability", None)
+            if probability is not None:
+                values.append(float(probability))
+    if not values:
+        return None
+    return round(sum(values) / len(values), 4)
+
+
+class Hint:
+    """A short localized hint above a widget, shown while the pointer rests.
+
+    A disabled Tk button still receives Enter and Leave, so the reason an
+    action is unavailable travels with the action itself. The owner sets
+    ``text``; an empty text never draws anything.
     """
 
-    def __init__(self, master, progress, tr):
-        self.progress = progress
-        self.tr = tr
-        px = lambda n: int(round(n * dpi_factor(master)))  # noqa: E731
-        self.win = tk.Toplevel(master)
-        self.win.title(self.tr("dlg.model_title"))
-        self.win.configure(bg=BG)
-        self.win.resizable(False, False)
-        with contextlib.suppress(Exception):
-            winfx.round_native(self.win)
-            winfx.dark_title(self.win)
-        tk.Label(self.win, text=self.tr("dlg.model_title"),
-                 font=("Segoe UI", 11, "bold"), fg="#8FB8E8",
-                 bg=BG).pack(fill="x", padx=px(16), pady=(px(12), px(4)))
-        self.lbl = tk.Label(self.win, text="…", font=("Segoe UI", 10),
-                            fg=FG, bg=BG, wraplength=px(330), justify="left")
-        self.lbl.pack(fill="x", padx=px(16))
-        self.bar = ttk.Progressbar(self.win, mode="indeterminate",
-                                   length=px(330))
-        self.bar.pack(fill="x", padx=px(16), pady=(px(8), px(4)))
-        self.bar.start(12)
-        self.btn = tk.Button(self.win, text=self.tr("dlg.close"),
-                             state="disabled", command=self.win.destroy,
-                             width=12, bg="#22262E", fg=FG, relief="flat",
-                             activebackground="#2A2F38", activeforeground=FG)
-        self.btn.pack(pady=(px(4), px(12)))
-        with contextlib.suppress(Exception):
-            self.win.geometry(f"+{master.winfo_rootx() + px(40)}"
-                              f"+{master.winfo_rooty() + px(40)}")
-        self.win.after(200, self._poll)
+    def __init__(self, widget, px):
+        self.widget = widget
+        self._px = px
+        self.text = ""
+        self._tip = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
 
-    def _text(self, p):
-        return phase_text(self.tr, p)
+    def _show(self, _event=None):
+        if not self.text or self._tip is not None:
+            return
+        try:
+            self._tip = tk.Toplevel(self.widget)
+            self._tip.overrideredirect(True)
+            self._tip.attributes("-topmost", True)
+            tk.Label(self._tip, text=self.text, font=("Segoe UI", 9),
+                     fg=FG, bg=FIELD_BG, padx=self._px(6),
+                     pady=self._px(3), justify="left",
+                     wraplength=self._px(360)).pack()
+            x = self.widget.winfo_rootx() + self._px(4)
+            y = (self.widget.winfo_rooty()
+                 + self.widget.winfo_height() + self._px(4))
+            self._tip.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            self._tip = None
 
-    def _poll(self):
-        with contextlib.suppress(Exception):
-            if not self.win.winfo_exists():
-                return
-            p = dict(self.progress)
-            self.lbl.configure(text=self._text(p))
-            if p.get("phase") in ("done", "error", "busy"):
-                self.bar.stop()
-                self.btn.configure(state="normal")
-                return   # stop polling; the window stays until user closes it
-        self.win.after(200, self._poll)
+    def _hide(self, _event=None):
+        if self._tip is None:
+            return
+        with contextlib.suppress(tk.TclError):
+            self._tip.destroy()
+        self._tip = None
 
 
 class _ScrollPane:
@@ -288,7 +302,7 @@ class SettingsWindow:
         self.master = master
         tr = lambda key, **kw: svc.tr(key, **kw)  # noqa: E731
         self.tr = tr
-        self._px = lambda n: int(round(n * dpi_factor(self.win)))
+        self._px = lambda n: int(round(n * winfx.dpi_factor(self.win)))
 
         self.win = tk.Toplevel(master)
         self.win.title(self.tr("settings.title"))
@@ -371,6 +385,9 @@ class SettingsWindow:
                   foreground=[("readonly", FG)],
                   selectbackground=[("readonly", FIELD_BG)],
                   selectforeground=[("readonly", FG)])
+        style.configure("Vibe.Horizontal.TProgressbar", troughcolor=FIELD_BG,
+                        background=ACCENT, bordercolor=BG,
+                        lightcolor=ACCENT, darkcolor=ACCENT, borderwidth=0)
         self.win.option_add("*TCombobox*Listbox.background", FIELD_BG)
         self.win.option_add("*TCombobox*Listbox.foreground", FG)
         self.win.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
@@ -620,6 +637,21 @@ class SettingsWindow:
         self._row(f, self.tr("settings.source"),
                   self._opt(f, self.v_source, list(self._source_by_name)))
         self._note(f, self.tr("settings.note_source"))
+        # The preset owns the final dictation pass's beam and temperature
+        # (card-265); the window shows no raw temperature, so nothing here
+        # can override the chosen preset.
+        self._head(f, self.tr("settings.g_quality"))
+        self._quality_by_name = {
+            self.tr("settings.quality_normal"): "normal",
+            self.tr("settings.quality_accurate"): "accurate",
+            self.tr("settings.quality_fast"): "fast",
+        }
+        self.v_quality = tk.StringVar(
+            value=self._quality_label(c.get("quality_preset", "normal")))
+        self._row(f, self.tr("settings.quality"),
+                  self._opt(f, self.v_quality,
+                            list(self._quality_by_name), width=26))
+        self._note(f, self.tr("settings.note_quality"))
         # -- tab: recording --------------------------------------------------
         self._head(f, self.tr("settings.g_pauses"))
         self.v_silence = tk.IntVar(value=int(c.get("silence_ms", 2000)))
@@ -721,6 +753,32 @@ class SettingsWindow:
         self.v_model.trace_add("write", lambda *a: self._update_model_desc())
         self.v_keep = tk.BooleanVar(value=bool(c.get("model_keep_old", True)))
         self._bind(f, self.v_keep, self.tr("model.keep"))
+        self.model_folders = model_folders.normalize(c.get("model_folders"))
+        self._head(f, self.tr("model.local_g"))
+        self._note(f, self.tr("model.local_note"))
+        self.folder_list = tk.Listbox(f, height=4, width=46, bg=FIELD_BG,
+                                      fg=FG, relief="flat",
+                                      highlightthickness=0,
+                                      selectbackground="#2E86DE",
+                                      exportselection=False,
+                                      font=("Segoe UI", 9))
+        self._full(f, self.folder_list)
+        folder_btns = tk.Frame(f, bg=BG)
+        for text, command in (
+                (self.tr("model.folder_add"), self._add_model_folder),
+                (self.tr("model.folder_use"), self._use_model_folder),
+                (self.tr("model.folder_remove"), self._remove_model_folder),
+                (self.tr("model.folder_builtin"), self._use_builtin_model)):
+            tk.Button(folder_btns, text=text, command=command, bg="#22262E",
+                      fg=FG, relief="flat", activebackground="#2A2F38",
+                      activeforeground=FG, cursor="hand2").pack(
+                          side="left", padx=(0, 6))
+        self._full(f, folder_btns)
+        self.model_folder_status = tk.Label(
+            f, text="", font=("Segoe UI", 9), fg="#9FE0A8", bg=BG,
+            wraplength=self._px(420), justify="left", anchor="w")
+        self._full(f, self.model_folder_status)
+        self._refresh_model_folders()
         self._head(f, self.tr("settings.g_lang"))
         lang_pairs = [(LANG_NAMES.get(x, x), x) for x in LANGS]
         self._lang_by_name = dict(lang_pairs)
@@ -743,6 +801,138 @@ class SettingsWindow:
                                      fg="#9FE0A8", bg=BG, wraplength=self._px(420),
                                      justify="left", anchor="w")
         self._full(f, self.model_status)
+
+
+    # -- local model folders (card-264) --------------------------------------
+    def _folder_state(self, problem):
+        """The localized validity mark for a folder problem code."""
+        if problem is None:
+            return self.tr("model.folder_valid")
+        if problem == "missing_model_bin":
+            return self.tr("model.folder_missing_bin")
+        if problem == "not_a_folder":
+            return self.tr("model.folder_missing_dir")
+        return self.tr("model.folder_invalid")
+
+    def _refresh_model_folders(self, select=None):
+        """Redraw the folder list: name, path, validity, current mark.
+
+        Validity is computed here, every time the list is drawn, so a folder
+        that lost its model.bin turns invalid instead of keeping a mark.
+        """
+        self.folder_list.delete(0, "end")
+        current = str(self.cfg.get("model") or "")
+        for entry in self.model_folders:
+            state = self._folder_state(
+                model_folders.folder_problem(entry["path"]))
+            mark = ""
+            if model_folders.is_current(current, entry["path"]):
+                mark = self.tr("model.folder_current")
+            self.folder_list.insert("end", self.tr(
+                "model.folder_row", name=entry["name"], path=entry["path"],
+                state=state, current=mark))
+        if select is not None and 0 <= select < len(self.model_folders):
+            self.folder_list.selection_set(select)
+            self.folder_list.see(select)
+
+    def _selected_model_folder(self):
+        """The index under the folder list's cursor, or None with a hint."""
+        selected = self.folder_list.curselection()
+        if not selected:
+            self.model_folder_status.configure(
+                text=self.tr("model.folder_select"))
+            return None
+        index = int(selected[0])
+        if not 0 <= index < len(self.model_folders):
+            return None
+        return index
+
+    def _add_model_folder(self):
+        """Pick a directory; a folder without model.bin is refused, not added."""
+        path = filedialog.askdirectory(
+            parent=self.win, title=self.tr("model.folder_add"))
+        if not path:
+            return
+        path = model_folders.absolute(path)
+        problem = model_folders.folder_problem(path)
+        if problem:
+            self.model_folder_status.configure(text=self.tr(
+                "model.folder_bad", path=path,
+                reason=self._folder_state(problem)))
+            return
+        if any(model_folders.same_path(entry["path"], path)
+               for entry in self.model_folders):
+            self.model_folder_status.configure(
+                text=self.tr("model.folder_dup", path=path))
+            return
+        if len(self.model_folders) >= model_folders.MAX_MODEL_FOLDERS:
+            self.model_folder_status.configure(text=self.tr(
+                "model.folder_limit", n=model_folders.MAX_MODEL_FOLDERS))
+            return
+        name = model_folders.name_for(path)
+        self.model_folders.append({"name": name, "path": path})
+        self._refresh_model_folders(select=len(self.model_folders) - 1)
+        self.model_folder_status.configure(
+            text=self.tr("model.folder_added", name=name))
+
+    def _use_model_folder(self):
+        """Switch to the selected folder through the one existing flow.
+
+        The folder is checked before anything is applied: a row that lost its
+        model.bin never becomes current, so the model in use stays as it was.
+        Save applies the settings and starts the switch with its progress.
+        """
+        index = self._selected_model_folder()
+        if index is None:
+            return
+        entry = self.model_folders[index]
+        problem = model_folders.folder_problem(entry["path"])
+        if problem:
+            self.model_folder_status.configure(text=self.tr(
+                "model.folder_bad", path=entry["path"],
+                reason=self._folder_state(problem)))
+            return
+        self.v_model.set(entry["path"])
+        self._save()
+
+    def _remove_model_folder(self):
+        """Drop the record; the folder and its files are never touched."""
+        index = self._selected_model_folder()
+        if index is None:
+            return
+        entry = self.model_folders[index]
+        if model_folders.is_current(self.cfg.get("model"), entry["path"]):
+            self.model_folder_status.configure(
+                text=self.tr("model.folder_current_keep", name=entry["name"]))
+            return
+        del self.model_folders[index]
+        self._refresh_model_folders()
+        self.model_folder_status.configure(text=self.tr(
+            "model.folder_removed", name=entry["name"], path=entry["path"]))
+
+    def _use_builtin_model(self):
+        """Select a catalog model again; a local folder stops being current."""
+        name = str(self.v_model.get() or "")
+        if name in MODELS:
+            self.model_folder_status.configure(
+                text=self.tr("model.folder_builtin_already", name=name))
+            return
+        self.v_model.set(DEFAULT_MODEL)
+        self._save()
+
+
+    def _quality_label(self, code):
+        """The localized preset label for a stored code; unknown -> normal."""
+        for label, value in self._quality_by_name.items():
+            if value == code:
+                return label
+        return self.tr("settings.quality_normal")
+
+
+    def _quality_code(self):
+        """The preset code Save writes; an unknown label reads as normal."""
+        return self._quality_by_name.get(
+            self.v_quality.get(), DEFAULTS["quality_preset"])
 
 
     def _build_dictionary_tab(self, f):
@@ -947,11 +1137,18 @@ class SettingsWindow:
         self._auto_wrap(note, 760)
 
         # -- status line, above the settings strip ---------------------------
-        self.his_status = tk.Label(f, text="", font=("Segoe UI", 9),
+        status_row = tk.Frame(f, bg=BG)
+        status_row.pack(side="bottom", fill="x", padx=self._px(18),
+                        pady=(0, self._px(2)))
+        self.his_status = tk.Label(status_row, text="", font=("Segoe UI", 9),
                                    fg="#9FE0A8", bg=BG, anchor="w",
                                    justify="left")
-        self.his_status.pack(side="bottom", fill="x", padx=self._px(18),
-                             pady=(0, self._px(2)))
+        self.his_status.pack(side="left", fill="x", expand=True)
+        # The wider pass runs in the background; this bar is the window's
+        # only visible sign of it until the row is redrawn.
+        self._his_progress = ttk.Progressbar(
+            status_row, mode="indeterminate", length=self._px(140),
+            style="Vibe.Horizontal.TProgressbar")
 
         # -- top: search + refresh ------------------------------------------
         tools = tk.Frame(f, bg=BG)
@@ -975,6 +1172,9 @@ class SettingsWindow:
             activeforeground=FG, cursor="hand2", padx=self._px(8))
         refresh.pack(side="right")
         self._his_buttons = {"refresh": refresh}
+        self._retry_busy = False
+        self._retry_outcome = None
+        self._retry_ts = 0.0
 
         # -- filters: application, date, direction ---------------------------
         filters = tk.Frame(f, bg=BG)
@@ -1011,6 +1211,7 @@ class SettingsWindow:
         for key, text, command in (
                 ("copy", "history.copy", self._copy_selected),
                 ("paste", "history.paste_again", self._paste_again_selected),
+                ("retry", "history.retry", self._retranscribe_selected),
                 ("dict", "history.to_dictionary", self._pair_from_selected),
                 ("delete", "history.delete", self._delete_selected),
                 ("clear", "history.clear", self._clear_history)):
@@ -1021,6 +1222,9 @@ class SettingsWindow:
                                padx=self._px(6))
             button.pack(side="left", padx=(0, self._px(6)))
             self._his_buttons[key] = button
+        # A disabled button still receives Enter/Leave, so the reason a
+        # record cannot be recognized again is attached to the button.
+        self._retry_hint = Hint(self._his_buttons["retry"], self._px)
         for key, text, command in (
                 ("undo", "history.undo", self._undo_last),
                 ("restore", "history.restore", self._restore_clipboard)):
@@ -1244,7 +1448,7 @@ class SettingsWindow:
              + top + self._foot.winfo_reqheight() + self._px(24))
         sw = self.win.winfo_screenwidth()
         sh = self.win.winfo_screenheight()
-        w, h = window_layout.fit_size(w, h, sw, sh, dpi_factor(self.win))
+        w, h = window_layout.fit_size(w, h, sw, sh, winfx.dpi_factor(self.win))
         x, y = window_layout.place_xy(w, h, sw, sh)
         self.win.geometry(f"{w}x{h}+{x}+{y}")
 
@@ -1320,6 +1524,7 @@ class SettingsWindow:
         self.v_beep_on.set(d["beep_on"])
         self.v_beep_off.set(d["beep_off"])
         self.v_keep.set(d["model_keep_old"])
+        self.v_quality.set(self._quality_label(d["quality_preset"]))
         self.v_lang.set(LANG_NAMES.get(d["language"], d["language"]))
         self.v_ui.set("auto")
         self.v_paste.set(d["paste_method"])
@@ -1349,10 +1554,23 @@ class SettingsWindow:
                 return
             p = dict(progress)
             self.model_status.configure(text=phase_text(self.tr, p))
+            if p.get("phase") in ("done", "error"):
+                self._sync_model_after_switch()
             if p.get("phase") not in ("done", "error", "busy"):
                 self.win.after(400, lambda: self._poll_model(progress))
         except tk.TclError:
             pass
+
+    def _sync_model_after_switch(self):
+        """The live value wins after a switch; a failed one restored the old.
+
+        The switch worker puts the previous model back in the shared config
+        when loading fails, so mirroring it here keeps the Active model field
+        and the current mark truthful instead of showing the broken pick.
+        """
+        with contextlib.suppress(tk.TclError):
+            self.v_model.set(str(self.cfg.get("model") or ""))
+            self._refresh_model_folders()
 
     # -- dictionary tab ------------------------------------------------------
     def _refresh_dictionary(self):
@@ -1760,6 +1978,24 @@ class SettingsWindow:
         self._his_buttons["clear"].configure(
             state="normal" if has_rows and self.v_history.get()
             else "disabled")
+        picked = self._selected_indexes()
+        record = (self._history_items[picked[0]]
+                  if len(picked) == 1 and picked[0] < len(self._history_items)
+                  else None)
+        path = self._history_retry_path(record)
+        # The wider pass reads the record's own WAV: without one the button
+        # is unavailable, and the hint says why instead of failing a load.
+        self._his_buttons["retry"].configure(
+            state="normal" if path and not self._retry_busy else "disabled")
+        if not picked:
+            hint = "history.retry_select"
+        elif len(picked) > 1:
+            hint = "history.retry_one"
+        elif not path:
+            hint = "history.retry_no_audio"
+        else:
+            hint = "history.retry_hint"
+        self._retry_hint.text = self.tr(hint)
 
     def _selected_history(self):
         selected = self.his_tree.selection()
@@ -1780,6 +2016,179 @@ class SettingsWindow:
                 if 0 <= index < len(self._history_items):
                     indexes.append(index)
         return indexes
+
+    # -- re-recognition of one entry (card-267) ------------------------------
+    def _history_retry_path(self, record):
+        """The record's WAV path while the file is really there, else "".
+
+        The stored link alone is not enough: the cap or a hand can remove a
+        file under a record that still names it, and the button's state is
+        decided by what the click would really read.
+        """
+        if record is None:
+            return ""
+        try:
+            path = self.svc.history.record_audio_path(record)
+        except Exception:  # noqa: BLE001 - a broken entry never breaks the window
+            return ""
+        return path if path and os.path.isfile(path) else ""
+
+    def _retranscribe_ready(self):
+        """False while a take is being recorded, recognized or loaded."""
+        state = str(getattr(self.svc, "state", "") or "")
+        if state in (STATE_LOADING, STATE_RECORDING, STATE_PROCESSING,
+                     STATE_UPDATING):
+            self.his_status.configure(text=self.tr("history.retry_wait"))
+            return False
+        return True
+
+    def _retranscribe_selected(self):
+        """Run one wider pass over the selected entry's saved take.
+
+        The pass runs in its own thread with a temporary engine, so neither
+        the table nor the live engine waits on it; the window polls for the
+        outcome. The entry is addressed by its epoch stamp, not by the row
+        index, because a dictation may append while the pass runs.
+        """
+        if self._retry_busy:
+            self.his_status.configure(text=self.tr("history.retry_busy"))
+            return
+        picked = self._selected_indexes()
+        if len(picked) != 1:
+            self.his_status.configure(text=self.tr("history.retry_one"))
+            return
+        record = self._history_items[picked[0]]
+        path = self._history_retry_path(record)
+        if not path:
+            self.his_status.configure(text=self.tr("history.retry_no_audio"))
+            self._sync_history_actions()
+            return
+        if not self._retranscribe_ready():
+            return
+        self._retry_busy = True
+        self._retry_outcome = None
+        self._retry_ts = float(record.get("ts") or 0.0)
+        self.his_status.configure(text=self.tr("history.retry_running"))
+        with contextlib.suppress(tk.TclError):
+            self._his_progress.pack(side="right", padx=(self._px(6), 0))
+            self._his_progress.start(12)
+        self._sync_history_actions()
+        try:
+            threading.Thread(target=self._retranscribe_worker,
+                             args=(self._retry_ts, path),
+                             daemon=True).start()
+        except Exception as e:  # noqa: BLE001 - a failed spawn is a notice
+            self.log.warning("History retranscription did not start: %s", e)
+            self._finish_retry({"ts": self._retry_ts,
+                                "error": "history.retry_failed"})
+            return
+        self.win.after(200, self._poll_retranscribe)
+
+    def _retranscribe_worker(self, ts, path):
+        """One wide pass over this entry's take, off the Tk thread.
+
+        The engine path is the existing one from the tray's re-recognition:
+        a temporary ASR is loaded, asked for the same take and released.
+        The pass itself is ``ASR.retranscribe`` (card-247: beam 10,
+        temperature 0), never a second wide search written here. Only the
+        engine's raw text and its confidence reading are kept: the
+        dictionary, text rules, snippets and voice actions are not applied,
+        the same as the tray and the draft retry.
+        """
+        outcome = {"ts": ts, "error": ""}
+        try:
+            if not os.path.isfile(path):
+                outcome["error"] = "history.retry_no_audio"
+                self._retry_outcome = outcome
+                return
+            import audio as audio_mod
+            samples = audio_mod.load_wav_16k(path)
+            if samples is None or len(samples) == 0:
+                outcome["error"] = "history.audio_broken"
+                self._retry_outcome = outcome
+                return
+            import asr as asr_mod
+            wanted = str(self.cfg.get("model") or "")
+            temp = asr_mod.ASR({**self.cfg, "model": wanted}, self.log)
+            try:
+                temp.load()
+                text = str(temp.retranscribe(samples) or "").strip()
+                confidence = retranscription_confidence(
+                    getattr(temp, "last_segments", None) or [])
+            finally:
+                # One entry-sized pass only: the temporary weights go now.
+                with contextlib.suppress(Exception):
+                    temp.model = None
+                gc.collect()
+            if not text:
+                outcome["error"] = "history.retry_no_speech"
+            elif not self.svc.history.replace(ts, text, confidence=confidence):
+                outcome["error"] = "history.retry_gone"
+            else:
+                outcome.update(text=text, chars=len(text))
+                self.log.info("History entry re-recognized: %d chars",
+                              len(text))
+        except Exception as e:
+            self.log.exception("History retranscription failed: %s", e)
+            outcome["error"] = "history.retry_failed"
+        self._retry_outcome = outcome
+
+    def _poll_retranscribe(self):
+        """Main thread: publish the worker's outcome and put the UI back."""
+        if not self._retry_busy:
+            return
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        outcome = self._retry_outcome
+        if outcome is None:
+            self.win.after(200, self._poll_retranscribe)
+            return
+        self._finish_retry(outcome)
+
+    def _finish_retry(self, outcome):
+        """Leave the busy state; on success redraw the row and reselect it."""
+        self._retry_outcome = None
+        self._retry_busy = False
+        with contextlib.suppress(tk.TclError):
+            self._his_progress.stop()
+            self._his_progress.pack_forget()
+        error = str(outcome.get("error") or "")
+        if error:
+            self.his_status.configure(text=self.tr(error))
+            self._sync_history_actions()
+            return
+        self._refresh_history()
+        iid = self._history_iid(outcome.get("ts"))
+        if iid is not None:
+            self.his_tree.selection_set(iid)
+            self.his_tree.see(iid)
+        self.his_status.configure(
+            text=self.tr("history.retry_done",
+                         n=int(outcome.get("chars") or 0)))
+        self._sync_history_actions()
+
+    def _history_iid(self, ts):
+        """The row id of the entry with this stamp, when it is still shown."""
+        shown = set(self.his_tree.get_children())
+        try:
+            wanted = float(ts or 0.0)
+        except (TypeError, ValueError):
+            return None
+        for index in range(len(self._history_items) - 1, -1, -1):
+            iid = str(index)
+            if iid not in shown:
+                continue
+            record = self._history_items[index]
+            try:
+                stamp = float(record.get("ts") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if stamp == wanted:
+                return iid
+        return None
 
     def _copy_selected(self):
         picked = self._selected_history()
@@ -1849,8 +2258,13 @@ class SettingsWindow:
 
     def _update_model_desc(self):
         with contextlib.suppress(Exception):
-            self.model_desc.configure(
-                text=self.tr(f"models.desc.{self.v_model.get()}"))
+            name = self.v_model.get()
+            if name in MODELS:
+                text = self.tr(f"models.desc.{name}")
+            else:
+                # A model folder or a repo id: the catalog has no blurb.
+                text = self.tr("model.custom_desc", value=name)
+            self.model_desc.configure(text=text)
 
     def _open_doctor(self):
         import doctor
@@ -1882,6 +2296,7 @@ class SettingsWindow:
         c["beep_on"] = bool(self.v_beep_on.get())
         c["beep_off"] = bool(self.v_beep_off.get())
         c["model_keep_old"] = bool(self.v_keep.get())
+        c["quality_preset"] = self._quality_code()
         c["language"] = self._lang_by_name.get(
             self.v_lang.get(), self.cfg.get("language", "en"))
         c["locale"] = self._ui_by_name.get(
@@ -1893,6 +2308,7 @@ class SettingsWindow:
         c["notify_text"] = bool(self.v_notify_text.get())
         c["dictionary"] = dictionary.normalize(self.dictionary)
         c["app_profiles"] = normalize_app_profiles(self.app_profiles)
+        c["model_folders"] = model_folders.normalize(self.model_folders)
         c["snippets"] = snippets.normalize(self.snippets)
         c["text_rules"] = bool(self.v_text_rules.get())
         c["hold_to_talk"] = bool(self.v_hold.get())

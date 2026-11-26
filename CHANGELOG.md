@@ -3,7 +3,76 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 0.5.1 — 2026-11-26
+
+### Added
+- **A system-audio take is recorded to files.** With the sound source set to
+  **System audio**, the take is written as a 16-bit, 16 kHz mono WAV into
+  `system_recordings_dir` — empty means `Documents\VibeForma\Recordings`, a
+  date subfolder, the file named by the take's start time — and on stop TXT
+  and SRT are queued beside it through the file queue. The path is shown on
+  the panel, in the tray and in the HUD. Nothing is inserted, and the
+  dictation history and statistics stay untouched. A folder that cannot be
+  written is reported before the take starts, and the live subtitle buffer
+  stays at 30 s. Limits: a take longer than `file_max_s` (6 hours) or larger
+  than `file_max_mb` (4 GB) keeps its WAV but gets no transcript; `Esc` and
+  exit close the WAV without queueing the transcript.
+- **A take clock on the panel.** A monospaced clock sits in a fixed-width
+  column left of the level bar and appears only during a take. A microphone
+  take with a limit (`continuous: false`) counts down to `max_record_s` with
+  a minus sign and turns amber under 30 seconds and red under 10; continuous
+  dictation and a system-audio take count elapsed time in neutral color.
+  Hovering says which time it shows, and the digits never shift the line
+  below. The limit is fixed when the take starts; a silence auto-stop can
+  still end a limited take earlier.
+- **A complete uninstall.** `uninstall.cmd --remove-data` removes what the
+  installer and the application created — the `vibeforma\` package,
+  `mcp.cmd`, `requirements.in`, `requirements-cuda.in`, history and its
+  sound, statistics, `status.json`, `location.json`, corrections, the
+  top-level `.py` files, `__pycache__` and `.venv` — and leaves the folder
+  empty or removed, which the installer accepts as a fresh install.
+  `--keep-data` keeps models, configuration, logs, history, statistics and
+  corrections; files that belong to you stay and are named on screen. The
+  removal stays inside the install folder and removes a symbolic link or a
+  junction as a link, never following it out.
+- **Local model folders in Settings.** The **Model & language** tab lists
+  CT2 model folders with their name, path and a validity mark computed every
+  time the list is drawn (`model.bin` present, so a folder that lost it turns
+  invalid instead of keeping a stale mark); the current model is marked.
+  **Add folder** picks a directory and refuses one without `model.bin` with a
+  clear message; **Use** switches through the existing progress dialog, and a
+  failed switch keeps the model that was in use; **Remove from the list**
+  deletes only the record and never a file (the current model's record is
+  kept with an explanation); **Return to the built-in** selects a catalog
+  model again. Switching away from a local folder never deletes its files,
+  even with `model_keep_old=false`; downloaded models inside `models\` are
+  still removed as before. The list lives in `config.json` under
+  `model_folders` as `{name, path}` records, survives a restart, and a manual
+  path in `model` keeps working; an old config without the key reads as an
+  empty list.
+- **Recognition quality presets.** The **Recording** tab offers **Normal
+  (recommended)** — the final dictation pass's beam 5 with the 0.0 → 0.2
+  fallback ladder; **Accurate** — beam 10 at temperature 0, slower; and
+  **Fast** — beam 1 at temperature 0, quicker but weaker on a complex
+  phrase. The choice is stored as `quality_preset` in `config.json`: an old
+  config without the key and an unknown value both read as Normal, and the
+  choice applies to the next final dictation pass without a restart. File
+  transcription and the live system-audio subtitles keep their own settings.
+  The settings panel exposes no raw temperature for this pass: the preset is
+  its only source of beam and temperature.
+- **"Recognize more precisely" for one history entry.** The **History** tab
+  offers the button for the selected entry while its dictation WAV is still
+  on disk; without the sound the button stays disabled with a hint, and a
+  file that disappeared after the row was drawn is refused before anything
+  runs. The pass runs in the background with a temporary ASR and the same
+  wide search as the draft retry (beam 10, temperature 0), so the table
+  stays usable and a progress bar is visible while it runs. The new engine
+  text and the pass's confidence reading (the mean word probability) replace
+  the entry's `text` and `confidence` in `history.jsonl`; the row is redrawn
+  with the new text and the entry stays selected. The dictionary, text
+  rules, snippets and voice actions are not re-applied — only the engine's
+  own text changes, as in the draft retry. A failed, empty or unreadable
+  pass leaves the entry exactly as it was and shows a localized reason.
 
 ## 0.5.0 — 2026-11-25
 

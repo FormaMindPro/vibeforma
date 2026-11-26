@@ -240,6 +240,21 @@ def _join_hotwords(*parts: Any) -> str:
     return ", ".join(out)
 
 
+def take_limit_s(cfg: dict[str, Any]) -> float:
+    """The take limit the HUD may count down to; 0 means the take has none.
+
+    Continuous dictation (the shipped default) is cut into pieces and never
+    ended by ``max_record_s``, so its clock counts up like a system take's:
+    a countdown to a limit that does not stop the take would lie.
+    """
+    if bool(cfg.get("continuous", True)):
+        return 0.0
+    try:
+        return max(0.0, float(cfg.get("max_record_s") or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class Service(HistoryActions, SettingsOps, UpdateActions):
     def __init__(self, cfg: dict[str, Any], log: Any, *,
                  status_file: str | None = None) -> None:
@@ -333,6 +348,13 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
             "last": "",
             "last_ts": 0.0,
             "device": "",
+            "recording_path": "",
+            # The HUD take clock reads the take's own start time, never a
+            # second clock it started itself: the same stamp the service
+            # uses for the take's duration.
+            "record_started": 0.0,
+            "record_source": "",
+            "record_limit_s": 0.0,
             "exit": False,
             "privacy": bool(self.cfg.get("hud_privacy", False)),
             "open_onboarding": False,
@@ -484,6 +506,10 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self.live["partial"] = ""
         self.live["subtitles"] = []
         self.live["level"] = 0.0
+        self.live["recording_path"] = ""
+        self.live["record_started"] = 0.0
+        self.live["record_source"] = ""
+        self.live["record_limit_s"] = 0.0
         # A new take starts with no language note: the previous one is not
         # about the audio being recorded now.
         self.live["language_hint"] = None
@@ -511,25 +537,103 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
         self._record_started = time.time()
         try:
             self.recorder.start(dev_idx)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed start is reported, never raised
             self._record_started = 0.0
             self._record_seconds = 0.0
+            self.live["record_started"] = 0.0
+            self.live["record_source"] = ""
+            self.live["record_limit_s"] = 0.0
             source = str(self.cfg.get("audio_source") or "microphone")
             kind = "system" if source == "system" else "mic"
-            if kind == "system":
-                self.log.exception("System audio unavailable: %s", e)
-            else:
-                self.log.exception("Microphone unavailable: %s", e)
+            message = self._start_failure_message(kind, e)
             if self._test_mode:
                 self._finish_mic_test("", "error")
             self._set_state(STATE_IDLE)
-            if self.tray:
-                self.tray.notify(errors.text(self.cfg, kind, e))
+            self._report(message)
             return
+        # The timer's facts are published before the state flips, so the
+        # first HUD tick of a take already draws the right clock.
+        self.live["record_started"] = self._record_started
+        self.live["record_source"] = ("system" if self._take_is_system()
+                                      else "microphone")
+        self.live["record_limit_s"] = take_limit_s(self.cfg)
         self._set_state(STATE_RECORDING)
+        if self._take_is_system():
+            self._announce_recording_path(self.recorder)
         # The take is already capturing: a slow clipboard read never eats the
         # first word, and the first chunk or partial lands after it anyway.
         self._capture_dictation_context()
+
+    def _start_failure_message(self, kind: str, exc: Any) -> str:
+        """Localized reason a take did not start; a folder problem names it."""
+        import system_recording
+        if isinstance(exc, system_recording.RecordingsFolderError):
+            self.log.warning("System audio not recorded: %s", exc)
+            return self.tr("notify.recordings_folder_failed",
+                           path=exc.path or "-")
+        if kind == "system":
+            self.log.exception("System audio unavailable: %s", exc)
+        else:
+            self.log.exception("Microphone unavailable: %s", exc)
+        return str(errors.text(self.cfg, kind, exc))
+
+    def _announce_recording_path(self, rec: Any) -> None:
+        """Name the WAV of a running system take in the panel and a notice."""
+        path = self._recorder_path(rec)
+        if not path:
+            return
+        self.live["recording_path"] = path
+        self._report(self.tr("notify.recording_started", path=path))
+
+    @staticmethod
+    def _recorder_path(rec: Any) -> str:
+        """The take's WAV path; a recorder without one answers ""."""
+        getter = getattr(rec, "recording_path", None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter() or "")
+        except Exception:  # noqa: BLE001 - a missing path never breaks a stop
+            return ""
+
+    def _queue_recording_transcription(self, path: str, seconds: float) -> None:
+        """Queue the finished system take: TXT and SRT beside its WAV.
+
+        The file queue is the entrance that already holds dictation priority
+        and writes transcripts; the take is never inserted and the dictation
+        history is never touched. A missing WAV (an empty take) or a queue
+        that has not started is reported, never silent.
+        """
+        import system_recording
+        if not path or not os.path.isfile(path):
+            self.log.info("System recording is empty: no WAV to transcribe")
+            self._report(self.tr("notify.recording_empty"))
+            return
+        jobs = getattr(self, "file_jobs", None)
+        if jobs is None:
+            self.log.warning(
+                "System recording not queued: file jobs are not running")
+            self._report(self.tr("notify.recording_failed", path=path))
+            return
+        try:
+            job = jobs.submit(path,
+                              formats=list(system_recording.SIDECAR_FORMATS),
+                              trusted=True)
+        except Exception as e:  # noqa: BLE001 - the WAV stays, the reason shows
+            self.log.warning("System recording not queued: %s", e)
+            self._report(self.tr("notify.recording_failed", path=path))
+            return
+        self.log.info("System recording queued as %s: %s (%.1f s)",
+                      getattr(job, "id", "?"), path, seconds)
+        self._report(self.tr("notify.recording_stopped", path=path))
+
+    def _report(self, message: str) -> None:
+        """The panel status line and a tray notice, never one of the two."""
+        self.set_last(message)
+        tray = getattr(self, "tray", None)
+        if tray:
+            with contextlib.suppress(Exception):
+                tray.notify(message)
 
     def _capture_dictation_context(self) -> None:
         """Collect this take's hotwords context; option off — nothing is read.
@@ -793,28 +897,37 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
     def stop_recording(self, reason: str) -> None:
         rec, self.recorder = self.recorder, None
         if rec is None:
+            self.live["record_started"] = 0.0
+            self.live["record_source"] = ""
+            self.live["record_limit_s"] = 0.0
             self._set_state(STATE_IDLE)
             return
         system = self._take_is_system(rec)
         buf = rec.stop()
         started = self._record_started
         self._record_started = 0.0
+        self.live["record_started"] = 0.0
+        self.live["record_source"] = ""
+        self.live["record_limit_s"] = 0.0
         seconds = max(0.0, time.time() - started) if started else 0.0
         self._record_seconds = seconds
         if self.cfg.get("beep_off"):
             beep(900, 70)
         if system:
-            # Live subtitles are a view, never a dictation: the take ends
-            # with nothing recognized, inserted, remembered or drafted. The
-            # last plate stays until the next take replaces it.
+            # Live subtitles were only the view: the take itself is the WAV,
+            # and the full-take transcription is the file queue's. Nothing is
+            # inserted, remembered or drafted.
+            path = self._recorder_path(rec)
             self.live["partial"] = ""
             self.live["level"] = 0.0
+            self.live["recording_path"] = ""
             self._panel_mode = False
             self._context_hotwords = ""
             self._app_profile_ready = False
             self._record_seconds = 0.0
-            self.log.info("System audio take stopped: %.1f s, live subtitles "
-                          "only, nothing inserted", seconds)
+            self.log.info("System audio take stopped: %.1f s, WAV %s",
+                          seconds, path or "-")
+            self._queue_recording_transcription(path, seconds)
             self._set_state(STATE_IDLE)
             return
         self._set_state(STATE_PROCESSING)
@@ -834,10 +947,14 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
                     self.log.debug("Cancelled recorder stop: %s", e)
             self._record_started = 0.0
             self._record_seconds = 0.0
+            self.live["record_started"] = 0.0
+            self.live["record_source"] = ""
+            self.live["record_limit_s"] = 0.0
             self._panel_mode = False
             self.live["partial"] = ""
             self.live["subtitles"] = []
             self.live["level"] = 0.0
+            self.live["recording_path"] = ""
             self._context_hotwords = ""   # a dropped take keeps no context
             # The chunk worker drains its backlog and exits on its own; the
             # finalized text is dropped with the phrase.
@@ -2268,6 +2385,13 @@ class Service(HistoryActions, SettingsOps, UpdateActions):
     def shutdown(self) -> None:
         self._running = False
         self.live["exit"] = True
+        # A take in flight is closed before the process goes: a system WAV
+        # must get a complete header even when the person exits mid-recording.
+        recorder = getattr(self, "recorder", None)
+        if recorder is not None:
+            self.recorder = None
+            with contextlib.suppress(Exception):
+                recorder.stop()
         if self.pipe is not None:
             with contextlib.suppress(Exception):
                 self.pipe.stop()

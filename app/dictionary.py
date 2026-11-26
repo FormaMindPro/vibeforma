@@ -73,14 +73,21 @@ def _pattern(term):
     return left + body + right
 
 
-def _substitute(text, entries):
-    """One substitution pass; returns (text, counts by casefolded term)."""
-    active = [e for e in normalize(entries) if e["to"]]
+# ponytail: one literal regex pass shared by dictionary and snippets; ceiling:
+# two keys per entry and no backreferences; upgrade: a compiled matcher per list.
+def replace_pairs(text, entries, source, target):
+    """One literal case-insensitive pass over normalized pairs; the longest wins.
+
+    The dictionary and the snippets share this engine: each names its own
+    pair keys. An entry without a target never replaces, and a replacement
+    is never re-processed by another entry in the same pass.
+    """
+    active = [entry for entry in entries if entry[target]]
     if not text or not active:
         return text, {}
-    active.sort(key=lambda e: len(e["from"]), reverse=True)
-    table = {e["from"].casefold(): e["to"] for e in active}
-    rx = re.compile("|".join(_pattern(e["from"]) for e in active),
+    active.sort(key=lambda entry: len(entry[source]), reverse=True)
+    table = {entry[source].casefold(): entry[target] for entry in active}
+    rx = re.compile("|".join(_pattern(entry[source]) for entry in active),
                     re.IGNORECASE)
     counts = {}
 
@@ -97,13 +104,13 @@ def _substitute(text, entries):
 
 def apply(text, entries):
     """Replace dictionary terms; returns (result, number of replacements)."""
-    result, counts = _substitute(text, entries)
+    result, counts = replace_pairs(text, normalize(entries), "from", "to")
     return result, sum(counts.values())
 
 
 def changes(text, entries):
     """What would change in text: [{"from", "to", "count"}] in entry order."""
-    _result, counts = _substitute(text, entries)
+    _result, counts = replace_pairs(text, normalize(entries), "from", "to")
     out = []
     for entry in normalize(entries):
         if not entry["to"]:

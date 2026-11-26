@@ -20,6 +20,17 @@ _DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 _DWMWCP_ROUND = 2
 _GA_ROOT = 2
 
+
+# ponytail: Tk's own DPI reading, one factor per widget; ceiling: base monitor
+# scale only; upgrade: GetDpiForWindow per window for mixed-DPI desktops.
+def dpi_factor(win) -> float:
+    """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
+    try:
+        return max(1.0, win.winfo_fpixels("1i") / 96.0)
+    except Exception:  # noqa: BLE001 - a closing window must not break a resize
+        return 1.0
+
+
 if sys.platform == "win32":
     _user32 = ctypes.windll.user32
     _dwmapi = ctypes.windll.dwmapi

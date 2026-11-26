@@ -163,10 +163,25 @@ class FakeRecorder:
     def __init__(self, source):
         self._source = source
         self.stopped = False
+        self.path = ""
 
     def stop(self):
         self.stopped = True
         return np.zeros(SAMPLE_RATE, dtype=np.float32)
+
+    def recording_path(self):
+        return self.path
+
+
+class FakeJobs:
+    """The file queue as the stop path sees it: submission and nothing else."""
+
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, path, **kwargs):
+        self.submitted.append((path, kwargs))
+        return None
 
 
 def _service(text="", source="system"):
@@ -212,7 +227,7 @@ def test_mic_partial_keeps_the_partial_field():
     assert svc.live["subtitles"] == []
 
 
-def test_system_stop_recognizes_inserts_saves_and_drafts_nothing():
+def test_system_stop_queues_the_recording_and_inserts_nothing(tmp_path):
     svc = _service("", source="system")
     svc.live["subtitles"] = ["Last phrase."]
     states = []
@@ -220,14 +235,22 @@ def test_system_stop_recognizes_inserts_saves_and_drafts_nothing():
     called = []
     svc._transcribe_worker = lambda *args, **kw: called.append("recognize")
     svc._finish_chunks = lambda: called.append("chunks")
+    wav = tmp_path / "take.wav"
+    wav.write_bytes(b"RIFF")
+    jobs = FakeJobs()
+    svc.file_jobs = jobs
     rec = svc.recorder
+    rec.path = str(wav)
 
     svc.stop_recording("panel")
 
     assert rec.stopped
     assert svc.recorder is None
     assert states == [STATE_IDLE]
+    # The dictation pass and the chunk path stay out: the take is a file job.
     assert called == []
+    assert jobs.submitted == [(str(wav), {"formats": ["txt", "srt"],
+                                          "trusted": True})]
     assert svc.live["partial"] == ""
     assert svc.live["level"] == 0.0
     assert svc.live["subtitles"] == ["Last phrase."]

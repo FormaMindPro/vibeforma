@@ -134,7 +134,7 @@ def test_recorder_retries_after_refresh(monkeypatch):
     rec.stop()
 
 
-def test_system_source_records_and_never_auto_stops(monkeypatch):
+def test_system_source_records_and_never_auto_stops(monkeypatch, tmp_path):
     audio = pytest.importorskip("audio")
     pytest.importorskip("sounddevice")
     system_audio = pytest.importorskip("system_audio")
@@ -164,7 +164,7 @@ def test_system_source_records_and_never_auto_stops(monkeypatch):
     monkeypatch.setattr(system_audio, "default_loopback",
                         lambda: (FakeMic(), "Fake output"))
     cfg = _cfg(audio_source="system", auto_stop=True, silence_ms=50,
-               max_record_s=10)
+               max_record_s=10, system_recordings_dir=str(tmp_path))
     rec = audio.Recorder(cfg, logging.getLogger("test_audio_quality"),
                          _fake_vad, _no_stop)
     rec.start()

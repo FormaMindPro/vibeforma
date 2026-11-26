@@ -21,7 +21,6 @@ FOUND = "found"
 APPLYING = "applying"
 DEFERRED = "deferred"
 SOURCE_CHECKOUT = "source_checkout"
-ERROR = "error"
 INSTALL_FAILED = "install_failed"
 
 GREEN = "#9FE0A8"

@@ -6,6 +6,7 @@ import threading
 from typing import Any
 
 import errors
+import model_folders
 from config import save
 
 from . import STATE_ERROR, STATE_IDLE, STATE_LOADING, STATE_RECORDING
@@ -172,17 +173,26 @@ class SettingsOps(ServiceHost):
                 return
             save(self.cfg)
             if not keep_old:
-                progress.update(phase="remove", name=old)
                 from config import MODELS_DIR
-                old_dir = os_mod.path.join(MODELS_DIR, old)
-                if os_mod.path.isdir(old_dir):
-                    shutil.rmtree(old_dir, ignore_errors=True)
-                    self.log.info("Old model removed: %s", old_dir)
-                else:
-                    progress["cache_note"] = old
+                # A user model folder is never a deletion target: the switch
+                # forgets the old model, it does not touch the person's files
+                # (card-264). Only a downloaded copy under MODELS_DIR goes.
+                target = model_folders.removal_target(old, MODELS_DIR)
+                if target is None:
+                    progress["local_note"] = old
                     self.log.info(
-                        "Old model %s lives in the shared HF cache — untouched",
+                        "Previous model %s is a local folder - kept on disk",
                         old)
+                else:
+                    progress.update(phase="remove", name=old)
+                    if os_mod.path.isdir(target):
+                        shutil.rmtree(target, ignore_errors=True)
+                        self.log.info("Old model removed: %s", target)
+                    else:
+                        progress["cache_note"] = old
+                        self.log.info(
+                            "Old model %s lives in the shared HF cache — untouched",
+                            old)
             progress.update(phase="done", name=new_name)
             if self.tray:
                 self.tray.notify(self.tr("notify.model_ok", name=new_name))

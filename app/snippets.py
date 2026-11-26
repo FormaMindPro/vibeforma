@@ -9,7 +9,8 @@ included. Russian frequent words in the validation data are written as
 \\u escapes so the source stays ASCII (project rule).
 """
 import json
-import re
+
+import dictionary
 
 MAX_ENTRIES = 500
 MAX_TRIGGER = 80
@@ -80,34 +81,9 @@ def merge(base, profile):
     return normalize([*(profile or []), *(base or [])])
 
 
-def _pattern(trigger):
-    """Literal trigger with word boundaries where the trigger has them."""
-    body = re.escape(trigger)
-    left = r"(?<!\w)" if trigger[:1].isalnum() else ""
-    right = r"(?!\w)" if trigger[-1:].isalnum() else ""
-    return left + body + right
-
-
 def _substitute(text, entries):
     """One substitution pass; returns (text, counts by casefolded trigger)."""
-    active = normalize(entries)
-    if not text or not active:
-        return text, {}
-    active.sort(key=lambda e: len(e["trigger"]), reverse=True)
-    table = {e["trigger"].casefold(): e["text"] for e in active}
-    rx = re.compile("|".join(_pattern(e["trigger"]) for e in active),
-                    re.IGNORECASE)
-    counts = {}
-
-    def _hit(match):
-        key = match.group(0).casefold()
-        value = table.get(key)
-        if value is None:
-            return match.group(0)
-        counts[key] = counts.get(key, 0) + 1
-        return value
-
-    return rx.sub(_hit, text), counts
+    return dictionary.replace_pairs(text, normalize(entries), "trigger", "text")
 
 
 def apply(text, entries):

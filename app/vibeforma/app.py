@@ -8,6 +8,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Any, TextIO
 
 from config import LOCK_PATH, VERSION, load
@@ -36,6 +37,18 @@ TRANSCRIBE_FORMATS = ("txt", "json", "srt", "vtt")
 
 class CliArgumentError(ValueError):
     """A CLI call that cannot be run as written; exit code 2."""
+
+
+def _say(err: TextIO, message: str, *, end: str = "\n",
+         flush: bool = False) -> None:
+    """Write to stderr, surviving a closed or undrained pipe.
+
+    A harness may capture stderr as a pipe and never read it until the
+    process exits; a closed stream raises too. The answer on stdout must
+    still come out, so the write is best-effort.
+    """
+    with contextlib.suppress(BrokenPipeError, OSError, ValueError):
+        print(message, end=end, file=err, flush=flush)
 
 
 def transcribe_help() -> str:
@@ -197,16 +210,7 @@ def run_transcribe(argv: Sequence[str], *, out: TextIO | None = None,
     """Run --transcribe: 0 success, 1 job error, 2 bad args, 3 cancelled."""
     out = out or sys.stdout
     err = err or sys.stderr
-
-    def say(message: str, *, end: str = "\n", flush: bool = False) -> None:
-        """Write to stderr, surviving a closed or undrained pipe.
-
-        A harness may capture stderr as a pipe and never read it until the
-        process exits; a closed stream raises too. The answer on stdout must
-        still come out, so the write is best-effort.
-        """
-        with contextlib.suppress(BrokenPipeError, OSError, ValueError):
-            print(message, end=end, file=err, flush=flush)
+    say = partial(_say, err)
 
     try:
         options = parse_transcribe_args(argv)
@@ -352,10 +356,7 @@ def run_transcribe_folder(argv: Sequence[str], *, out: TextIO | None = None,
     """
     out = out or sys.stdout
     err = err or sys.stderr
-
-    def say(message: str, *, end: str = "\n", flush: bool = False) -> None:
-        with contextlib.suppress(BrokenPipeError, OSError, ValueError):
-            print(message, end=end, file=err, flush=flush)
+    say = partial(_say, err)
 
     try:
         options = parse_transcribe_folder_args(argv)
@@ -476,10 +477,7 @@ def run_cancel_batch(argv: Sequence[str], *, out: TextIO | None = None,
     """Run --cancel-batch: 0 when a batch was cancelled, 1 otherwise."""
     out = out or sys.stdout
     err = err or sys.stderr
-
-    def say(message: str) -> None:
-        with contextlib.suppress(BrokenPipeError, OSError, ValueError):
-            print(message, file=err)
+    say = partial(_say, err)
 
     try:
         options = parse_cancel_batch_args(argv)

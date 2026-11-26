@@ -7,6 +7,7 @@ dictation the hard limit is off: the take is cut into bounded chunks at
 pauses and handed to the caller for piecewise recognition.
 """
 import contextlib
+import os
 import queue
 import threading
 import time
@@ -290,6 +291,11 @@ class Recorder:
         self._system_thread = None
         self._system_rate = SYSTEM_RATE
         self._system_block = SYSTEM_BLOCK
+        # A system take is also a file on disk (card-262): every frame goes
+        # through this writer, whose own bounded queue keeps the capture
+        # loop free and memory flat. A microphone take has no writer.
+        self._writer = None
+        self._recording_path = ""
 
     # -- live indicators ---------------------------------------------------
     def live(self):
@@ -354,6 +360,10 @@ class Recorder:
         # The same Recorder outlives a setting change; a previous system take
         # must not leave the silence auto-stop and partials disabled here.
         self._source = "microphone"
+        if self._writer is not None:
+            # A take that never reached stop must not leak its writer.
+            self._close_writer()
+        self._recording_path = ""
         if str(self.cfg.get("audio_source") or "microphone") == "system":
             self._start_system()
             return
@@ -392,7 +402,13 @@ class Recorder:
         return None
 
     def _start_system(self):
-        """Take what the default output plays, through the soundcard loopback."""
+        """Take what the default output plays, through the soundcard loopback.
+
+        The take is also a WAV on disk (card-262): the writer is created and
+        its date folder validated before the loopback opens, so an unusable
+        folder refuses the start instead of losing a take in the middle.
+        """
+        import system_recording
         from system_audio import default_loopback
 
         self._reset_take()
@@ -400,24 +416,32 @@ class Recorder:
         # long-capture path is live subtitles (F9) — no chunk cuts, no
         # auto-stop, no max_record_s; the take ends by the hotkey.
         self._continuous = False
-
-        mic, name = default_loopback()
-        last = None
-        for rate in SYSTEM_RATES:
-            try:
-                rec = mic.recorder(samplerate=rate, channels=2)
-                rec.__enter__()
-            except Exception as e:  # noqa: BLE001 - the next rate may open
-                last = e
-                continue
-            self._system_rec = rec
-            self._system_rate = rate
-            self._rate = rate
-            self._system_block = max(FRAME, int(round(rate * FRAME_MS / 1000)))
-            self._resampler = None if rate == SAMPLE_RATE else Resampler(rate)
-            break
-        if self._system_rec is None:
-            raise RuntimeError("system audio could not be opened: " + str(last))
+        self._writer = system_recording.start_take(self.cfg)
+        self._recording_path = self._writer.path
+        try:
+            mic, name = default_loopback()
+            last = None
+            for rate in SYSTEM_RATES:
+                try:
+                    rec = mic.recorder(samplerate=rate, channels=2)
+                    rec.__enter__()
+                except Exception as e:  # noqa: BLE001 - the next rate may open
+                    last = e
+                    continue
+                self._system_rec = rec
+                self._system_rate = rate
+                self._rate = rate
+                self._system_block = max(FRAME, int(round(rate * FRAME_MS / 1000)))
+                self._resampler = None if rate == SAMPLE_RATE else Resampler(rate)
+                break
+            if self._system_rec is None:
+                raise RuntimeError("system audio could not be opened: "
+                                   + str(last))
+        except Exception:
+            # No take started: remove the empty WAV and the writer with it.
+            self._close_writer(remove_empty=True)
+            self._recording_path = ""
+            raise
         self._source = "system"
         self._t_start = time.monotonic()
         self._stop_evt.clear()
@@ -426,8 +450,43 @@ class Recorder:
         self._system_thread.start()
         self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor.start()
-        self.log.info("Recording started: system audio (%s) rate=%s Hz",
-                      name, self._system_rate)
+        self.log.info("Recording started: system audio (%s) rate=%s Hz, file=%s",
+                      name, self._system_rate, self._recording_path)
+
+    def recording_path(self):
+        """The WAV this take is written to; "" for a microphone take."""
+        return self._recording_path
+
+    def _flush_pending_to_writer(self):
+        """The sub-frame tail after the last full frame belongs to the file."""
+        writer = self._writer
+        if writer is None or not len(self._pending):
+            return
+        tail = self._pending
+        self._pending = np.zeros(0, dtype=np.float32)
+        writer.push(tail)
+
+    def _close_writer(self, remove_empty=False):
+        """Close the system WAV; an empty or failed take loses no file."""
+        writer, self._writer = self._writer, None
+        if writer is None:
+            return
+        flushed = writer.close()
+        if not flushed:
+            self.log.warning("System recording writer is still busy: %s",
+                             writer.path)
+        if writer.error:
+            self.log.warning("System recording write error: %s", writer.error)
+        if writer.dropped_blocks:
+            self.log.warning(
+                "System recording dropped %d block(s): the disk could not "
+                "keep up", writer.dropped_blocks)
+        if remove_empty and not writer.samples_written and not writer.error:
+            with contextlib.suppress(OSError):
+                os.remove(writer.path)
+            return
+        self.log.info("System recording written: %s (%.1f s)", writer.path,
+                      writer.duration)
 
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
@@ -447,6 +506,9 @@ class Recorder:
                 self._stream.stop()
                 self._stream.close()
             self._stream = None
+        # The capture thread has joined: the tail and the writer can close.
+        self._flush_pending_to_writer()
+        self._close_writer(remove_empty=True)
         with self._lock:
             if not self._frames and not self._take_frames:
                 return None
@@ -497,6 +559,10 @@ class Recorder:
         while len(self._pending) >= FRAME:
             chunk = self._pending[:FRAME].copy()
             self._pending = self._pending[FRAME:]
+            if self._writer is not None:
+                # The file gets every frame, even when the live queue is
+                # behind: its own bounded queue never blocks this thread.
+                self._writer.push(chunk)
             try:
                 self._q.put_nowait(chunk)
             except queue.Full:

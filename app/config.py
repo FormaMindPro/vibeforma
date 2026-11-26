@@ -6,7 +6,7 @@ import os
 import dictionary
 import snippets
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # The service folder holds run.cmd and main.py both in a source checkout
@@ -61,8 +61,15 @@ LANGS = (
     "zh", "ja", "ko",
 )
 
+# Final dictation pass presets (card-265): the default and the accepted
+# codes. The engine maps each code to its beam and temperature in
+# ``asr.quality_preset``; a missing or unknown value reads as the default, so
+# an old config and a hand-edited typo keep the shipped behavior.
+QUALITY_PRESET_DEFAULT = "normal"
+QUALITY_PRESETS = ("normal", "accurate", "fast")
+
 # Whisper models offered in the UI (menu order) come from the catalog.
-from model_catalog import MODEL_GB, MODELS  # noqa: E402,F401 - re-exported
+from model_catalog import DEFAULT_MODEL, MODEL_GB, MODELS  # noqa: E402,F401 - re-exported
 
 # Native names (endonyms) shown in the UI: every language is written in
 # that language itself.
@@ -82,11 +89,19 @@ DEFAULTS = {
     "hold_to_talk": False,              # hotkey held while talking, released to stop
     "input_device": "",                 # substring of the device name
     "audio_source": "microphone",       # microphone | system
+    # System audio takes are written as WAV with TXT and SRT beside them
+    # (card-262); empty means Documents\VibeForma\Recordings.
+    "system_recordings_dir": "",
     "model": "large-v3-turbo",          # catalog name, HF repo id, or a CT2 model folder
+    # Saved local CT2 folders (card-264): [{name, path}] with the name and an
+    # absolute path only. Validity is computed when the list is drawn; an old
+    # config without this key reads as an empty list.
+    "model_folders": [],
     "device": "cuda",
     "compute_type": "float16",
     "language": "en",                   # pinned exactly: a LANGS code, never guessed
     "locale": "auto",                   # UI language: auto = follow Windows
+    "quality_preset": QUALITY_PRESET_DEFAULT,  # final dictation: normal | accurate | fast
     "hotwords": "",                     # terms appended to the prompt (user-local)
     "dictation_context": False,         # previous phrase + selected text as hotwords (opt-in)
     "dictionary": [],                   # {"from", "to"} pairs, post-ASR replacements

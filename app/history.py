@@ -29,11 +29,6 @@ def history_path(service_dir):
     return os.path.join(service_dir, "history.jsonl")
 
 
-def audio_dir(service_dir):
-    """Where the dictation WAVs live: beside history.jsonl, opt-in."""
-    return os.path.join(service_dir, AUDIO_DIR_NAME)
-
-
 def undo_allowed(last, now, hwnd):
     """Why an automatic Ctrl+Z may run: ok | none | other_window | late."""
     if not last:
@@ -58,7 +53,7 @@ def record_way(record):
 def _local_date(stamp):
     """The calendar date of an epoch stamp on this machine, or None."""
     try:
-        return datetime.date(*time.localtime(float(stamp))[:3])
+        return datetime.date.fromtimestamp(float(stamp))
     except (TypeError, ValueError, OverflowError, OSError):
         return None
 
@@ -152,6 +147,45 @@ class History:
             self._items = items
             self._write(items)
             self._remove_audio(removed)
+
+    def replace(self, ts, text, confidence=None):
+        """Replace one record's text and confidence reading; its WAV stays.
+
+        The record is addressed by its epoch stamp, not by a list position:
+        a dictation may append (and the cap may drop the oldest) while a
+        wider pass runs, so an index captured at the click can point at
+        another record. Returns False when ``text`` is empty or no record
+        carries this stamp. ``confidence`` is the pass's own reading in
+        0..1; None removes a stale one instead of keeping a number for a
+        pass that was never measured.
+        """
+        text = (text or "").strip()
+        if not text:
+            return False
+        try:
+            wanted = float(ts)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            items = self._read()
+            for record in reversed(items):
+                try:
+                    stamp = float(record.get("ts") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if stamp != wanted:
+                    continue
+                record["text"] = text
+                record["chars"] = len(text)
+                if confidence is None:
+                    record.pop("confidence", None)
+                else:
+                    record["confidence"] = round(
+                        max(0.0, min(1.0, float(confidence))), 4)
+                self._items = items
+                self._write(items)
+                return True
+        return False
 
     def clear(self):
         with self._lock:

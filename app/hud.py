@@ -37,6 +37,18 @@ ACCENT = "#2E86DE"
 UNCERTAIN = "#E5C07B"
 DRAFT_UNCERTAIN_TAG = "draft_uncertain"
 
+# The take timer sits left of the level bar in a fixed-width mono column:
+# changing digits never move the indicator. A microphone take counts down to
+# its limit, a system take counts up; the warning colours belong to the
+# microphone limit alone.
+TIMER_FONT = ("Consolas", 9)
+TIMER_WIDTH = 8          # "-H:MM:SS" in a mono font keeps the column fixed
+TIMER_FG = FG
+TIMER_WARN = STATE_COLORS["loading"]
+TIMER_ALERT = STATE_COLORS["recording"]
+TIMER_WARN_S = 30.0
+TIMER_ALERT_S = 10.0
+
 W = 380
 BASE_TEXT_LINES = 4
 DRAFT_MIN_LINES = 6   # a draft is read and edited, not glanced at: never a tiny panel
@@ -242,12 +254,67 @@ def file_progress_view(st, now=None, hold_s=FILE_PANEL_HOLD_S) -> dict:
     return view
 
 
-def dpi_factor(win):
-    """Windows scaling factor (1.0 at 100%, 1.5 at 150%) for fixed-pixel sizes."""
+def format_clock(seconds) -> str:
+    """A take duration as MM:SS, or H:MM:SS from one hour up; never negative."""
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def timer_color(remaining_s) -> str:
+    """Amber under 30 s of a microphone take, red under 10; else neutral."""
+    if remaining_s < TIMER_ALERT_S:
+        return TIMER_ALERT
+    if remaining_s < TIMER_WARN_S:
+        return TIMER_WARN
+    return TIMER_FG
+
+
+def timer_view(st, now=None) -> dict:
+    """The take timer's text and colour; no Tk, no clock unless ``now`` is given.
+
+    A microphone take with a real limit counts down to it with a minus
+    prefix and a rounded-up second, so the last full second reads 00:01 and
+    the clock never shows 00:00 while time is left. A take without a limit --
+    a system take, and continuous dictation that ``max_record_s`` never cuts
+    -- counts up and stays neutral. The start time and the limit are the
+    service's own, so the timer cannot drift from the take or claim a limit
+    that does not stop it.
+    """
+    hidden = {"visible": False, "text": "", "color": TIMER_FG,
+              "system": False, "limited": False, "remaining": None,
+              "limit": None}
+    if st.get("state") != "recording":
+        return hidden
     try:
-        return max(1.0, win.winfo_fpixels("1i") / 96.0)
-    except Exception:  # noqa: BLE001 - the HUD thread must survive any Tk failure
-        return 1.0
+        started = float(st.get("record_started") or 0.0)
+    except (TypeError, ValueError):
+        return hidden
+    if started <= 0.0:
+        return hidden
+    now = time.time() if now is None else float(now)
+    elapsed = max(0.0, now - started)
+    source = str(st.get("record_source") or "")
+    # A take recorded before the source was published still names it: only a
+    # system take writes a file, and the panel already reads it that way.
+    system = source == "system" or (not source
+                                    and bool(st.get("recording_path")))
+    try:
+        limit = max(0.0, float(st.get("record_limit_s") or 0.0))
+    except (TypeError, ValueError):
+        limit = 0.0
+    if system or limit <= 0.0:
+        return {"visible": True, "text": format_clock(elapsed),
+                "color": TIMER_FG, "system": system, "limited": False,
+                "remaining": None, "limit": None}
+    remaining = max(0.0, limit - elapsed)
+    return {"visible": True,
+            "text": "\u2212" + format_clock(math.ceil(remaining)),
+            "color": timer_color(remaining), "system": False,
+            "limited": True, "remaining": remaining, "limit": limit}
 
 
 class Hud:
@@ -283,10 +350,15 @@ class Hud:
         self._prog_closing = False
 
         self.root = tk.Tk()
-        px = self._px = lambda n: int(round(n * dpi_factor(self.root)))
+        px = self._px = lambda n: int(round(n * winfx.dpi_factor(self.root)))
         self._W = px(W)
         self._line_h = px(LINE_H)
-        base_h = px(BASE_H)
+        # The take-timer row is taller than the level bar it stands beside;
+        # the base height reserves that growth once, at any scaling, so a
+        # take never shifts the text under it.
+        timer_h = max(px(10),
+                      tkfont.Font(font=TIMER_FONT).metrics("linespace"))
+        base_h = px(BASE_H) + max(0, timer_h - px(10))
         self._base_h = self._root_h = base_h
 
         self.root.title("VibeForma")
@@ -343,11 +415,28 @@ class Hud:
         self._bind_drag(self.lbl)
         self._bind_drag(top)
 
-        # -- level bar + device hint ---------------------------------------
-        self.bar = tk.Canvas(self.root, height=px(10), bg="#22262E",
+        # -- take timer + level bar + device hint --------------------------
+        # The timer owns a fixed-width mono column left of the level, so a
+        # changing digit never moves the indicator; it is packed only while
+        # a take runs (see _sync_timer).
+        self._timer_visible = False
+        self._timer_tip = False
+        # The row keeps the clock's height even when the clock is hidden, so
+        # no take ever shifts the text under it.
+        meter = tk.Frame(self.root, bg=BG, height=timer_h)
+        meter.pack(fill="x", padx=px(12), pady=(px(6), 0))
+        meter.pack_propagate(False)
+        self.bar = tk.Canvas(meter, height=px(10), bg="#22262E",
                              highlightthickness=0)
-        self.bar.pack(fill="x", padx=px(12), pady=(px(6), 0))
+        self.bar.pack(side="left", fill="x", expand=True)
         self._bind_drag(self.bar)
+        self.timer = tk.Label(meter, text="", width=TIMER_WIDTH,
+                              font=TIMER_FONT, fg=TIMER_FG, bg=BG,
+                              anchor="e", takefocus=0, bd=0, padx=0, pady=0,
+                              highlightthickness=0)
+        self._bind_drag(self.timer)
+        self.timer.bind("<Enter>", lambda e: self._timer_hover(True))
+        self.timer.bind("<Leave>", lambda e: self._timer_hover(False))
         self.hint = tk.Label(self.root, text="", font=("Segoe UI", 8),
                              fg=DIM, bg=BG, anchor="w")
         self.hint.pack(fill="x", padx=px(12))
@@ -364,7 +453,6 @@ class Hud:
         self.text.configure(state="disabled")
         # a closed window raises TclError while measuring the font
         with contextlib.suppress(tk.TclError):
-            import tkinter.font as tkfont
             f = tkfont.Font(font=self.text.cget("font"))
             self._line_h = max(px(LINE_H), int(f.metrics("linespace")))
 
@@ -1052,6 +1140,41 @@ class Hud:
         if fill > 0:
             bar.create_rectangle(0, 0, fill, height, fill=color, outline="")
 
+    # -- take timer --------------------------------------------------------
+    def _sync_timer(self, st):
+        """Pack, hide and repaint the take clock left of the level bar."""
+        with contextlib.suppress(Exception):
+            view = timer_view(st)
+            if not view["visible"]:
+                if self._timer_visible:
+                    self._timer_visible = False
+                    self._timer_tip = False
+                    self.timer.pack_forget()
+                return view
+            if not self._timer_visible:
+                self._timer_visible = True
+                self.timer.pack(side="left", padx=(0, self._px(6)),
+                                before=self.bar)
+            if str(self.timer.cget("text")) != view["text"]:
+                self.timer.configure(text=view["text"])
+            if str(self.timer.cget("fg")) != view["color"]:
+                self.timer.configure(fg=view["color"])
+            return view
+        return timer_view({"state": ""})
+
+    def _timer_hover(self, shown):
+        """The pointer over the clock asks what the number counts."""
+        self._timer_tip = bool(shown)
+
+    def _timer_hint(self, view):
+        """The hover note for the timer; empty when it is hidden or not hovered."""
+        if not view["visible"] or not self._timer_tip:
+            return ""
+        if view["limited"]:
+            return self.svc.tr("hud.timer_left",
+                               max=format_clock(view["limit"] or 0))
+        return self.svc.tr("hud.timer_take_time")
+
     # -- refresh loop ------------------------------------------------------
     def _tick(self):
         try:
@@ -1070,6 +1193,7 @@ class Hud:
             self._apply_alpha()
             st = dict(self.state)
             self._sync_file_panel(st)
+            timer = self._sync_timer(st)
             key = st.get("state", "idle")
             color = STATE_COLORS.get(key, "#2E86DE")
             self.lbl.configure(text=self._state_label(key), fg=color)
@@ -1085,7 +1209,13 @@ class Hud:
             self._paint_dot(color)
             level = min(1.0, float(st.get("level", 0.0)) * 12.0)  # rms ~0..0.08
             self._paint_bar(level)
-            hint = self.svc.tr("hud.mic_hint", device=st.get("device") or "")
+            recording_path = str(st.get("recording_path") or "")
+            if key == "recording" and recording_path:
+                # A system take is a file: the panel names it for the whole
+                # take instead of a microphone that is not the source.
+                hint = self.svc.tr("hud.recording_path", path=recording_path)
+            else:
+                hint = self.svc.tr("hud.mic_hint", device=st.get("device") or "")
             if (key == "recording" and float(st.get("level", 0)) < 0.003):
                 hint += self.svc.tr("hud.silence_warn")
             # The language note belongs to this line too, and takes it over
@@ -1095,6 +1225,11 @@ class Hud:
                                                self.svc.tr)
             if language_note:
                 hint = language_note
+            # Hovering the take clock answers what its number counts: the
+            # time left to the limit or the elapsed system take.
+            timer_note = self._timer_hint(timer)
+            if timer_note:
+                hint = timer_note
             # The file progress lives in the strip below, never in this hint:
             # the two percentages must not be read as one number.
             self.hint.configure(text=hint)
@@ -1250,8 +1385,11 @@ class Hud:
     def _paint_bar(self, level):
         self.bar.delete("all")
         s = self._px
-        self.bar.create_rectangle(0, 0, max(s(2), int((self._W - s(24)) * level)),
-                                  s(10),
+        width = self.bar.winfo_width()
+        if width <= 1:
+            # Not laid out yet: the row's full width is the widest it can be.
+            width = self._W - s(24)
+        self.bar.create_rectangle(0, 0, max(s(2), int(width * level)), s(10),
                                   fill="#3FA34D" if level < 0.9 else "#E74C3C",
                                   outline="")
 
