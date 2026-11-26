@@ -160,7 +160,12 @@ def load():
     cfg = dict(DEFAULTS)
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg.update(json.load(f))
+            data = json.load(f)
+        # A hand-edited or half-written file can hold a non-object (null, a
+        # number, a list, a string). json.load accepts those, but update()
+        # would raise TypeError, so a non-dict reads as a missing file.
+        if isinstance(data, dict):
+            cfg.update(data)
     except (OSError, ValueError):
         pass
     return cfg

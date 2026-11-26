@@ -94,3 +94,25 @@ def test_save_roundtrips_a_model_folder_path(config_path, tmp_path):
     config.save({"model": model_dir})
 
     assert config.load()["model"] == model_dir
+
+
+def test_load_non_dict_null_falls_back_to_defaults(config_path):
+    config_path.write_text("null", encoding="utf-8")
+
+    assert config.load() == config.DEFAULTS
+
+
+@pytest.mark.parametrize("payload", ["[]", "42", '"a string"'])
+def test_load_non_dict_values_fall_back_to_defaults(config_path, payload):
+    config_path.write_text(payload, encoding="utf-8")
+
+    assert config.load() == config.DEFAULTS
+
+
+def test_load_dict_still_merges_after_non_dict_guard(config_path):
+    config_path.write_text(json.dumps({"language": "ru"}), encoding="utf-8")
+
+    cfg = config.load()
+
+    assert cfg["language"] == "ru"
+    assert cfg["model"] == config.DEFAULTS["model"]
