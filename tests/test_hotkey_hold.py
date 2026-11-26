@@ -453,3 +453,236 @@ def test_hold_keys_are_in_both_locales(lang):
     catalog = json.loads(path.read_text(encoding="utf-8"))
     for key in ("settings.hold_to_talk", "settings.note_hold_to_talk"):
         assert catalog[key].strip()
+
+
+# -- worker thread ---------------------------------------------------------
+# Like the real pynput, the hook callbacks below run on the listener's own
+# thread; the tests drive them through submit() and wait on events.
+
+
+def install_hook_thread_listener(monkeypatch):
+    """Fake pynput Listener: a real thread, jobs run as hook callbacks."""
+    import queue as queue_mod
+    import threading
+
+    listeners = []
+
+    class HookThreadListener(threading.Thread):
+        def __init__(self, on_press=None, on_release=None):
+            super().__init__(daemon=True)
+            self.on_press = on_press
+            self.on_release = on_release
+            self.hook_started = False
+            self.hook_stopped = False
+            self._jobs = queue_mod.Queue()
+
+        def run(self):
+            while True:
+                job = self._jobs.get()
+                if job is None:
+                    return
+                job()
+
+        def submit(self, fn):
+            self._jobs.put(fn)
+
+        def start(self):
+            self.hook_started = True
+            super().start()
+
+        def stop(self):
+            self.hook_stopped = True
+            self._jobs.put(None)
+
+    def factory(*args, **kwargs):
+        listener = HookThreadListener(*args, **kwargs)
+        listeners.append(listener)
+        return listener
+
+    monkeypatch.setattr(hotkey_mod.keyboard, "Listener", factory)
+    return listeners
+
+
+def threads_named(name):
+    import threading
+
+    return [t for t in threading.enumerate() if t.name == name]
+
+
+def test_hold_worker_gets_the_event_and_the_hook_thread_returns_at_once(
+        monkeypatch):
+    import threading
+
+    listeners = install_hook_thread_listener(monkeypatch)
+    gate = threading.Event()
+    started = threading.Event()
+    hook_returned = threading.Event()
+    handler_threads = []
+
+    def slow_press():
+        handler_threads.append(threading.current_thread().name)
+        started.set()
+        gate.wait(2.0)
+
+    hold = HoldHotkey("ctrl+space", slow_press, lambda: None, RecordingLog())
+    hold.start()
+    listener = listeners[0]
+
+    def hook_job():
+        listener.on_press(FakeKey(name="ctrl_l"))
+        listener.on_press(FakeKey(name="space"))  # completes the combo
+        hook_returned.set()
+
+    listener.submit(hook_job)
+
+    # The hook callback returned while the handler still waits on the gate:
+    # the heavy work never ran on the listener thread...
+    assert hook_returned.wait(2.0)
+    assert started.wait(2.0)
+    assert not gate.is_set()
+    # ...and the event reached the worker, on a thread of its own.
+    assert handler_threads == ["hold-hotkey-worker"]
+    gate.set()
+    hold.stop()
+
+
+def test_hold_worker_queues_a_new_event_while_the_handler_is_slow(
+        monkeypatch):
+    import threading
+
+    listeners = install_hook_thread_listener(monkeypatch)
+    gate = threading.Event()
+    press_returned = threading.Event()
+    release_returned = threading.Event()
+    calls = []
+
+    def slow_press():
+        calls.append("press")
+        gate.wait(2.0)
+
+    def on_release():
+        calls.append("release")
+
+    hold = HoldHotkey("ctrl+space", slow_press, on_release, RecordingLog())
+    hold.start()
+    listener = listeners[0]
+
+    def press_job():
+        listener.on_press(FakeKey(name="ctrl_l"))
+        listener.on_press(FakeKey(name="space"))  # down -> worker goes busy
+        press_returned.set()
+
+    listener.submit(press_job)
+    assert press_returned.wait(2.0)
+    assert wait_until(lambda: calls == ["press"])
+
+    def release_job():
+        listener.on_release(FakeKey(name="space"))  # up -> queued, not run
+        release_returned.set()
+
+    listener.submit(release_job)
+    # The hook thread is free at once; the event waits for the busy worker.
+    assert release_returned.wait(2.0)
+    assert calls == ["press"]
+
+    gate.set()
+    # The queued event runs next: order kept, exactly one call per event.
+    assert wait_until(lambda: calls == ["press", "release"])
+    hold.stop()
+
+
+def test_hold_stop_joins_the_worker(monkeypatch):
+    install_hook_thread_listener(monkeypatch)
+    hold = HoldHotkey("ctrl+space", lambda: None, lambda: None,
+                      RecordingLog())
+    hold.start()
+    assert wait_until(lambda: len(threads_named("hold-hotkey-worker")) == 1)
+
+    hold.stop()
+
+    assert wait_until(lambda: threads_named("hold-hotkey-worker") == [])
+
+
+def test_hold_worker_survives_a_handler_error(monkeypatch):
+    listeners = install_hook_thread_listener(monkeypatch)
+    log = RecordingLog()
+    calls = []
+
+    def boom():
+        raise RuntimeError("handler failed")
+
+    hold = HoldHotkey("ctrl+space", boom, lambda: calls.append("release"),
+                      log)
+    hold.start()
+    listener = listeners[0]
+
+    def press_job():
+        listener.on_press(FakeKey(name="ctrl_l"))
+        listener.on_press(FakeKey(name="space"))
+
+    listener.submit(press_job)
+    assert wait_until(lambda: "Hold hotkey handler error" in log.lines)
+
+    listener.submit(lambda: listener.on_release(FakeKey(name="space")))
+    assert wait_until(lambda: calls == ["release"])  # the worker lives on
+    hold.stop()
+
+
+def test_toggle_worker_runs_the_callback_off_the_hook_thread(monkeypatch):
+    import queue as queue_mod
+    import threading
+
+    created = []
+
+    class FakeGlobalHotKeys(threading.Thread):
+        """A GlobalHotKeys stand-in: a real thread running hook callbacks."""
+
+        def __init__(self, mapping):
+            super().__init__(daemon=True)
+            self.mapping = mapping
+            self._jobs = queue_mod.Queue()
+            created.append(self)
+
+        def run(self):
+            while True:
+                job = self._jobs.get()
+                if job is None:
+                    return
+                job()
+
+        def submit(self, fn):
+            self._jobs.put(fn)
+
+        def stop(self):
+            self._jobs.put(None)
+
+    monkeypatch.setattr(hotkey_mod.keyboard, "GlobalHotKeys",
+                        FakeGlobalHotKeys)
+    gate = threading.Event()
+    started = threading.Event()
+    hook_returned = threading.Event()
+    handler_threads = []
+
+    def slow_toggle():
+        handler_threads.append(threading.current_thread().name)
+        started.set()
+        gate.wait(2.0)
+
+    hotkey = hotkey_mod.Hotkey("ctrl+alt+space", slow_toggle, RecordingLog())
+    hotkey.start()
+    listener = created[0]
+
+    def hook_job():
+        listener.mapping["<ctrl>+<alt>+<space>"]()  # the pynput callback
+        hook_returned.set()
+
+    listener.submit(hook_job)
+
+    assert hook_returned.wait(2.0)   # back before the handler finished
+    assert started.wait(2.0)
+    assert not gate.is_set()
+    assert handler_threads == ["hotkey-worker"]
+    gate.set()
+
+    hotkey.stop()
+    assert wait_until(lambda: threads_named("hotkey-worker") == [])

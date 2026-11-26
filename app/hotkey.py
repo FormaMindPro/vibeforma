@@ -1,5 +1,7 @@
 """Global hotkey via pynput; the state machine lives in the service."""
 import logging
+import queue
+import threading
 
 from pynput import keyboard
 
@@ -127,14 +129,83 @@ def combo_to_pynput(combo: str) -> str:
     return "+".join(f"<{t.strip().lower()}>" for t in combo.split("+") if t.strip())
 
 
+_STOP = object()  # sentinel: the worker drains the queue and exits
+
+
+class _CallbackWorker:
+    """Runs hotkey handlers on a worker thread, off the hook thread.
+
+    Windows silently removes a low-level keyboard hook whose callback
+    stays busy longer than LowLevelHooksTimeout (~300 ms), while handlers
+    can take seconds (audio open with retries, clipboard reads, recording
+    stop joins). Hook callbacks only post here and return at once; the
+    worker runs one event at a time in posting order, so every event makes
+    exactly one handler call and a slow handler never blocks the listener.
+    """
+
+    def __init__(self, name: str, log: logging.Logger):
+        self._name = name
+        self._log = log
+        self._queue: queue.Queue = queue.Queue()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=self._name)
+        self._thread.start()
+
+    def post(self, callback) -> None:
+        """Queue one handler call; returns without running it."""
+        self._queue.put(callback)
+
+    def dispatch(self, callback, hook_thread) -> None:
+        """Post when called on the hook thread; run inline for other callers.
+
+        pynput delivers hook callbacks on the listener thread itself, and
+        that thread must never run the handler: a low-level hook whose
+        callback stays busy longer than LowLevelHooksTimeout is silently
+        removed by Windows. A direct call from any other thread (a test
+        driving the callbacks, a manual trigger) keeps synchronous order.
+        """
+        if threading.current_thread() is hook_thread:
+            self.post(callback)
+        else:
+            callback()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """Let the worker drain queued events, then join it with a timeout."""
+        thread, self._thread = self._thread, None
+        if thread is None:
+            return
+        self._queue.put(_STOP)
+        thread.join(timeout)
+        if thread.is_alive():
+            self._log.debug("%s: still busy after stop", self._name)
+
+    def _run(self) -> None:
+        while True:
+            callback = self._queue.get()
+            if callback is _STOP:
+                return
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - a handler error is logged and must not kill the worker
+                self._log.exception("%s handler error", self._name)
+
+
 class Hotkey:
     def __init__(self, combo: str, callback, log: logging.Logger):
         self._combo = combo_to_pynput(combo)
         self._callback = callback
         self._log = log
         self._listener = None
+        self._worker = _CallbackWorker("hotkey-worker", log)
 
     def start(self):
+        self._worker.start()
         self._listener = keyboard.GlobalHotKeys({self._combo: self._on})
         self._listener.daemon = True
         self._listener.start()
@@ -143,8 +214,13 @@ class Hotkey:
     def stop(self):
         if self._listener:
             self._listener.stop()
+        self._worker.stop()
 
     def _on(self):
+        # Hook thread: only hand the event to the worker and return at once.
+        self._worker.dispatch(self._call, self._listener)
+
+    def _call(self):
         try:
             self._callback()
         except Exception:  # noqa: BLE001 - a handler error is logged and must not kill the listener
@@ -161,9 +237,11 @@ class HoldHotkey:
         self._on_release = on_release
         self._log = log
         self._listener = None
+        self._worker = _CallbackWorker("hold-hotkey-worker", log)
 
     def start(self):
         self._tracker.reset()
+        self._worker.start()
         self._listener = keyboard.Listener(on_press=self._down,
                                            on_release=self._up)
         self._listener.daemon = True
@@ -177,17 +255,22 @@ class HoldHotkey:
                 listener.stop()
             except Exception as e:  # noqa: BLE001 - teardown raises engine-specific errors
                 self._log.debug("Hold hotkey stop: %s", e)
+        self._worker.stop()
         self._tracker.reset()
 
     def _down(self, key: object) -> None:
+        # Hook thread: only track the combo and post the event to the worker.
         if self._tracker.press(key):
-            self._fire(self._on_press)
+            self._worker.dispatch(lambda: self._fire(self._on_press),
+                                  self._listener)
 
     def _up(self, key: object) -> None:
         if self._tracker.release(key):
-            self._fire(self._on_release)
+            self._worker.dispatch(lambda: self._fire(self._on_release),
+                                  self._listener)
 
     def _fire(self, callback) -> None:
+        # Runs on the worker thread: one call per event, in posting order.
         try:
             callback()
         except Exception:  # noqa: BLE001 - a handler error is logged and must not kill the listener
