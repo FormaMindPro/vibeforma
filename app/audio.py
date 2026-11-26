@@ -266,6 +266,9 @@ class Recorder:
         self._q = queue.Queue(maxsize=256)
         self._frames = []
         self._lock = threading.Lock()
+        # Set under _lock when stop() drains the buffer: a monitor still
+        # inside a slow chunk handoff must leave the drained buffer alone.
+        self._drained = False
         self._stream = None
         self._monitor = None
         self._stop_evt = threading.Event()
@@ -279,6 +282,10 @@ class Recorder:
         self.level = 0.0        # RMS of the last frame (HUD)
         self.vad_p = 0.0        # last VAD speech probability (HUD)
         self._t_last_partial = 0.0
+        # Take generation: bumped by stop() and by every new take. Partial
+        # threads are fire-and-forget, so they carry the generation of the
+        # take that spawned them and publish only while it is current.
+        self._take_gen = 0
         # Continuous chunk bookkeeping, reset per take (see _reset_take).
         self._continuous = False
         self._chunk_samples = 0     # samples in the current buffer
@@ -337,8 +344,10 @@ class Recorder:
         A Recorder outlives a take (the service reuses the setting object), so
         a stale speech flag from the previous phrase must not close this one.
         """
+        self._take_gen += 1
         self._frames = []
         self._take_frames = []
+        self._drained = False
         self._has_speech = False
         self._t_last_voice = None
         self._chunk_samples = 0
@@ -491,6 +500,9 @@ class Recorder:
     def stop(self):
         """Stop and return the buffer (float32, 16 kHz mono) or None."""
         self._stop_evt.set()
+        # Close the take's generation before anything else: a partial thread
+        # that outlives this stop() must never publish into the next take.
+        self._take_gen += 1
         if self._system_rec is not None:
             # Closing the loopback recorder unblocks a pending record().
             with contextlib.suppress(Exception):
@@ -501,15 +513,21 @@ class Recorder:
         if self._monitor:
             self._monitor.join(timeout=2.0)
         if self._stream:
-            # PortAudio raises a mix of errors on a dead stream
+            stream, self._stream = self._stream, None
+            # PortAudio raises a mix of errors on a dead stream; close() must
+            # run even when stop() raised, or the handle leaks and the device
+            # stays busy for every later take.
             with contextlib.suppress(Exception):
-                self._stream.stop()
-                self._stream.close()
-            self._stream = None
+                stream.stop()
+            with contextlib.suppress(Exception):
+                stream.close()
         # The capture thread has joined: the tail and the writer can close.
         self._flush_pending_to_writer()
         self._close_writer(remove_empty=True)
         with self._lock:
+            # Finalize under the drain lock: a monitor still inside a slow
+            # chunk handoff sees the buffer closed and leaves it alone.
+            self._drained = True
             if not self._frames and not self._take_frames:
                 return None
             frames = (self._take_frames + self._frames
@@ -585,16 +603,28 @@ class Recorder:
 
     def _monitor_loop(self):
         while not self._stop_evt.is_set():
+            # The take must never die silently: an unexpected error in one
+            # iteration (a broken config key, a thread that will not start)
+            # is logged with its traceback and the monitor keeps serving the
+            # queue, so silence auto-stop, chunk cuts and the length limit
+            # survive a single bad frame — like _callback and _system_loop.
             try:
-                frame = self._q.get(timeout=0.1)
-            except queue.Empty:
-                self._check_timeouts()
-                continue
-            self._ingest(frame.reshape(-1))
+                try:
+                    frame = self._q.get(timeout=0.1)
+                except queue.Empty:
+                    self._check_timeouts()
+                    continue
+                self._ingest(frame.reshape(-1))
+            except Exception:  # noqa: BLE001 - the monitor thread must never die
+                self.log.exception("Monitor iteration failed; the take continues")
 
     def _ingest(self, data):
         """One monitor pass: buffer the frame, run VAD, cut a chunk, check limits."""
         with self._lock:
+            if self._drained:
+                # stop() already took the buffer; this frame is past the end
+                # of the take and must not reopen a closed buffer.
+                return
             self._frames.append(data.copy())
             if self._source == "system":
                 # Live subtitles read only the tail; a long film must not
@@ -655,10 +685,15 @@ class Recorder:
             self._drop_buffer()
 
     def _flush_chunk(self, end, keep):
-        """Hand one chunk to the receiver; trim the buffer only when it took it."""
+        """Hand one chunk to the receiver; the buffer gives it up before the
+        handoff and takes it back only when the receiver has no room."""
         if self._chunk_deferred:
             return
         with self._lock:
+            if self._drained:
+                # stop() owns the buffer now; a late cut would resurrect
+                # audio the final pass already took.
+                return
             frames = self._frames
             total = len(frames) * FRAME
             count = min(end, total) // FRAME
@@ -668,7 +703,16 @@ class Recorder:
             chunk_frames = list(frames[:count])
             rest = list(frames[count:])
             overlap = chunk_frames[count - keep_count:] if keep_count else []
-            trimmed = overlap + rest
+            prev = (self._chunk_samples, self._voice_end,
+                    self._quiet_samples, self._voiced_samples)
+            # Leave the buffer before the handoff, not after: a stop() racing
+            # a slow receiver must never drain audio the chunk already took.
+            # The overlap stays behind for the next cut, as designed.
+            self._frames = overlap + rest
+            self._chunk_samples = len(self._frames) * FRAME
+            self._voice_end = 0
+            self._quiet_samples = self._chunk_samples
+            self._voiced_samples = 0
         chunk = np.concatenate(chunk_frames)
         accepted = True
         if self.on_chunk is not None:
@@ -677,18 +721,20 @@ class Recorder:
             except Exception as e:  # noqa: BLE001 - the take must keep going
                 self.log.warning("Chunk handoff failed: %s", e)
                 accepted = False
-        if not accepted:
-            self._chunk_deferred = True
-            return
-        with self._lock:
-            self._frames = trimmed
+        if accepted:
             if self._keep_take:
-                self._take_frames.extend(
-                    chunk_frames[:count - keep_count])
-        self._chunk_samples = len(trimmed) * FRAME
-        self._voice_end = 0
-        self._quiet_samples = self._chunk_samples
-        self._voiced_samples = 0
+                with self._lock:
+                    if not self._drained:
+                        self._take_frames.extend(
+                            chunk_frames[:count - keep_count])
+            return
+        self._chunk_deferred = True
+        with self._lock:
+            if self._drained:
+                return
+            self._frames = chunk_frames + rest
+            (self._chunk_samples, self._voice_end,
+             self._quiet_samples, self._voiced_samples) = prev
 
     def _drop_buffer(self):
         with self._lock:
@@ -716,7 +762,20 @@ class Recorder:
                 return
             snapshot = partial_snapshot(self._frames)
         self._t_last_partial = now
-        threading.Thread(target=self.on_partial, args=(snapshot,), daemon=True).start()
+        threading.Thread(target=self._run_partial,
+                         args=(self._take_gen, snapshot), daemon=True).start()
+
+    def _run_partial(self, gen, snapshot):
+        """Deliver one partial preview if it still belongs to the live take.
+
+        The thread is fire-and-forget and recognition is slow: without this
+        gate a partial spawned by the previous take could outlive stop() and
+        publish stale text into the next take's HUD. The callback contract
+        is unchanged — the consumer still receives on_partial(snapshot).
+        """
+        if gen != self._take_gen:
+            return
+        self.on_partial(snapshot)
 
     def _check_timeouts(self):
         if self._source == "system":
