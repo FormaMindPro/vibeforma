@@ -13,6 +13,7 @@ from install_core import (
     UNINSTALL_KEY,
     UNINSTALL_VALUE_NAME,
     app_version,
+    ps_escape,
     run_logged,
     write_ps1,
 )
@@ -92,7 +93,9 @@ def migrate_legacy(target, legacy, log, model=None):
 def remove_legacy_shortcuts(log, legacy=None):
     """Drop desktop/startup/start-menu shortcuts that point at the old folder."""
     legacy = legacy or legacy_dir()
-    body = LEGACY_LINKS_PS.replace("__LEGACY__", legacy.replace("\\", "\\\\"))
+    # the path is a literal in a double-quoted string; its wildcard
+    # metacharacters are escaped in the script, where the pattern is built
+    body = LEGACY_LINKS_PS.replace("__LEGACY__", ps_escape(legacy))
     path = write_ps1(body)
     try:
         result = run_logged(["powershell", "-NoProfile", "-ExecutionPolicy",
@@ -153,7 +156,7 @@ def remove_uninstall_entry(winreg_mod=None):
 
 
 def make_shortcuts(target, log):
-    tdir = target.rstrip("\\") + "\\"
+    tdir = ps_escape(target.rstrip("\\") + "\\")
     body = SHORTCUTS_PS.replace("__TARGET__", tdir).replace("__LNK__", LNKS[0])
     path = write_ps1(body)
     try:

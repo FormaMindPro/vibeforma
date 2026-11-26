@@ -421,3 +421,76 @@ def test_uninstall_cmd_and_py_are_shipped():
     assert "uninstall.py" in text
     assert "uninstall.py" in install.PRODUCT_FILES
     assert "uninstall.cmd" in install.PRODUCT_FILES
+
+
+# -- paths that PowerShell would otherwise reinterpret ----------------------
+
+class SilentLog:
+    def write(self, message=""):
+        pass
+
+
+class PsResult:
+    stdout = "LEGACY_LINKS_REMOVED 1"
+
+
+def catch_ps1_bodies(monkeypatch):
+    """Record each generated PowerShell body instead of running the script."""
+    import install_system
+
+    bodies = []
+    real_write = install_system.write_ps1
+
+    def spy(body):
+        bodies.append(body)
+        return real_write(body)
+
+    monkeypatch.setattr(install_system, "write_ps1", spy)
+    monkeypatch.setattr(install_system, "run_logged",
+                        lambda *args, **kwargs: PsResult())
+    return bodies
+
+
+def test_make_shortcuts_escapes_quotes_and_dollars_utf_paths(monkeypatch, tmp_path):
+    """A target with $, a backtick or a quote stays a literal path in the ps1."""
+    import install_core
+
+    bodies = catch_ps1_bodies(monkeypatch)
+    raw = str(tmp_path / 'we[ird] $x `y"z')
+    tdir = raw + "\\"
+    escaped = install_core.ps_escape(tdir)
+
+    install.make_shortcuts(raw, SilentLog())
+
+    body = bodies[0]
+    assert escaped in body
+    assert '"' + tdir not in body       # the raw path sits in no double quote
+    assert "'" + tdir not in body       # nor inside a single-quoted string
+    assert "`$" in body and "``" in body and '`"' in body
+
+
+def test_legacy_cleanup_escapes_the_like_pattern_utf_paths(monkeypatch, tmp_path):
+    """A legacy folder with [ must not turn the -like filter into a charset."""
+    import install_core
+    import install_system
+
+    bodies = catch_ps1_bodies(monkeypatch)
+    legacy = str(tmp_path / 'WhisperDictation [old] $x `y')
+
+    assert install_system.remove_legacy_shortcuts(SilentLog(), legacy) is True
+
+    body = bodies[0]
+    assert '$legacy = "' + install_core.ps_escape(legacy) + '"' in body
+    assert "[System.Management.Automation.WildcardPattern]::Escape($legacy)" in body
+    assert "-like $pattern" in body
+    assert '"*' + legacy + '*"' not in body
+    assert legacy.replace("\\", "\\\\") not in body
+
+
+def test_no_other_path_placeholder_in_the_templates_utf_paths():
+    """Every path placeholder lives in a double-quoted PowerShell literal."""
+    for template in (install.SHORTCUTS_PS, install.LEGACY_LINKS_PS):
+        for line in template.splitlines():
+            if "__TARGET__" in line or "__LEGACY__" in line:
+                assert "'__TARGET__" not in line and "'__LEGACY__" not in line
+                assert '"' in line

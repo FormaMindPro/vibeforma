@@ -170,3 +170,55 @@ def test_log_close_fresh_logs_keeps_the_lines_written_while_closed(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert text.index("before the cleanup") < text.index("buffered during the cleanup")
     assert text.index("buffered during the cleanup") < text.index("after the cleanup")
+
+
+def test_run_logged_reads_children_as_utf8_utf_paths(monkeypatch):
+    """The pipe must be UTF-8: a Cyrillic path echoed by pip/venv is UTF-8."""
+    import install_core
+
+    seen = []
+
+    def fake_run(args, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(install_core.subprocess, "run", fake_run)
+
+    install.run_logged([sys.executable, "-c", "pass"], install.InstallLog(persist=False))
+
+    kwargs = seen[0]
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["errors"] == "replace"
+    assert kwargs["text"] is True or kwargs.get("universal_newlines") is True
+    expected = dict(os.environ)
+    expected["PYTHONIOENCODING"] = "utf-8"
+    assert kwargs["env"] == expected
+
+
+def test_run_logged_augments_a_given_env_utf_paths(monkeypatch):
+    """A caller-supplied env is extended with PYTHONIOENCODING, not replaced."""
+    import install_core
+
+    seen = []
+
+    def fake_run(args, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(install_core.subprocess, "run", fake_run)
+
+    install.run_logged([sys.executable, "-c", "pass"],
+                       install.InstallLog(persist=False), env={"VF_ONLY": "1"})
+
+    assert seen[0]["env"] == {"VF_ONLY": "1", "PYTHONIOENCODING": "utf-8"}
+
+
+def test_run_logged_decodes_cyrillic_without_error_utf_paths():
+    """No UnicodeDecodeError on a cp1251 locale: 0x90 is undefined there."""
+    code = "import sys; sys.stdout.buffer.write(sys.argv[1].encode('utf-8'))"
+    cyrillic = "\u0410\u043d\u0430\u0442\u043e\u043b\u0438\u0439"
+
+    result = install.run_logged([sys.executable, "-c", code, cyrillic],
+                                install.InstallLog(persist=False))
+
+    assert result.stdout.strip() == cyrillic

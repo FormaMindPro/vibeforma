@@ -63,7 +63,7 @@ print("DOWNLOADED model.bin %.0f MB" % mb)
 SHORTCUTS_PS = r"""$ErrorActionPreference = "Stop"
 $ws = New-Object -ComObject WScript.Shell
 $target = "__TARGET__.venv\Scripts\pythonw.exe"
-$pyargs = '"__TARGET__main.py"'
+$pyargs = '"' + "__TARGET__main.py" + '"'
 $work = "__TARGET__"
 $icon = "__TARGET__assets\icon.ico"
 $desktop = [Environment]::GetFolderPath("Desktop")
@@ -92,6 +92,8 @@ Write-Output ("SHORTCUTS_OK desktop=" + $desktop + " startmenu=" + $programs)
 
 LEGACY_LINKS_PS = r"""$ErrorActionPreference = "Continue"
 $ws = New-Object -ComObject WScript.Shell
+$legacy = "__LEGACY__"
+$pattern = "*" + [System.Management.Automation.WildcardPattern]::Escape($legacy) + "*"
 $removed = 0
 foreach ($folder in @([Environment]::GetFolderPath("Desktop"),
                       [Environment]::GetFolderPath("Startup"),
@@ -100,7 +102,7 @@ foreach ($folder in @([Environment]::GetFolderPath("Desktop"),
         ForEach-Object {
             try {
                 $shortcut = $ws.CreateShortcut($_.FullName)
-                if ($shortcut.TargetPath -like "*__LEGACY__*") {
+                if ($shortcut.TargetPath -like $pattern) {
                     Remove-Item -LiteralPath $_.FullName -Force
                     $removed += 1
                 }
@@ -109,6 +111,20 @@ foreach ($folder in @([Environment]::GetFolderPath("Desktop"),
 }
 Write-Output ("LEGACY_LINKS_REMOVED " + $removed)
 """
+
+
+def ps_escape(text):
+    """Make a path a literal inside a PowerShell double-quoted string.
+
+    The backtick is the PowerShell escape character, so it is doubled before
+    the other escapes introduce it. Wildcard metacharacters are not handled
+    here: a -like pattern escapes its operand in the script with
+    WildcardPattern.Escape, which keeps the two escaping layers separate.
+    """
+    return (str(text)
+            .replace("`", "``")
+            .replace("$", "`$")
+            .replace('"', '`"'))
 
 
 class InstallError(Exception):
@@ -234,8 +250,15 @@ def run_logged(cmd, log, label=None, **kwargs):
     """Run a child process, log the command and its error tail, check the rc."""
     shown = label or " ".join(_quote(part) for part in cmd)
     log.write(f"   $ {shown}")
+    # pip and venv print the target path back: on a Russian Windows the
+    # locale decoding (cp1251) raises on the UTF-8 bytes of a Cyrillic path,
+    # so the pipe is always read as UTF-8 and the child is told to write it
+    env = kwargs.pop("env", os.environ)
+    env = dict(os.environ if env is None else env)
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(  # noqa: S603 - fixed argument lists, no shell
-        cmd, capture_output=True, text=True, **kwargs)
+        cmd, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=env, **kwargs)
     log.write(f"   rc={result.returncode}")
     if result.returncode != 0:
         tail = _tail(result.stderr or result.stdout)
