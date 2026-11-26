@@ -7,23 +7,30 @@ thread; it only polls the shared live view.
 """
 import contextlib
 
-MODIFIERS = frozenset({"ctrl", "alt", "shift", "win", "cmd", "super"})
-MODIFIER_ORDER = ("ctrl", "alt", "shift", "win", "cmd", "super")
+from keymap import (
+    MODIFIER_ORDER,
+    MODIFIERS,
+    combo_to_pynput,
+    combo_tokens,
+)
+
+# Reserved combinations in canonical tokens (see keymap): "cmd" is the Windows
+# key, "esc" the escape key, so a combo typed with an alias still matches.
 RESERVED = frozenset({
     "ctrl+alt+delete", "alt+f4", "alt+tab", "ctrl+esc",
-    "ctrl+shift+esc", "win+l", "win+d", "win+e",
+    "ctrl+shift+esc", "cmd+l", "cmd+d", "cmd+e",
 })
 DEFAULT_HOTKEY = "ctrl+alt+space"
 TEST_SECONDS = 4.0
 
 
 def hotkey_tokens(combo):
-    """'Ctrl+Alt+Space' -> ['ctrl', 'alt', 'space']."""
-    return [t.strip().lower() for t in str(combo or "").split("+") if t.strip()]
+    """'Control+Alt+Space' -> ['ctrl', 'alt', 'space'] (canonical tokens)."""
+    return combo_tokens(combo)
 
 
 def normalize_hotkey(combo):
-    """Lowercase, drop duplicates, modifiers first, key last."""
+    """Canonical and lowercase, drop duplicates, modifiers first, key last."""
     mods, keys = [], []
     for token in hotkey_tokens(combo):
         bucket = mods if token in MODIFIERS else keys
@@ -32,11 +39,6 @@ def normalize_hotkey(combo):
     mods.sort(key=lambda t: MODIFIER_ORDER.index(t)
               if t in MODIFIER_ORDER else len(MODIFIER_ORDER))
     return "+".join(mods + keys)
-
-
-def combo_to_pynput(combo):
-    """'ctrl+alt+space' -> '<ctrl>+<alt>+<space>' (same shape pynput takes)."""
-    return "+".join(f"<{t}>" for t in hotkey_tokens(combo))
 
 
 def reserved_conflict(combo):
@@ -298,7 +300,7 @@ class OnboardingWindow:
         return {"control_l": "ctrl", "control_r": "ctrl",
                 "alt_l": "alt", "alt_r": "alt",
                 "shift_l": "shift", "shift_r": "shift",
-                "super_l": "win", "super_r": "win",
+                "super_l": "cmd", "super_r": "cmd",
                 "return": "enter"}.get(name, name)
 
     def _on_key(self, event):

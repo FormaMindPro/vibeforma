@@ -54,6 +54,7 @@ APP_FILES = (
     "app/hud.py",
     "app/i18n.py",
     "app/insert.py",
+    "app/keymap.py",
     "app/main.py",
     "app/mcp.cmd",
     "app/model_catalog.py",

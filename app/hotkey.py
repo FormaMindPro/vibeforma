@@ -3,45 +3,8 @@ import logging
 import queue
 import threading
 
+from keymap import combo_to_pynput, combo_tokens, normalize_key
 from pynput import keyboard
-
-# pynput names the left/right variants; a combo names the modifier once.
-_SPECIAL_KEY_TOKENS = {
-    "alt_gr": "alt",
-    "ctrl_l": "ctrl",
-    "ctrl_r": "ctrl",
-    "shift_l": "shift",
-    "shift_r": "shift",
-    "alt_l": "alt",
-    "alt_r": "alt",
-    "cmd_l": "cmd",
-    "cmd_r": "cmd",
-}
-
-_KEY_ALIASES = {
-    "control": "ctrl",
-    "command": "cmd",
-    "win": "cmd",
-    "super": "cmd",
-    "meta": "cmd",
-    "escape": "esc",
-    "return": "enter",
-    "del": "delete",
-    "ins": "insert",
-    "pageup": "page_up",
-    "pagedown": "page_down",
-}
-
-
-def normalize_key(token: object) -> str:
-    """One lowercase combo token: aliases mapped, '<ctrl>' unwrapped."""
-    text = str(token or "").strip().strip("<>").lower()
-    if not text:
-        return ""
-    if len(text) == 1:
-        return text
-    text = _SPECIAL_KEY_TOKENS.get(text, text)
-    return _KEY_ALIASES.get(text, text)
 
 
 def key_token(key: object) -> str:
@@ -64,9 +27,8 @@ def key_token(key: object) -> str:
 def parse_combo(combo: str) -> tuple[str, ...]:
     """'Ctrl+Alt+Space' -> ('ctrl', 'alt', 'space'); duplicates dropped."""
     keys: list[str] = []
-    for raw in str(combo or "").split("+"):
-        token = normalize_key(raw)
-        if token and token not in keys:
+    for token in combo_tokens(combo):
+        if token not in keys:
             keys.append(token)
     return tuple(keys)
 
@@ -122,11 +84,6 @@ class ComboTracker:
         """Forget held keys without emitting combo up (listener restart)."""
         self._pressed.clear()
         self._down = False
-
-
-def combo_to_pynput(combo: str) -> str:
-    """'ctrl+alt+space' -> '<ctrl>+<alt>+<space>'."""
-    return "+".join(f"<{t.strip().lower()}>" for t in combo.split("+") if t.strip())
 
 
 _STOP = object()  # sentinel: the worker drains the queue and exits

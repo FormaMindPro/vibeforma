@@ -686,3 +686,59 @@ def test_toggle_worker_runs_the_callback_off_the_hook_thread(monkeypatch):
 
     hotkey.stop()
     assert wait_until(lambda: threads_named("hotkey-worker") == [])
+
+
+# -- combo aliases ---------------------------------------------------------
+# A hand-edited config.json carries the names a person types ("control",
+# "win", "escape"); pynput only accepts its own canonical key names, so the
+# combo has to be normalized before it reaches the listener.
+
+
+def test_combo_to_pynput_normalizes_hotkey_aliases():
+    assert hotkey_mod.combo_to_pynput("control+alt+space") == \
+        "<ctrl>+<alt>+<space>"
+    assert hotkey_mod.combo_to_pynput("win+escape") == "<cmd>+<esc>"
+    assert hotkey_mod.combo_to_pynput("Return") == "<enter>"
+
+
+import keymap  # noqa: E402 - appended section, the imports above stay as they were
+
+
+@pytest.mark.parametrize("alias", sorted(keymap.KEY_ALIASES))
+def test_every_hotkey_aliases_entry_parses_in_pynput(alias):
+    from pynput import keyboard
+
+    combo = hotkey_mod.combo_to_pynput(alias + "+f9")
+    assert combo == "<" + keymap.KEY_ALIASES[alias] + ">+<f9>"
+    assert keyboard.HotKey.parse(combo)
+
+
+def test_toggle_listener_takes_a_canonical_combo_for_hotkey_aliases(
+        monkeypatch):
+    from pynput import keyboard
+
+    created = []
+
+    class StubGlobalHotKeys:
+        """Stands in for pynput, which parses the mapping keys on start."""
+
+        def __init__(self, mapping):
+            self.mapping = mapping
+            self.daemon = False
+            created.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(hotkey_mod.keyboard, "GlobalHotKeys",
+                        StubGlobalHotKeys)
+    listener = hotkey_mod.Hotkey("control+alt+space", lambda: None,
+                                 RecordingLog())
+    listener.start()
+
+    assert list(created[0].mapping) == ["<ctrl>+<alt>+<space>"]
+    keyboard.HotKey.parse(next(iter(created[0].mapping)))  # the real parser
+    listener.stop()

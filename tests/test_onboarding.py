@@ -157,3 +157,40 @@ def test_mic_test_empty_is_reported(monkeypatch):
     assert svc.live["test_text"] == ""
     assert svc.live["test_state"] == "empty"
     assert svc._test_mode is False
+
+
+# -- combo aliases ---------------------------------------------------------
+# The wizard must take the names a person types ("control", "win", "escape")
+# and canonicalize them the same way app/hotkey.py does, from the same table.
+
+
+def test_validate_hotkey_accepts_hotkey_aliases():
+    assert onboarding.validate_hotkey("control+alt+space") == (True, "ok", "")
+    assert onboarding.validate_hotkey("win+escape") == (True, "ok", "")
+
+
+def test_hotkey_aliases_normalize_to_canonical_combos():
+    assert onboarding.normalize_hotkey("control+alt+space") == "ctrl+alt+space"
+    assert onboarding.normalize_hotkey("win+escape") == "cmd+esc"
+    assert onboarding.normalize_hotkey("shift+return") == "shift+enter"
+
+
+def test_reserved_warning_keeps_hotkey_aliases():
+    ok, code, warning = onboarding.validate_hotkey("win+l")
+    assert ok is True
+    assert code == "ok"
+    assert warning == "conflict"
+
+
+def test_onboarding_imports_no_pynput_for_hotkey_aliases():
+    import ast
+    import pathlib
+
+    source = pathlib.Path(onboarding.__file__).read_text(encoding="utf-8")
+    imported = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert "pynput" not in imported
