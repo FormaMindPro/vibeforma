@@ -58,11 +58,26 @@ def take(seconds: float = 0.1) -> np.ndarray:
 def store_with(tmp_path, *texts) -> history.History:
     """One entry per text; each gets a WAV unless the text ends with '+'."""
     store = history.History(str(tmp_path / "history.jsonl"))
-    for text in texts:
-        if text.endswith("+"):
-            store.add(text[:-1], wav=audio.wav_bytes(take()))
-        else:
-            store.add(text)
+    real_time = history.time
+    tick = [1000.0]
+
+    class _SteppedClock:
+        @staticmethod
+        def time():
+            tick[0] += 1.0
+            return tick[0]
+
+    # A coarse CI clock can stamp two adds with the same float, and
+    # replace() addresses a record by its stamp - stagger them.
+    history.time = _SteppedClock
+    try:
+        for text in texts:
+            if text.endswith("+"):
+                store.add(text[:-1], wav=audio.wav_bytes(take()))
+            else:
+                store.add(text)
+    finally:
+        history.time = real_time
     return store
 
 

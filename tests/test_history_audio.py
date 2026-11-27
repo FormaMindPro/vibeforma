@@ -10,7 +10,10 @@ import wave
 
 import pytest
 
-pytest.importorskip("sounddevice")
+try:
+    import sounddevice  # noqa: F401
+except Exception:  # noqa: BLE001 - init fails on a host with no audio server
+    pytest.skip("sounddevice cannot initialize here", allow_module_level=True)
 
 import audio
 import history
