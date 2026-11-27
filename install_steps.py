@@ -116,6 +116,52 @@ def restore_target(target, folder, names):
             shutil.copy2(source, destination)
 
 
+def rollback_existing(target, backup, device, log, *,
+                      make_venv, pip_install):
+    """Restore the old install after a failed attempt and rebuild its .venv.
+
+    make_venv and pip_install arrive as arguments, not through an import of
+    this module: the installer tests patch the names in the install module,
+    so only call-site references reach the rollback path. Returns True when
+    the backup folder must survive the run.
+    """
+    folder, names = backup
+    try:
+        restore_target(target, folder, names)
+        log.write("   previous files restored")
+    except OSError as restore_error:
+        # the restore stopped halfway: the backup folder is the only
+        # copy of the old install left, so it must survive the run
+        log.write(f"   [X] rollback failed: {restore_error}")
+        log.write(f"   backup kept at: {folder}")
+        return True
+    if INSTALL_MARKER not in names:
+        # the old install had no marker: do not leave the
+        # incomplete marker of the failed attempt behind
+        try:
+            os.remove(os.path.join(target, INSTALL_MARKER))
+        except OSError:
+            pass
+    # pip installed the attempt's dependencies into .venv while
+    # the restored code and requirements are the old ones:
+    # rebuild the venv so the two match again
+    vp = os.path.join(target, ".venv", "Scripts", "python.exe")
+    shutil.rmtree(os.path.join(target, ".venv"),
+                  ignore_errors=True)
+    try:
+        make_venv(target, vp, log)
+        pip_install(target, vp, device, log)
+        log.write("   .venv rebuilt from the restored requirements")
+    except (InstallError, OSError) as rebuild_error:
+        # the old files are already back in place; keep the
+        # backup alive as the second copy while it is still there
+        log.write("   [X] rollback: venv rebuild failed: "
+                  f"{rebuild_error}")
+        log.write(f"   backup kept at: {folder}")
+        return True
+    return False
+
+
 def cleanup_fresh(target, created):
     """Remove a failed first install: the folder or everything it put there."""
     if created:

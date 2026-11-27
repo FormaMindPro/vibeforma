@@ -104,6 +104,7 @@ from install_steps import (
     product_entries,
     requirements_file,
     restore_target,
+    rollback_existing,
     run_selftest,
     write_config,
     write_marker,
@@ -140,6 +141,7 @@ __all__ = [
     migrate_legacy, model_description, model_step, pip_install,
     plan, product_entries, protected_reason, remove_legacy_shortcuts,
     remove_uninstall_entry, requirements_file, restore_target,
+    rollback_existing,
     run_logged, run_selftest, run_service, say, service_command,
     stdin_tty, step, supported_languages, target_state,
     uninstall_entry_values, windows_language, write_config, write_marker,
@@ -305,40 +307,9 @@ def run(args, log):
         log.write("")
         log.write(f"[X] Installation stopped at step '{error.title}': {error.reason}")
         if backup is not None:
-            try:
-                restore_target(target, backup[0], backup[1])
-                log.write("   previous files restored")
-            except OSError as restore_error:
-                # the restore stopped halfway: the backup folder is the only
-                # copy of the old install left, so it must survive the run
-                keep_backup = True
-                log.write(f"   [X] rollback failed: {restore_error}")
-                log.write(f"   backup kept at: {backup[0]}")
-            else:
-                if INSTALL_MARKER not in backup[1]:
-                    # the old install had no marker: do not leave the
-                    # incomplete marker of the failed attempt behind
-                    try:
-                        os.remove(os.path.join(target, INSTALL_MARKER))
-                    except OSError:
-                        pass
-                # pip installed the attempt's dependencies into .venv while
-                # the restored code and requirements are the old ones:
-                # rebuild the venv so the two match again
-                vp = os.path.join(target, ".venv", "Scripts", "python.exe")
-                shutil.rmtree(os.path.join(target, ".venv"),
-                              ignore_errors=True)
-                try:
-                    make_venv(target, vp, log)
-                    pip_install(target, vp, device, log)
-                    log.write("   .venv rebuilt from the restored requirements")
-                except (InstallError, OSError) as rebuild_error:
-                    # the old files are already back in place; keep the
-                    # backup alive as the second copy while it is still there
-                    keep_backup = True
-                    log.write("   [X] rollback: venv rebuild failed: "
-                              f"{rebuild_error}")
-                    log.write(f"   backup kept at: {backup[0]}")
+            keep_backup = rollback_existing(
+                target, backup, device, log,
+                make_venv=make_venv, pip_install=pip_install)
         else:
             # the log handle would keep logs/install.log locked, so the
             # fresh-install cleanup could not remove the target folder
