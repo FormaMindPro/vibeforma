@@ -17,6 +17,7 @@ class EscWatcher:
         self._log = log
         self._lock = threading.Lock()
         self._listener = None
+        self._busy = False
 
     @property
     def active(self) -> bool:
@@ -45,6 +46,13 @@ class EscWatcher:
     def _on_press(self, key: object) -> None:
         if key != keyboard.Key.esc:
             return
+        # Single-flight: a held Esc autorepeats (~30/s) and every repeat would
+        # otherwise spawn a parallel cancel; while one is running the rest
+        # are dropped, and the next Esc works again once it has finished.
+        with self._lock:
+            if self._busy:
+                return
+            self._busy = True
         threading.Thread(target=self._call, daemon=True).start()
 
     def _call(self) -> None:
@@ -52,3 +60,6 @@ class EscWatcher:
             self._callback()
         except Exception:  # noqa: BLE001 - a handler error must not kill the listener
             self._log.exception("Esc handler error")
+        finally:
+            with self._lock:
+                self._busy = False

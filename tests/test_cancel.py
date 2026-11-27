@@ -1,6 +1,7 @@
 """Esc cancels a dictation: the buffer or the recognition is dropped."""
 import sys
 import threading
+import time
 import types
 
 import cancel_hotkey
@@ -290,3 +291,37 @@ def test_esc_watcher_creates_a_listener_only_between_start_and_stop(monkeypatch)
     watcher.stop()                      # idempotent
     assert listener.stopped is True
     assert watcher.active is False
+
+
+# -- the hot path: a held Esc autorepeats and must not spawn cancels --------
+
+def test_hot_path_esc_autorepeat_runs_a_single_cancel():
+    """While one cancel is in flight, repeated Esc presses are ignored."""
+    calls = []
+    started = [threading.Event(), threading.Event()]
+    gates = [threading.Event(), threading.Event()]
+
+    def callback():
+        index = len(calls)
+        calls.append(index)
+        started[index].set()
+        gates[index].wait(5)
+
+    watcher = EscWatcher(callback, RecordingLog())
+    esc = cancel_hotkey.keyboard.Key.esc
+
+    watcher._on_press(esc)
+    assert started[0].wait(2)           # the first cancel is in flight
+    for _ in range(30):
+        watcher._on_press(esc)          # an autorepeat burst: all dropped
+    watcher._on_press(cancel_hotkey.keyboard.Key.space)
+    assert len(calls) == 1              # a non-Esc key is ignored as before
+
+    gates[0].set()                      # the first cancel finishes
+    deadline = time.monotonic() + 2
+    while not started[1].wait(0) and time.monotonic() < deadline:
+        watcher._on_press(esc)          # once free, the next Esc works again
+        started[1].wait(0.01)
+    assert started[1].wait(2)
+    assert len(calls) == 2
+    gates[1].set()

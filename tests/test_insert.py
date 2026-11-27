@@ -18,7 +18,6 @@ def _copy(value):
 
 pyperclip.paste = _paste
 pyperclip.copy = _copy
-sys.modules["pyperclip"] = pyperclip
 
 keyboard = types.ModuleType("pynput.keyboard")
 
@@ -71,10 +70,22 @@ keyboard.KeyCode = KeyCode
 keyboard.Controller = Controller
 pynput = types.ModuleType("pynput")
 pynput.keyboard = keyboard
-sys.modules["pynput"] = pynput
-sys.modules["pynput.keyboard"] = keyboard
 
-import insert  # noqa: E402
+# The fakes are needed only until `import insert` binds them by name; left in
+# sys.modules they would poison every test module pytest collects afterwards.
+_FAKE_NAMES = ("pyperclip", "pynput", "pynput.keyboard")
+_saved_modules = {name: sys.modules.get(name) for name in _FAKE_NAMES}
+try:
+    sys.modules["pyperclip"] = pyperclip
+    sys.modules["pynput"] = pynput
+    sys.modules["pynput.keyboard"] = keyboard
+    import insert  # noqa: E402
+finally:
+    for _name, _mod in _saved_modules.items():
+        if _mod is None:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _mod
 
 TARGET = 7
 OTHER = 8
@@ -495,3 +506,72 @@ def test_send_undo_waits_for_the_combo_release(monkeypatch):
         ("press", "ctrl"), ("press", ("vk", insert.UNDO_VK)),
         ("release", ("vk", insert.UNDO_VK)), ("release", "ctrl"),
     ]
+
+
+# -- the hot path: a busy clipboard must not lose the phrase ---------------
+
+def test_hot_path_busy_clipboard_returns_the_error_status(monkeypatch):
+    """copy() keeps raising: insert_text survives and reports RESULT_ERROR."""
+    attempts = {"n": 0}
+
+    def busy_copy(_value):
+        attempts["n"] += 1
+        raise OSError("clipboard busy")
+
+    monkeypatch.setattr(pyperclip, "copy", busy_copy)
+    monkeypatch.setattr(insert, "CLIPBOARD_COPY_RETRY_S", 0.0)
+
+    result = insert.insert_text("hello", restore_clipboard=False)
+
+    assert result == insert.RESULT_ERROR
+    assert attempts["n"] == insert.CLIPBOARD_COPY_ATTEMPTS
+    assert Controller.last is None      # no paste keystroke was sent
+
+
+def test_hot_path_copy_recovering_on_the_second_attempt_pastes(monkeypatch):
+    attempts = {"n": 0}
+
+    def flaky_copy(value):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("clipboard busy")
+        pyperclip.clip = value
+
+    monkeypatch.setattr(pyperclip, "copy", flaky_copy)
+    monkeypatch.setattr(insert, "CLIPBOARD_COPY_RETRY_S", 0.0)
+
+    result = insert.insert_text("hello", restore_clipboard=False)
+
+    assert result == insert.RESULT_PASTED
+    assert attempts["n"] == 2
+    assert pyperclip.clip == "hello"
+    assert Controller.last.events       # the paste went out as usual
+
+
+def test_hot_path_copy_recovering_on_the_second_attempt_copies(monkeypatch):
+    """The focus-change path keeps its RESULT_COPIED after a retried copy."""
+    attempts = {"n": 0}
+
+    def flaky_copy(value):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("clipboard busy")
+        pyperclip.clip = value
+
+    monkeypatch.setattr(pyperclip, "copy", flaky_copy)
+    monkeypatch.setattr(insert, "CLIPBOARD_COPY_RETRY_S", 0.0)
+    monkeypatch.setattr(insert, "get_foreground_hwnd", lambda: OTHER)
+
+    result = insert.insert_text("hello", restore_clipboard=False,
+                                target_hwnd=TARGET)
+
+    assert result == insert.RESULT_COPIED
+    assert attempts["n"] == 2
+    assert pyperclip.clip == "hello"    # left for the user to paste
+
+
+def test_hot_path_module_fakes_do_not_leak_into_sys_modules():
+    """After `import insert` the substituted modules are out of sys.modules."""
+    assert sys.modules.get("pyperclip") is not pyperclip
+    assert sys.modules.get("pynput") is not pynput
+    assert sys.modules.get("pynput.keyboard") is not keyboard

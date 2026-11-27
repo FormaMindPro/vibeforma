@@ -12,6 +12,7 @@ import os
 import sys
 import threading
 import time
+from typing import Any
 
 import pyperclip
 from pynput.keyboard import Controller, Key, KeyCode
@@ -32,13 +33,18 @@ SELECTION_POLLS = 10       # the copy never blocks a take for more than ~0.2 s
 MODIFIER_WAIT_S = 1.0      # longest wait for the combo keys to come up
 MODIFIER_POLL_S = 0.01     # how often the physical state is read meanwhile
 MODIFIER_VKS = (0x10, 0x11, 0x12, 0x5B, 0x5C)  # shift, ctrl, alt, win l/r
+# A clipboard briefly held by another process fails the copy; the phrase is
+# too valuable to drop on the first refusal, so the write is retried.
+CLIPBOARD_COPY_ATTEMPTS = 3    # bounded retries of the clipboard write
+CLIPBOARD_COPY_RETRY_S = 0.05  # pause between the write attempts
 
 RESULT_PASTED = "pasted"
 RESULT_COPIED = "copied"
 RESULT_CANCELLED = "cancelled"
+RESULT_ERROR = "error"
 
 
-def copy_text(value: str):
+def copy_text(value: str) -> None:
     """Put text into the clipboard (history actions, restore)."""
     pyperclip.copy(value)
 
@@ -111,7 +117,7 @@ def read_selected_text(log: logging.Logger | None = None) -> str:
     return flat.strip()
 
 
-def send_undo():
+def send_undo() -> None:
     """Ctrl+Z into the focused field by virtual key, not by a character.
 
     A character key ("z") resolves through the active layout and may land
@@ -135,7 +141,7 @@ def foreground_window() -> str:
         return "(unknown)"
 
 
-def window_title(hwnd) -> str:
+def window_title(hwnd: int | None) -> str:
     """Title text of one window; "" when the handle cannot be read.
 
     The window is named by the address captured at recording start, so a
@@ -155,18 +161,19 @@ def window_title(hwnd) -> str:
         return ""
 
 
-def get_foreground_hwnd():
+def get_foreground_hwnd() -> int | None:
     """HWND of the current foreground window (captured at recording start)."""
     try:
         import ctypes
         user32 = ctypes.windll.user32
         user32.GetForegroundWindow.restype = ctypes.c_void_p
-        return user32.GetForegroundWindow()
+        hwnd: int | None = user32.GetForegroundWindow()
+        return hwnd
     except Exception:  # noqa: BLE001 - no ctypes means no foreground window
         return None
 
 
-def window_process_id(hwnd) -> int:
+def window_process_id(hwnd: int | None) -> int:
     """Process id that owns the window; 0 when it cannot be read."""
     try:
         import ctypes
@@ -181,7 +188,7 @@ def window_process_id(hwnd) -> int:
         return 0
 
 
-def window_process_name(hwnd) -> str:
+def window_process_name(hwnd: int | None) -> str:
     """Executable name of the process that owns the window; "" if unreadable.
 
     The "Code.exe"-style basename is what an app profile matches, with or
@@ -218,7 +225,7 @@ def window_process_name(hwnd) -> str:
         return ""
 
 
-def window_identity(hwnd) -> tuple[str, str]:
+def window_identity(hwnd: int | None) -> tuple[str, str]:
     """(process name, window title) of one window; ("", "") when unreadable.
 
     An app profile matches this pair. The address is the one captured at
@@ -230,12 +237,12 @@ def window_identity(hwnd) -> tuple[str, str]:
     return window_process_name(hwnd), window_title(hwnd)
 
 
-def is_own_window(hwnd) -> bool:
+def is_own_window(hwnd: int | None) -> bool:
     """True for a window of this process: the panel, settings, dialogs."""
     return bool(hwnd) and window_process_id(hwnd) == os.getpid()
 
 
-def activate_window(hwnd) -> bool:
+def activate_window(hwnd: int | None) -> bool:
     """Bring the picked window forward before a panel-approved paste.
 
     The monitoring panel is always on top: after a click on one of its
@@ -345,7 +352,8 @@ def exclude_from_clipboard_history() -> bool:
         return False
 
 
-def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
+def _set_clipboard_flag(ctypes: Any, user32: Any, kernel32: Any,
+                        name: str) -> bool:
     """Set one clipboard format to a DWORD 0; the caller holds the clipboard."""
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
     kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
@@ -381,16 +389,19 @@ def _set_clipboard_flag(ctypes, user32, kernel32, name) -> bool:
 
 
 def insert_text(text: str, restore_clipboard: bool = True,
-                log: logging.Logger | None = None, target_hwnd=None,
+                log: logging.Logger | None = None,
+                target_hwnd: int | None = None,
                 paste_method: str = "shift_insert",
                 exclude_history: bool = True, log_title: bool = False,
-                undo_state: dict | None = None) -> str:
+                undo_state: dict[str, Any] | None = None) -> str:
     """Paste text into the target window; returns one of the RESULT_* values.
 
     When the foreground window differs from target_hwnd the text stays in
     the clipboard and RESULT_COPIED is returned — never a paste into a
-    foreign window. undo_state, when given, receives the previous clipboard
-    ("prev") and whether it was readable ("prev_known").
+    foreign window. When the clipboard write keeps failing (a busy clipboard)
+    after CLIPBOARD_COPY_ATTEMPTS tries, RESULT_ERROR is returned and no
+    clipboard exception escapes. undo_state, when given, receives the
+    previous clipboard ("prev") and whether it was readable ("prev_known").
     """
     prev = None
     prev_known = False
@@ -403,7 +414,17 @@ def insert_text(text: str, restore_clipboard: bool = True,
     if undo_state is not None:
         undo_state["prev"] = prev
         undo_state["prev_known"] = prev_known
-    pyperclip.copy(text)
+    for attempt in range(1, CLIPBOARD_COPY_ATTEMPTS + 1):
+        try:
+            pyperclip.copy(text)
+            break
+        except Exception as e:  # noqa: BLE001 - a busy clipboard is transient
+            if log:
+                log.warning("Clipboard write failed (%d/%d): %s",
+                            attempt, CLIPBOARD_COPY_ATTEMPTS, e)
+            if attempt >= CLIPBOARD_COPY_ATTEMPTS:
+                return RESULT_ERROR
+            time.sleep(CLIPBOARD_COPY_RETRY_S)
     if exclude_history and not exclude_from_clipboard_history() and log:
         log.info("Clipboard history exclusion is not available here")
     # Read after our own last clipboard write: the history exclusion
@@ -457,12 +478,14 @@ def _clipboard_unchanged(own_seq: int, pasted: str) -> bool:
     if own_seq and current:
         return current == own_seq
     try:
-        return pyperclip.paste() == pasted
+        unchanged: bool = pyperclip.paste() == pasted
+        return unchanged
     except Exception:  # noqa: BLE001 - ctypes clipboard calls fail in many ways; fall back
         return False
 
 
-def _restore_now(prev, prev_known, own_seq, pasted, log):
+def _restore_now(prev: str | None, prev_known: bool, own_seq: int,
+                 pasted: str, log: logging.Logger | None) -> None:
     if not prev_known:
         return
     if not _clipboard_unchanged(own_seq, pasted):
@@ -473,6 +496,7 @@ def _restore_now(prev, prev_known, own_seq, pasted, log):
         pyperclip.copy(prev)
 
 
-def _restore(prev, own_seq, pasted, log):
+def _restore(prev: str | None, own_seq: int, pasted: str,
+             log: logging.Logger | None) -> None:
     time.sleep(RESTORE_DELAY_S)
     _restore_now(prev, True, own_seq, pasted, log)
