@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 0.5.3 — 2026-11-27
 
+### Added
+- **The system-audio recordings folder is a setting.** The Recording tab
+  shows the folder system-audio takes are written to, with the active path,
+  and offers "Change…" (folder picker), "Open" and "Default"
+  (`Documents\VibeForma\Recordings`). An unusable folder is rejected with a
+  localized message before a take starts; the WAV, TXT and SRT of a take
+  land in the chosen folder.
+
 ### Fixed
 - **A busy clipboard no longer eats the phrase.** When another program held
   the clipboard for a moment, the copy of the recognized text threw and the

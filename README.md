@@ -60,6 +60,7 @@ The same engine also transcribes audio and video files, including whole folders,
 
 ## What's new in 0.5.3
 
+- **Choose where system-audio recordings land.** The Recording tab now shows the folder that system-audio takes are written to, with the actual current path, and lets you change it: "Change…" opens a folder picker, "Open" reveals the folder, "Default" returns to `Documents\VibeForma\Recordings`. An unusable folder is rejected with a clear message before a take starts, so the WAV, TXT and SRT of a take always land in a folder that works.
 - **A busy clipboard no longer eats the phrase.** When another program held the clipboard for a moment, the copy of the recognized text threw and the take died before any paste — the phrase was lost with nothing but a worker log line behind it. The copy now retries for a short moment and, if it still fails, ends the insert with an explicit error status; the text stays in the dictation history for a manual re-insert.
 - **Holding `Esc` cancels once.** Every autorepeat press of a held `Esc` used to spawn its own cancel thread — dozens of parallel cancels, repeated notifications, log noise. The watcher now keeps a single cancel in flight and ignores autorepeat presses until it finishes; the next press after that works as usual.
 - **Recording stops safely and the sound monitor comes back.** Stopping a take no longer races the audio writer, and the live system-audio monitor revives itself after a device failure instead of staying dead; a partial iteration failure is reported honestly instead of being swallowed.
