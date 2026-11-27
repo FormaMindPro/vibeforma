@@ -11,3 +11,11 @@ for entry in (str(ROOT), str(ROOT / "app"), str(ROOT / "tests")):
 collect_ignore = []
 if sys.platform != "win32":
     collect_ignore += ["test_cancel.py", "test_hotkey_hold.py"]
+
+# sounddevice initializes PortAudio at import; on a host with no audio
+# server that raises PortAudioError, which importorskip() does not catch.
+# Serve ImportError instead so the guarded test modules skip cleanly.
+try:
+    import sounddevice  # noqa: F401
+except Exception:  # noqa: BLE001 - ImportError or PortAudioError alike
+    sys.modules["sounddevice"] = None
