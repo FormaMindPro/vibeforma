@@ -27,6 +27,11 @@ class ServiceHost:
     pending_update: dict[str, Any] | None
     update_check_state: str
     update_check_tag: str
+    model_update_state: str
+    pending_model_update: dict[str, str]
+    _model_check_busy: bool
+    _model_update_busy: bool
+    _model_update_request: dict[str, str] | None
     _state_lock: threading.Lock
     _running: bool
     _partial_busy: bool
@@ -54,6 +59,18 @@ class ServiceHost:
         def _maybe_apply_pending_update(self) -> None: ...
 
         def check_updates(self, notify_latest: bool = False) -> None: ...
+
+        def _jobs_active(self) -> bool: ...
+
+        def check_model_updates(self, manual: bool = False) -> None: ...
+
+        def check_model_updates_now(self) -> None: ...
+
+        def apply_pending_model_update(self, model: str = "") -> bool: ...
+
+        def decline_pending_model_update(self, model: str = "") -> None: ...
+
+        def _maybe_apply_pending_model_update(self) -> None: ...
 
         def apply_settings(self, new_cfg: dict[str, Any]) -> None: ...
 

@@ -1,7 +1,26 @@
-# Changelog
+## 0.5.5 — 2026-11-27
 
-All notable changes to VibeForma are documented here.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+### Added
+- **Whisper model updates by consent.** A background pass every
+  `model_update_interval_h` hours (24 by default, `model_update_check` turns
+  it off) compares the Hugging Face repo's `main` commit sha with the sidecar
+  marker `.vibeforma-model.json` (`repo`, `revision`, `downloaded_at`) of
+  each catalog model folder under `MODELS_DIR`; network errors go to debug
+  and leave the check intact offline. A different revision shows a proposal
+  in **Model & language** with **Update** and **Not now** buttons, one tray
+  notification, and a manual **Check model updates** button; a declined
+  revision is not offered again, even after a restart. An update runs only on
+  consent, one model at a time and only while the service is idle with no
+  file queue — otherwise the localized "wait for the current cycle" refusal
+  writes nothing. The new revision is downloaded into a temporary folder
+  inside `MODELS_DIR`, validated by the existing model-folder gate, and
+  swapped in while the service is busy; the previous folder is kept until
+  the new model loads, and any failure of the download, validation or load
+  restores the folder, `cfg["model"]` and the working model. A model that
+  lives only in the shared Hugging Face cache gets a copy in `MODELS_DIR`
+  and the cache is never removed; an installed model without a marker gets
+  its current revision recorded as a baseline on the first pass and is not
+  offered by it. Local `model_folders` folders are never checked or updated.
 
 ## 0.5.4 — 2026-11-27
 
@@ -93,6 +112,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is restored after a successful paste again: the sequence number used to be
   read before the private-format writes of the same call, so every restore
   looked like a foreign change and was skipped.
+
+
 
 ## 0.5.1 — 2026-11-26
 
