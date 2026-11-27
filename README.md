@@ -143,7 +143,7 @@ This is not a rating and not advertising. The snapshot date is **23 November 202
 
 | Product | Type | Platforms | Local recognition | Dictation | File transcription | Russian UI / docs | Price / source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **VibeForma 0.5.3** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
+| **VibeForma** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
 | Handy | local dictation | Windows, macOS, Linux | Yes, Whisper | Yes | n/v | n/v / n/v | Free, open source |
 | Buzz | local transcription | Windows, macOS, Linux | Yes, Whisper | No | Yes | n/v / n/v | Free, open source |
 | Whispering | local or connected transcription | Windows, macOS, Linux | Yes or a provider | Yes | Yes | n/v / n/v | Free, open source |
@@ -175,7 +175,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **No meetings, summaries, teams or billing.** Superwhisper, Wispr Flow and Descript cover scenarios VibeForma does not.
 - **No cloud models.** Everything runs on the local machine, so a very weak CPU or GPU means slower recognition; cloud products offload that cost.
 - **No mobile.** Dictation happens at a Windows desk.
-- **A smaller ecosystem and a shorter track record.** The project is at 0.5.3; the commercial products have years of releases and larger support teams.
+- **A smaller ecosystem and a shorter track record.** The project is young; the commercial products have years of releases and larger support teams.
 - **An unsigned installer.** Windows SmartScreen may warn; there is no code-signing certificate yet.
 
 ### How to choose
