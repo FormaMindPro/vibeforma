@@ -3,6 +3,45 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.3 — 2026-11-27
+
+### Fixed
+- **A busy clipboard no longer eats the phrase.** When another program held
+  the clipboard for a moment, the copy of the recognized text threw and the
+  take died before any paste. The copy now retries for a short moment and,
+  if it still fails, ends the insert with an explicit error status; the
+  text stays in the dictation history for a manual re-insert.
+- **Holding `Esc` cancels once.** Every autorepeat press of a held `Esc`
+  used to spawn its own cancel thread — dozens of parallel cancels and
+  repeated notifications. The watcher now keeps a single cancel in flight
+  and ignores autorepeat presses until it finishes.
+- **Recording stops safely and the sound monitor comes back.** Stopping a
+  take no longer races the audio writer; the live system-audio monitor
+  revives itself after a device failure, and a partial iteration failure
+  is reported honestly.
+- **Hand-written hotkey aliases start the service.** A `config.json` value
+  like `control+alt+space` or `win+escape` used to kill the start; one
+  shared keymap now normalizes the aliases for the hotkey and the
+  onboarding window alike, with reserved-combo warnings unchanged.
+- **The installer survives Cyrillic and special-character paths.** Dollar,
+  backtick, quote and wildcard-bracket characters in the target folder are
+  escaped, child output is read as UTF-8, `~/VibeForma` expands to the home
+  folder, a broken locale placeholder can no longer crash an error message,
+  and a CUDA driver mismatch gives its own hints.
+- **A failed update rolls back to the old installation.** The previous
+  version marker is snapshotted into the backup before anything overwrites
+  it, the backup survives a failed restore with its path written to the
+  log, and the virtual environment is rebuilt from the restored
+  requirements.
+- **Uninstall finds shortcuts at odd paths.** Shortcut lookup escapes the
+  `-like` wildcard metacharacters, so shortcuts are removed even when the
+  install path contains `$`, a backtick, quotes or square brackets.
+
+### Changed
+- CI measures coverage on a Python matrix (3.10–3.14 on Windows, 3.12 on
+  Linux) with a `fail_under` threshold, and the root modules are covered by
+  strict mypy; the installer stays a thin entry under 400 lines.
+
 ## 0.5.2 — 2026-11-26
 
 ### Fixed
