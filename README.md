@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.2** makes insertion wait for the hotkey instead of racing it. 0.5.1 brought system-audio takes into files, a take clock, quality presets, local model folders, per-entry re-recognition and a complete uninstall. See [What's new](#whats-new-in-052).
+> **VibeForma 0.5.3** keeps a phrase alive when the clipboard is busy and rolls a failed update back to the old installation. 0.5.2 made insertion wait for the hotkey instead of racing it. See [What's new](#whats-new-in-053).
 
 ## What is VibeForma
 
@@ -58,19 +58,19 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.3
+
+- **A busy clipboard no longer eats the phrase.** When another program held the clipboard for a moment, the copy of the recognized text threw and the take died before any paste — the phrase was lost with nothing but a worker log line behind it. The copy now retries for a short moment and, if it still fails, ends the insert with an explicit error status; the text stays in the dictation history for a manual re-insert.
+- **Holding `Esc` cancels once.** Every autorepeat press of a held `Esc` used to spawn its own cancel thread — dozens of parallel cancels, repeated notifications, log noise. The watcher now keeps a single cancel in flight and ignores autorepeat presses until it finishes; the next press after that works as usual.
+- **Recording stops safely and the sound monitor comes back.** Stopping a take no longer races the audio writer, and the live system-audio monitor revives itself after a device failure instead of staying dead; a partial iteration failure is reported honestly instead of being swallowed.
+- **Hand-written hotkey aliases start the service.** A `config.json` value like `control+alt+space` or `win+escape` used to kill the start — the toggle-mode parser only accepted canonical `ctrl`/`cmd`/`esc` names. One shared keymap now normalizes the aliases for the hotkey and the onboarding window alike, and reserved-combo warnings (`win+l`) still fire.
+- **The installer survives Cyrillic and special-character paths.** A target folder like `C:\Users\Иван\Soft$` used to break the PowerShell shortcut scripts or decode child output in the wrong codepage. Dollar, backtick, quote and wildcard-bracket characters are escaped now, child output is read as UTF-8, `~/VibeForma` expands to the home folder, a broken locale placeholder can no longer crash an error message, and a CUDA driver mismatch gives its own hints.
+- **A failed update rolls back to the old installation.** If a step fails while updating an existing install, the old version now comes back whole: the previous marker is snapshotted into the backup before anything overwrites it, the backup survives a failed restore with its path written to the log, and the virtual environment is rebuilt from the restored requirements.
+- **Uninstall finds shortcuts at odd paths.** Shortcut lookup escapes the `-like` wildcard metacharacters, so shortcuts are found and removed even when the install path contains `$`, a backtick, quotes or square brackets.
+
 ## What's new in 0.5.2
 
 - **Insertion waits for the hotkey instead of racing it.** A take is stopped with the same `Ctrl+Alt+Space` that starts it, and the paste could go out while the combo was still held: the window received `Ctrl+Alt+Shift+Insert`, which no app treats as paste, so the phrase silently stayed on the clipboard while the panel reported an insert. VibeForma now waits for the combo to come up — one second at most — checks the target window again and then pastes; the selected-text read at the start of a take and the `Ctrl+Z` undo wait the same way. When the wait times out, the text is deliberately left in the clipboard for a manual paste. The previous clipboard is restored after a successful paste again: the counter used to be read before the private-format writes of the same call, so every restore looked like a foreign change and was skipped.
-
-## What's new in 0.5.1
-
-- **A system-audio take becomes files.** With the source set to **System audio**, the take is written as a 16-bit, 16 kHz mono WAV — `Documents\VibeForma\Recordings` by default, a date subfolder, the file named by the start time — and on stop TXT and SRT are queued beside it. The path shows on the panel, in the tray and in the HUD; nothing is inserted and the dictation history stays untouched, while the 30 s live buffer still feeds the subtitles. Limits: a take over 6 hours or 4 GB keeps its WAV but gets no transcript; `Esc` and exit close the WAV without queueing it.
-- **The panel gets a take clock.** A monospaced clock left of the level bar counts down to `max_record_s` for a microphone take with `continuous: false` — amber under 30 s, red under 10 — and counts elapsed time, neutrally, for continuous dictation and system audio. Hovering says which time it shows; the digits never shift the line below.
-- **Three recognition-quality presets.** **Settings → Recording** offers **Normal (recommended)** — beam 5 with the 0.0 → 0.2 fallback; **Accurate** — beam 10 at temperature 0; **Fast** — beam 1 at temperature 0. The choice is `quality_preset` in `config.json`, applies to the next final dictation pass without a restart, and is the only quality control of that pass: there is no separate temperature setting. File transcription and live subtitles keep their own settings.
-- **Local model folders.** **Settings → Model & language** lists CT2 folders with name, path and validity, marks the current model, and offers **Add folder**, **Use**, **Remove from the list** and **Return to the built-in**. The list is `model_folders` in `config.json` (absolute paths, up to 20); removing a record never deletes files. A failed switch keeps the model in use.
-- **A user model folder survives a switch.** With `model_keep_old: false` only downloaded models inside `models\` are deleted. A folder you added is never a deletion target, and a `..` step, an absolute path, another drive or a link leading outside is refused.
-- **"Recognize more precisely" for one history entry.** The history window offers the button for one selected entry whose WAV is on disk; without the sound it stays disabled with the reason. The pass runs in the background with beam 10 at temperature 0, keeps the table usable, and replaces the entry's text and confidence; a failed or empty pass leaves the entry as it was.
-- **A complete uninstall.** `uninstall.cmd --remove-data` removes what the installer and the app created — the `vibeforma\` package, `mcp.cmd`, the requirements files, history and its sound, statistics, `status.json`, `location.json`, corrections, the top-level `.py` files, `__pycache__` and `.venv` — and leaves the folder ready for a fresh install. `--keep-data` keeps models, configuration, logs, history, statistics and corrections; removal never follows a link out of the install folder.
 
 ## Quick start
 
@@ -149,7 +149,7 @@ This is not a rating and not advertising. The snapshot date is **23 November 202
 
 | Product | Type | Platforms | Local recognition | Dictation | File transcription | Russian UI / docs | Price / source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **VibeForma 0.5.1** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
+| **VibeForma 0.5.3** | local dictation and file transcription | Windows 10/11 | Yes, faster-whisper | Yes | Yes — files and folder batches | Yes / Yes | Free, MIT |
 | Handy | local dictation | Windows, macOS, Linux | Yes, Whisper | Yes | n/v | n/v / n/v | Free, open source |
 | Buzz | local transcription | Windows, macOS, Linux | Yes, Whisper | No | Yes | n/v / n/v | Free, open source |
 | Whispering | local or connected transcription | Windows, macOS, Linux | Yes or a provider | Yes | Yes | n/v / n/v | Free, open source |
@@ -168,7 +168,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **Local files and folders.** Audio and video are transcribed on the same engine, with timestamps and four output formats; SRT and VTT cues follow sentences, a long file's blocks carry context, a batched segment that fails a threshold is retried, invented phrases are filtered, and `model` can point at a converted CT2 folder. No upload, no queue in someone else's cloud.
 - **Exact language pinning.** The model recognizes exactly the language you set. That is more predictable for Russian and mixed-vocabulary dictation than per-phrase guessing; a hint names the language it hears without changing the setting.
 - **No account, no telemetry.** There is nothing to sign in to and no server that receives audio. The network is used for the model download and optional update checks, and both are named explicitly.
-- **Small and honest.** VibeForma 0.5.1 does not pretend to be a meeting platform. Its limits are documented on a separate page and in [Where VibeForma is weaker](#where-vibeforma-is-weaker).
+- **Small and honest.** VibeForma does not pretend to be a meeting platform. Its limits are documented on a separate page and in [Where VibeForma is weaker](#where-vibeforma-is-weaker).
 
 ### Where VibeForma is weaker
 
@@ -181,7 +181,7 @@ Legend: **n/v** means no public confirmation was found in the listed sources at 
 - **No meetings, summaries, teams or billing.** Superwhisper, Wispr Flow and Descript cover scenarios VibeForma does not.
 - **No cloud models.** Everything runs on the local machine, so a very weak CPU or GPU means slower recognition; cloud products offload that cost.
 - **No mobile.** Dictation happens at a Windows desk.
-- **A smaller ecosystem and a shorter track record.** The project is at 0.5.1; the commercial products have years of releases and larger support teams.
+- **A smaller ecosystem and a shorter track record.** The project is at 0.5.3; the commercial products have years of releases and larger support teams.
 - **An unsigned installer.** Windows SmartScreen may warn; there is no code-signing certificate yet.
 
 ### How to choose
