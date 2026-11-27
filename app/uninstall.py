@@ -141,9 +141,45 @@ def write_ps1(body):
     return path
 
 
+# -like reads "[x]" as a character class, so a literal bracket in a pattern
+# must be wrapped in brackets; a chained replace cannot do that because the
+# second pass would eat the first, hence the single character pass. Windows
+# paths cannot hold the other metacharacters (* and ?), so this is complete.
+_WILDCARD_ESCAPES = {"[": "[[]", "]": "[]]"}
+
+
+def ps_escape(text):
+    """Make text a literal inside a PowerShell double-quoted string.
+
+    The backtick is the PowerShell escape character, so it is doubled
+    before the other escapes introduce it; `$ stops the variable
+    expansion and `" keeps the quote from closing the string.
+    """
+    return (str(text)
+            .replace("`", "``")
+            .replace("$", "`$")
+            .replace('"', '`"'))
+
+
+def ps_escape_wildcard(text):
+    """Make text a literal inside a PowerShell -like pattern."""
+    return "".join(_WILDCARD_ESCAPES.get(ch, ch) for ch in str(text))
+
+
+def ps_like_literal(target):
+    """The install path as it belongs inside the -like "*..." string.
+
+    The wildcard metacharacters are escaped before the string-level ones
+    so the added brackets reach the pattern engine untouched; the
+    backslashes stay doubled, as the substitution has always done.
+    """
+    escaped = ps_escape(ps_escape_wildcard(str(target)))
+    return escaped.replace("\\", "\\\\")
+
+
 def remove_shortcuts(target):
     body = (REMOVE_LINKS_PS.replace("__LNK__", SERVICE_LNK)
-            .replace("__TARGET__", target.replace("\\", "\\\\")))
+            .replace("__TARGET__", ps_like_literal(target)))
     path = write_ps1(body)
     try:
         result = subprocess.run(  # noqa: S603 - fixed arguments, no shell

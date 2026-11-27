@@ -276,3 +276,77 @@ def test_running_inside_venv_is_detected(monkeypatch, tmp_path):
     monkeypatch.setattr(uninstall.sys, "executable", str(system_python))
 
     assert not uninstall.running_inside_venv(str(target))
+
+
+# The autouse fixture patches uninstall.remove_shortcuts for the tests
+# above; bind the real function here so the new ones can generate a body.
+from uninstall import remove_shortcuts as real_remove_shortcuts  # noqa: E402
+
+
+class _NoPowerShell:
+    """Stand-in for uninstall.subprocess: answers without running anything."""
+
+    @staticmethod
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, "SHORTCUTS_REMOVED 0", "")
+
+
+def _link_body(monkeypatch, tmp_path, target):
+    """The ps1 body remove_shortcuts builds for target; powershell never runs."""
+    captured = {}
+
+    def fake_write_ps1(body):
+        captured["body"] = body
+        script = tmp_path / "remove_links.ps1"
+        script.write_text(body, encoding="utf-8")
+        return str(script)
+
+    monkeypatch.setattr(uninstall, "write_ps1", fake_write_ps1)
+    monkeypatch.setattr(uninstall, "subprocess", _NoPowerShell)
+    assert real_remove_shortcuts(target)
+    return captured["body"]
+
+
+def _like_operand(body):
+    """The text between the quotes of the -like operand."""
+    line = next(l for l in body.splitlines() if "-like" in l)
+    marker = '-like "'
+    quoted = line[line.index(marker) + len(marker):]
+    assert quoted.endswith('") {')  # the operand is still one quoted string
+    return quoted[:-len('") {')]
+
+
+SPECIAL_TARGET = 'C:\\Vibe `a$b"[c]d'
+
+
+def test_ps_escape_special_target_generates_escaped_literal(monkeypatch, tmp_path):
+    body = _link_body(monkeypatch, tmp_path, SPECIAL_TARGET)
+
+    # exact fragment: brackets wrapped for -like, backtick/$/quote escaped
+    # for the string, backslashes still doubled, marker untouched
+    assert '-like "*C:\\\\Vibe ``a`$b`"[[]c[]]d*"' in body
+    assert "SHORTCUTS_REMOVED" in body
+
+
+def test_ps_escape_special_target_keeps_one_string_literal(monkeypatch, tmp_path):
+    operand = _like_operand(_link_body(monkeypatch, tmp_path, SPECIAL_TARGET))
+
+    # every quote, dollar and backtick inside the literal is part of an
+    # escape sequence: drop the sequences and none of them is left
+    stripped = operand.replace("``", "").replace("`$", "").replace('`"', "")
+    assert "`" not in stripped
+    assert "$" not in stripped
+    assert '"' not in stripped
+    # the path stays one literal and its backslashes stay doubled
+    assert operand.startswith("*C:\\\\Vibe")
+
+
+def test_ps_escape_plain_target_body_is_the_previous_body(monkeypatch, tmp_path):
+    plain = r"C:\Users\me\VibeForma"
+
+    body = _link_body(monkeypatch, tmp_path, plain)
+
+    expected = (uninstall.REMOVE_LINKS_PS
+                .replace("__LNK__", uninstall.SERVICE_LNK)
+                .replace("__TARGET__", plain.replace("\\", "\\\\")))
+    assert body == expected
