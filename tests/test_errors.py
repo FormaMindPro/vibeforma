@@ -81,3 +81,45 @@ def test_every_code_is_translated_in_both_locales():
                 key = f"errors.{code}.{part}"
                 assert key in strings, key
                 assert strings[key].strip(), key
+
+
+# Russian strings for errors.model.driver, as \\u escapes to keep the
+# test sources ASCII (audit-02 #10).
+RU_DRIVER_TEXT = ("\u041c\u043e\u0434\u0435\u043b\u044c \u043d\u0435 "
+                  "\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043b\u0430\u0441\u044c: "
+                  "\u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0430 CUDA-"
+                  "\u0434\u0440\u0430\u0439\u0432\u0435\u0440\u0430.")
+RU_DRIVER_ACTION = ("\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 "
+                    "\u0434\u0440\u0430\u0439\u0432\u0435\u0440 NVIDIA "
+                    "\u0438\u043b\u0438 \u043f\u0435\u0440\u0435\u043a\u043b"
+                    "\u044e\u0447\u0438\u0442\u0435 "
+                    "\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432"
+                    "\u043e \u043d\u0430 CPU \u0432 "
+                    "\u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a"
+                    "\u0430\u0445.")
+
+
+def test_cuda_driver_errors_get_their_own_code_sharp_edge():
+    """A bare CUDA mention is no longer an out-of-memory claim (audit-02 #10)."""
+    assert errors.code_for("model",
+                           RuntimeError("CUDA driver mismatch")) \
+        == "model.driver"
+    assert errors.code_for("model",
+                           RuntimeError("Could not load cudnn DLL")) \
+        == "model.driver"
+    assert errors.code_for("model",
+                           RuntimeError("CUDA out of memory")) \
+        == "model.memory"
+
+
+def test_model_driver_resolves_in_both_locales_sharp_edge():
+    exc = RuntimeError("CUDA driver mismatch")
+    en = errors.text(cfg("en"), "model", exc)
+    assert en == ("The model failed to load: a CUDA driver problem.\n"
+                  "Update your NVIDIA driver, or switch the device to "
+                  "CPU in settings.")
+    ru = errors.text(cfg("ru"), "model", exc)
+    assert ru == RU_DRIVER_TEXT + "\n" + RU_DRIVER_ACTION
+    strings = locale_keys("ru")
+    assert strings["errors.model.driver.text"] == RU_DRIVER_TEXT
+    assert strings["errors.model.driver.action"] == RU_DRIVER_ACTION

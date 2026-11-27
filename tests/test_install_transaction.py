@@ -310,3 +310,155 @@ def test_failed_run_fresh_logs_left_behind_still_allows_a_rerun(
     marker = json.loads(
         (target / install.INSTALL_MARKER).read_text(encoding="utf-8"))
     assert marker["complete"] is True
+
+
+@pytest.mark.windows
+def test_install_rollback_restores_the_old_marker(monkeypatch, tmp_path):
+    """After a failed attempt the marker carries the old install again."""
+    target, log = tmp_path / "vf", tmp_path / "install.log"
+    target.mkdir()
+    (target / "main.py").write_text("old main", encoding="utf-8")
+    (target / "run.cmd").write_text("old run", encoding="utf-8")
+    (target / "config.json").write_text(
+        '{"model": "large-v3"}', encoding="utf-8")
+    old = {"product": "VibeForma", "version": "0.0.0-old",
+           "model": "large-v3", "device": "cpu",
+           "created": "2026-01-01T00:00:00",
+           "installed": "2026-01-01T00:00:00", "complete": True}
+    marker_path = target / install.INSTALL_MARKER
+    marker_path.write_text(json.dumps(old), encoding="utf-8")
+
+    # prove the order the fix depends on: at the moment run() writes the
+    # incomplete marker, the on-disk marker is still the old one, so the
+    # backup (taken before this call) captured the old version and model
+    overwritten = []
+    real_write_marker = install.write_marker
+
+    def spy_write_marker(mark_target, model, device, complete):
+        if not complete:
+            data = json.loads(marker_path.read_text(encoding="utf-8"))
+            overwritten.append((data["version"], data["complete"]))
+        return real_write_marker(mark_target, model, device,
+                                 complete=complete)
+
+    monkeypatch.setattr(install, "write_marker", spy_write_marker)
+    install_argv(monkeypatch, target, log)
+    fake = FakeRun(failures=[("-m pip install", 1, "pip failed")])
+    monkeypatch.setattr(install.subprocess, "run", fake)
+
+    assert install.main() == 1
+
+    assert overwritten == [("0.0.0-old", True)]
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["version"] == "0.0.0-old"
+    assert marker["model"] == "large-v3"
+    assert marker["complete"] is True
+
+
+@pytest.mark.windows
+def test_install_rollback_keeps_backup_when_restore_fails(
+        monkeypatch, tmp_path):
+    """A restore that raises OSError must not delete the backup folder."""
+    target, log = tmp_path / "vf", tmp_path / "install.log"
+    target.mkdir()
+    (target / "main.py").write_text("old main", encoding="utf-8")
+    (target / "run.cmd").write_text("old run", encoding="utf-8")
+    (target / "config.json").write_text(
+        '{"model": "large-v3"}', encoding="utf-8")
+    install_argv(monkeypatch, target, log)
+    fake = FakeRun(failures=[("-m pip install", 1, "pip failed")])
+    monkeypatch.setattr(install.subprocess, "run", fake)
+
+    # only the restore copies a backup file back into the target under its
+    # original name; copy_app and the backup itself use other source paths
+    real_copy2 = install.shutil.copy2
+    old_main = str(target / "main.py")
+
+    def flaky_copy2(src, dst, *copy_args, **copy_kwargs):
+        if ("vibeforma-install-backup-" in str(src)
+                and str(dst) == old_main):
+            raise OSError("simulated: the old install cannot be written back")
+        return real_copy2(src, dst, *copy_args, **copy_kwargs)
+
+    monkeypatch.setattr(install.shutil, "copy2", flaky_copy2)
+
+    assert install.main() == 1
+
+    text = log.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert "existing install detected - rollback is ready" in text
+
+    def path_after(marker):
+        row = next(row for row in lines if marker in row)
+        return row.split(marker, 1)[1].strip()
+
+    assert "rollback failed" in text
+    made_at = path_after("product entries in ")
+    kept_at = path_after("backup kept at: ")
+    normcase = install.os.path.normcase
+    assert normcase(kept_at) == normcase(made_at)
+    assert install.os.path.isdir(kept_at)
+    assert (Path(kept_at) / "main.py").read_text(encoding="utf-8") == (
+        "old main")
+
+
+@pytest.mark.windows
+def test_install_rollback_rebuilds_venv_from_old_requirements(
+        monkeypatch, tmp_path):
+    """The rollback recreates .venv against the restored old requirements."""
+    target, log = tmp_path / "vf", tmp_path / "install.log"
+    target.mkdir()
+    (target / "main.py").write_text("old main", encoding="utf-8")
+    (target / "run.cmd").write_text("old run", encoding="utf-8")
+    (target / "config.json").write_text(
+        '{"model": "large-v3"}', encoding="utf-8")
+    (target / "requirements.txt").write_text(
+        "old-dep==1.0\n", encoding="utf-8")
+    install_argv(monkeypatch, target, log)
+    fake = FakeRun(failures=[("local_dir=dest", 1, "no network")])
+    monkeypatch.setattr(install.subprocess, "run", fake)
+    monkeypatch.setattr(install, "detect_compute",
+                        lambda force_cpu: ("cpu", "int8"))
+    calls = []
+
+    def restored_already():
+        text = Path(log).read_text(encoding="utf-8")
+        return "previous files restored" in text
+
+    def fake_make_venv(mark_target, venv_python, lg):
+        calls.append(("make_venv", restored_already(),
+                      (Path(mark_target) / ".venv").exists()))
+        Path(venv_python).parent.mkdir(parents=True, exist_ok=True)
+        Path(venv_python).write_text("", encoding="ascii")
+
+    def fake_pip_install(mark_target, venv_python, dev, lg):
+        req = install.os.path.join(str(mark_target),
+                                   install.requirements_file(dev))
+        calls.append(("pip_install", restored_already(), req))
+
+    monkeypatch.setattr(install, "make_venv", fake_make_venv)
+    monkeypatch.setattr(install, "pip_install", fake_pip_install)
+
+    assert install.main() == 1
+
+    # the rollback calls (after the restore) are make_venv, then pip_install,
+    # and the .venv the attempt had built is gone before make_venv runs
+    rollback_calls = [entry for entry in calls if entry[1]]
+    assert [entry[0] for entry in rollback_calls] == [
+        "make_venv", "pip_install"]
+    assert rollback_calls[0][2] is False
+    req_path = Path(rollback_calls[1][2])
+    assert req_path.name == "requirements.txt"
+    assert req_path.read_text(encoding="utf-8") == "old-dep==1.0\n"
+
+    # the old files are back and the order in the log is restore, then rebuild
+    assert (target / "main.py").read_text(encoding="utf-8") == "old main"
+    assert not (target / install.INSTALL_MARKER).exists()
+    lines = log.read_text(encoding="utf-8").splitlines()
+    stop = next(i for i, row in enumerate(lines)
+                if "Installation stopped at step" in row)
+    restored = next(i for i, row in enumerate(lines)
+                    if "previous files restored" in row)
+    rebuilt = next(i for i, row in enumerate(lines)
+                   if ".venv rebuilt from the restored requirements" in row)
+    assert stop < restored < rebuilt

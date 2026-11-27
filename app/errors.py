@@ -24,7 +24,8 @@ HINTS = (
     ("mic.permission", ("permission", "access is denied", "access denied",
                         "unanticipated host", "not allowed")),
     ("mic.busy", ("busy", "in use", "unavailable")),
-    ("model.memory", ("out of memory", "cuda", "memory", "alloc")),
+    ("model.driver", ("driver", "cudnn", "dll")),
+    ("model.memory", ("out of memory", "failed to allocate", "memory")),
     ("model.network", ("download", "connection", "network", "http", "url",
                        "timeout", "resolve")),
 )

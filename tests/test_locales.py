@@ -41,3 +41,19 @@ def test_placeholders_match_between_languages(catalogs):
             mismatched.append((key, sorted(_placeholders(en[key])),
                                sorted(_placeholders(ru[key]))))
     assert not mismatched, f"placeholder drift: {mismatched}"
+
+
+def test_t_survives_foreign_placeholder_sharp_edge(monkeypatch):
+    """A typo'd placeholder in a third-party locale must not raise in the UI."""
+    import i18n
+
+    broken = "Press {hotkeyy} to start"
+    monkeypatch.setitem(i18n._CACHE, "en", {"status.line": broken})
+    out = i18n.t({"locale": "en"}, "status.line", hotkey="Ctrl+Alt+Space")
+    assert out == broken
+
+    # a valid placeholder still formats after the guard landed
+    monkeypatch.setitem(i18n._CACHE, "en",
+                        {"status.line": "Press {hotkey} to start"})
+    assert i18n.t({"locale": "en"}, "status.line",
+                  hotkey="Ctrl+Alt+Space") == "Press Ctrl+Alt+Space to start"

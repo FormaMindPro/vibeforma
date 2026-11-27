@@ -73,6 +73,11 @@ def product_entries(target):
 def backup_target(target, log):
     folder = tempfile.mkdtemp(prefix="vibeforma-install-backup-")
     names = product_entries(target)
+    # the install marker is not a product entry, but it must ride in the
+    # backup too: after a rollback the old version and complete flag have to
+    # come back, not the ones the failed attempt wrote over them
+    if os.path.isfile(os.path.join(target, INSTALL_MARKER)):
+        names.append(INSTALL_MARKER)
     try:
         for name in names:
             source = os.path.join(target, name)

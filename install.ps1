@@ -82,7 +82,7 @@ foreach ($c in @("python", "py")) {
 }
 if (-not $pyCmd) {
     Write-Host "[X] Python not found. Install Python 3.10+ from https://www.python.org/downloads/ (tick 'Add python.exe to PATH') and run the command again."
-    exit 1
+    throw "Python not found - install Python 3.10+ and run the command again."
 }
 if ($pyCmd -eq "py") { $pyArgs = @("-3") }
 Write-Step "Python found: $pyCmd"
@@ -95,19 +95,19 @@ $archivePath = ""
 if ($ZipPath -ne "") {
     if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
         Write-Host "[X] -ZipPath file not found: $ZipPath"
-        exit 1
+        throw "-ZipPath file not found: $ZipPath"
     }
     if ($SumsPath -eq "") {
         Write-Host "[X] -ZipPath requires -SumsPath: the archive is never unpacked unchecked."
-        exit 1
+        throw "-ZipPath requires -SumsPath: the archive is never unpacked unchecked."
     }
     if (-not (Test-Path -LiteralPath $SumsPath -PathType Leaf)) {
         Write-Host "[X] -SumsPath file not found: $SumsPath"
-        exit 1
+        throw "-SumsPath file not found: $SumsPath"
     }
     $archivePath = Join-Path $tmp (Split-Path -Leaf $ZipPath)
     Copy-Item -LiteralPath $ZipPath -Destination $archivePath
-    if (-not (Test-ArchiveHash $archivePath $SumsPath)) { exit 1 }
+    if (-not (Test-ArchiveHash $archivePath $SumsPath)) { throw "The archive failed its checksum gate - nothing was unpacked." }
 } else {
     $zipUrl = $null
     $sumsUrl = $null
@@ -135,17 +135,17 @@ if ($ZipPath -ne "") {
         Write-Host "[X] No released VibeForma build was found. The bootstrap installs released versions only; there is no main-branch fallback."
         if ($relError) { Write-Host "    Reason: $relError" }
         Write-Host "    Check https://github.com/FormaMindPro/vibeforma/releases or run install.cmd from a cloned repository."
-        exit 1
+        throw "No released VibeForma build was found - the bootstrap installs released versions only."
     }
     if (-not $sumsUrl) {
         Write-Host "[X] The release has no SHA256SUMS asset - nothing was unpacked."
-        exit 1
+        throw "The release has no SHA256SUMS asset - nothing was unpacked."
     }
     $archivePath = Join-Path $tmp $asset.name
     Invoke-WebRequest -Uri $zipUrl -OutFile $archivePath -UseBasicParsing
     $sumsFile = Join-Path $tmp "SHA256SUMS"
     Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsFile -UseBasicParsing
-    if (-not (Test-ArchiveHash $archivePath $sumsFile)) { exit 1 }
+    if (-not (Test-ArchiveHash $archivePath $sumsFile)) { throw "The archive failed its checksum gate - nothing was unpacked." }
 }
 
 Write-Step "Unpacking"
@@ -158,7 +158,7 @@ $src = Get-ChildItem -Path $extract -Directory |
     Select-Object -First 1
 if (-not $src) {
     Write-Host "[X] install.py not found in the downloaded archive."
-    exit 1
+    throw "install.py not found in the downloaded archive."
 }
 $srcPath = $src.FullName
 
@@ -186,5 +186,5 @@ if ($rc -eq 0) {
 } else {
     Write-Host ""
     Write-Host "[X] Installer exited with code $rc. Files kept at: $srcPath"
-    exit $rc
+    throw "Installer exited with code $rc. Files kept at: $srcPath"
 }

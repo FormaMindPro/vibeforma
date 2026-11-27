@@ -104,3 +104,18 @@ def test_zip_without_sums_stops(tmp_path):
     assert result.returncode == 1
     assert not marker.exists()
     assert "-SumsPath" in result.stdout
+
+
+def test_sharp_edge_bootstrap_has_no_exit_operator():
+    """Under `irm | iex` an exit closes the user's whole PowerShell session
+    with the error message still on screen; the bootstrap must throw instead
+    so only the script stops (audit-02 #7)."""
+    import re
+
+    text = SCRIPT.read_text(encoding="utf-8")
+    # comment lines cannot carry an operator; check real code lines only
+    code_lines = [line for line in text.splitlines()
+                  if not line.lstrip().startswith("#")]
+    offenders = [line for line in code_lines
+                 if re.search(r"(?<![\w.])exit\b", line)]
+    assert not offenders, f"install.ps1 still uses exit: {offenders}"

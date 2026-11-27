@@ -58,5 +58,9 @@ def resolve(cfg):
 def t(cfg, key, **kw):
     s = _load(resolve(cfg)).get(key, key)
     if kw:
-        s = s.format(**kw)
+        try:
+            s = s.format(**kw)
+        except (KeyError, IndexError, ValueError):
+            # a broken placeholder in a locale string must not raise in the UI
+            pass
     return s

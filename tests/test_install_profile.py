@@ -494,3 +494,16 @@ def test_no_other_path_placeholder_in_the_templates_utf_paths():
             if "__TARGET__" in line or "__LEGACY__" in line:
                 assert "'__TARGET__" not in line and "'__LEGACY__" not in line
                 assert '"' in line
+
+
+def test_choose_target_expands_tilde_sharp_edge(monkeypatch, tmp_path):
+    """A "~/..." answer must not create a literal "~" folder (audit-02 #8)."""
+    home = str(tmp_path / "home")
+    monkeypatch.setenv("USERPROFILE", home)
+    monkeypatch.setenv("HOME", home)
+    expected = install.os.path.abspath(
+        install.os.path.expanduser("~/VibeForma"))
+    got = install.choose_target(ask=lambda q: "~/VibeForma", interactive=True)
+    assert got == expected
+    assert "~" not in got
+    assert got.endswith("VibeForma")
