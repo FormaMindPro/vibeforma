@@ -115,7 +115,7 @@ def test_check_passes_with_personal_files_as_a_subprocess(tmp_path):
     script = tmp_path / "tools" / "build_release.py"
     script.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(SCRIPT, str(script))
-    proc = subprocess.run([sys.executable, str(script), "--check"],
+    proc = subprocess.run([sys.executable, str(script), "--check"],  # noqa: S603 - fixed script built inside the tmp dir
                           capture_output=True, text=True)
     assert proc.returncode == 0
     assert "build: excluded personal files: app/history.jsonl" in proc.stdout
@@ -142,7 +142,7 @@ def test_check_fails_loud_as_a_subprocess(tmp_path):
     script = tmp_path / "tools" / "build_release.py"
     script.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(SCRIPT, str(script))
-    proc = subprocess.run([sys.executable, str(script), "--check"],
+    proc = subprocess.run([sys.executable, str(script), "--check"],  # noqa: S603 - fixed script built inside the tmp dir
                           capture_output=True, text=True)
     assert proc.returncode != 0
     assert "outside the app/ whitelist" in proc.stderr
@@ -158,7 +158,7 @@ def test_whitelist_matches_the_committed_app_tree():
     """
     if shutil.which("git") is None:
         pytest.skip("git is not available on PATH")
-    proc = subprocess.run(["git", "ls-files", "app/"],
+    proc = subprocess.run(["git", "ls-files", "app/"],  # noqa: S607 - git resolved from PATH on purpose
                           cwd=ROOT, capture_output=True, text=True)
     assert proc.returncode == 0
     committed = set(line.strip().replace("\\", "/")

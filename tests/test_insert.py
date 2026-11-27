@@ -79,7 +79,7 @@ try:
     sys.modules["pyperclip"] = pyperclip
     sys.modules["pynput"] = pynput
     sys.modules["pynput.keyboard"] = keyboard
-    import insert  # noqa: E402
+    import insert
 finally:
     for _name, _mod in _saved_modules.items():
         if _mod is None:

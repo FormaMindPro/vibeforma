@@ -309,7 +309,7 @@ def _link_body(monkeypatch, tmp_path, target):
 
 def _like_operand(body):
     """The text between the quotes of the -like operand."""
-    line = next(l for l in body.splitlines() if "-like" in l)
+    line = next(ln for ln in body.splitlines() if "-like" in ln)
     marker = '-like "'
     quoted = line[line.index(marker) + len(marker):]
     assert quoted.endswith('") {')  # the operand is still one quoted string

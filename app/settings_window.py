@@ -25,6 +25,7 @@ import onboarding
 import snippets
 import snippets_ui
 import stats_ui
+import system_recording
 import update_control
 import window_layout
 import winfx
@@ -637,6 +638,30 @@ class SettingsWindow:
         self._row(f, self.tr("settings.source"),
                   self._opt(f, self.v_source, list(self._source_by_name)))
         self._note(f, self.tr("settings.note_source"))
+        # The field shows the effective path, so an empty key reads as the
+        # default folder and a redirected Documents profile still shows the
+        # real place a take lands in.
+        self._head(f, self.tr("settings.g_recordings_folder"))
+        self.v_recordings_folder = tk.StringVar(
+            value=system_recording.folder_for(c))
+        self._row(f, self.tr("settings.recording_folder"),
+                  tk.Entry(f, textvariable=self.v_recordings_folder, width=46,
+                           bg=FIELD_BG, fg=FG, insertbackground=FG,
+                           relief="flat"))
+        self.recordings_folder_btns = tk.Frame(f, bg=BG)
+        for text, command in (
+                (self.tr("settings.recording_folder_change"),
+                 self._change_recordings_folder),
+                (self.tr("settings.recording_folder_open"),
+                 self._open_recordings_folder),
+                (self.tr("settings.recording_folder_default"),
+                 self._default_recordings_folder)):
+            tk.Button(self.recordings_folder_btns, text=text, command=command,
+                      bg="#22262E", fg=FG, relief="flat",
+                      activebackground="#2A2F38", activeforeground=FG,
+                      cursor="hand2").pack(side="left", padx=(0, 6))
+        self._full(f, self.recordings_folder_btns)
+        self._note(f, self.tr("settings.note_recordings_folder"))
         # The preset owns the final dictation pass's beam and temperature
         # (card-265); the window shows no raw temperature, so nothing here
         # can override the chosen preset.
@@ -682,6 +707,47 @@ class SettingsWindow:
         key = ("settings.source_system" if str(code or "") == "system"
                else "settings.source_mic")
         return self.tr(key)
+
+
+    def _change_recordings_folder(self):
+        """Pick the folder a system take writes to; the field follows."""
+        current = self.v_recordings_folder.get().strip()
+        options = {"parent": self.win,
+                   "title": self.tr("settings.recording_folder_change")}
+        if os.path.isdir(current):
+            options["initialdir"] = current
+        path = filedialog.askdirectory(**options)
+        if path:
+            self.v_recordings_folder.set(os.path.abspath(path))
+
+
+    def _open_recordings_folder(self):
+        """Open the field's effective folder in Explorer."""
+        path = system_recording.folder_for(
+            {"system_recordings_dir": self.v_recordings_folder.get()})
+        try:
+            os.startfile(path)  # noqa: S606 - opens the user's own folder
+        except OSError:
+            self.save_status.configure(text=self.tr(
+                "settings.recording_folder_open_failed", path=path))
+
+
+    def _default_recordings_folder(self):
+        """Show the default path; Save writes an empty key for it."""
+        self.v_recordings_folder.set(system_recording.default_folder())
+
+
+    def _recordings_folder_value(self):
+        """The key value the field means: empty when it shows the default."""
+        folder = self.v_recordings_folder.get().strip().strip('"')
+        if not folder:
+            return ""
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(folder)))
+        default = system_recording.default_folder()
+        if os.path.normcase(path) == os.path.normcase(
+                os.path.abspath(default)):
+            return ""
+        return path
 
 
     def _build_keys_tab(self, f):
@@ -1517,6 +1583,7 @@ class SettingsWindow:
         d = DEFAULTS
         self.v_silence.set(d["silence_ms"])
         self.v_source.set(self._source_display(d["audio_source"]))
+        self.v_recordings_folder.set(system_recording.default_folder())
         self.v_partial.set(d["partial_every_s"])
         self.v_maxrec.set(d["max_record_s"])
         self.v_hold.set(d["hold_to_talk"])
@@ -2293,6 +2360,19 @@ class SettingsWindow:
         c["auto_stop"] = bool(self.v_autostop.get())
         c["audio_source"] = self._source_by_name.get(self.v_source.get(),
                                                      "microphone")
+        # The writer's own rule runs here, before anything is applied: an
+        # unusable folder keeps the window open with the typed values and a
+        # localized error, instead of failing on the next take.
+        folder = self._recordings_folder_value()
+        try:
+            system_recording.ensure_folder(
+                folder or system_recording.default_folder())
+        except system_recording.RecordingsFolderError as exc:
+            self.log.warning("Recordings folder unusable: %s", exc)
+            self.save_status.configure(text=self.tr(
+                "settings.recording_folder_failed", path=exc.path))
+            return
+        c["system_recordings_dir"] = folder
         c["beep_on"] = bool(self.v_beep_on.get())
         c["beep_off"] = bool(self.v_beep_off.get())
         c["model_keep_old"] = bool(self.v_keep.get())

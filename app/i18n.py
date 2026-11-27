@@ -3,6 +3,7 @@
 Adding a language = dropping app/locales/<code>.json with the same keys.
 No code edits needed; the settings window lists files it finds.
 """
+import contextlib
 import ctypes
 import json
 import os
@@ -58,9 +59,7 @@ def resolve(cfg):
 def t(cfg, key, **kw):
     s = _load(resolve(cfg)).get(key, key)
     if kw:
-        try:
+        # a broken placeholder in a locale string must not raise in the UI
+        with contextlib.suppress(KeyError, IndexError, ValueError):
             s = s.format(**kw)
-        except (KeyError, IndexError, ValueError):
-            # a broken placeholder in a locale string must not raise in the UI
-            pass
     return s

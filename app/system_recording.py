@@ -81,8 +81,13 @@ def _stamp(when: float | None) -> time.struct_time:
     return time.localtime() if when is None else time.localtime(float(when))
 
 
-def _ensure_folder(folder: str) -> str:
-    """Create the folder or raise the named error; never a bare OSError."""
+def ensure_folder(folder: str) -> str:
+    """Create the folder or raise the named error; never a bare OSError.
+
+    Public because the settings window checks a chosen folder with the
+    writer's own rule before it saves the key: a folder the writer would
+    refuse is reported in the window, not at the next take.
+    """
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError as exc:
@@ -99,7 +104,7 @@ def take_path(cfg: dict[str, Any] | None, when: float | None = None) -> str:
     rules out) gets a numeric suffix instead of overwriting a recording.
     """
     stamp = _stamp(when)
-    folder = _ensure_folder(os.path.join(folder_for(cfg),
+    folder = ensure_folder(os.path.join(folder_for(cfg),
                                          time.strftime(DATE_FORMAT, stamp)))
     name = time.strftime(NAME_FORMAT, stamp)
     path = os.path.join(folder, name + ".wav")

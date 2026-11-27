@@ -138,10 +138,8 @@ def rollback_existing(target, backup, device, log, *,
     if INSTALL_MARKER not in names:
         # the old install had no marker: do not leave the
         # incomplete marker of the failed attempt behind
-        try:
+        with contextlib.suppress(OSError):
             os.remove(os.path.join(target, INSTALL_MARKER))
-        except OSError:
-            pass
     # pip installed the attempt's dependencies into .venv while
     # the restored code and requirements are the old ones:
     # rebuild the venv so the two match again

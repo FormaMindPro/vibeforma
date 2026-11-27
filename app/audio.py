@@ -615,7 +615,7 @@ class Recorder:
                     self._check_timeouts()
                     continue
                 self._ingest(frame.reshape(-1))
-            except Exception:  # noqa: BLE001 - the monitor thread must never die
+            except Exception:  # the monitor thread must never die
                 self.log.exception("Monitor iteration failed; the take continues")
 
     def _ingest(self, data):
