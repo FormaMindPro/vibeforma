@@ -18,6 +18,7 @@ from dataclasses import replace
 from typing import Any
 
 import hallucination
+import model_catalog
 import numpy as np
 from config import (
     MODELS_DIR,
@@ -342,11 +343,10 @@ def decode_audio_file(path: str, log: logging.Logger | None = None,
 # Offline-first runtime: a cached model loads with no network; the network is
 # used only for the first download of a model that is nowhere on disk.
 
-# Canonical CT2 conversions that live outside Systran (Systran has no turbo
-# repo; mobiuslabsgmbh/faster-whisper-large-v3-turbo redirects to dropbox-dash).
-REPO_OVERRIDES = {
-    "large-v3-turbo": "dropbox-dash/faster-whisper-large-v3-turbo",
-}
+# The Hugging Face repo mapping lives in model_catalog (the one reference for
+# the shipped models, read by the service, the installer and the release-time
+# revision check alike); asr reads it from there.
+_repo_id = model_catalog.repo_id
 
 # Dictation presets per pinned language: punctuation + capitalization hints.
 # One entry per language of the menu (config.LANG_NAMES, no "auto"), each
@@ -381,13 +381,6 @@ PROMPT_PRESETS = {
     "ja": "句読点と大文字を使った音声入力。",
     "ko": "구두점과 대문자를 사용한 받아쓰기.",
 }
-
-
-def _repo_id(name):
-    """Hugging Face repo id for a short model name."""
-    if "/" in name:
-        return name
-    return REPO_OVERRIDES.get(name, f"Systran/faster-whisper-{name}")
 
 
 # A model folder is a CTranslate2 conversion: ``model.bin`` starts with a
