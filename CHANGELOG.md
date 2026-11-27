@@ -44,6 +44,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Uninstall finds shortcuts at odd paths.** Shortcut lookup escapes the
   `-like` wildcard metacharacters, so shortcuts are removed even when the
   install path contains `$`, a backtick, quotes or square brackets.
+- **A failed model switch keeps the previous model.** Loading a new model no
+  longer tears the recognizer down mid-flight: the replacement loads before
+  the running state is replaced, and if it fails to load, the previous
+  model keeps dictating instead of leaving the engine silent.
+- **The hotkey survives heavy load.** Windows silently removes low-level
+  hooks that take too long, and the handlers used to run on the hook thread
+  itself, so a loaded machine could kill the toggle without a trace. The
+  heavy work now runs on a worker with a queue; the hook thread only notes
+  the press.
+- **A broken config.json no longer stops the service.** A config.json that
+  is not a dictionary (`null`, a list) used to crash the start with a
+  TypeError; it is now read as the defaults, so the service starts and the
+  settings window can write a fresh file.
+- **The installer log moved out of the target folder.** The log is written
+  to `%LOCALAPPDATA%\VibeForma\logs` and its handle is closed before the
+  cleanups, so a failed install no longer blocks a retry or an uninstall.
 
 ### Changed
 - CI measures coverage on a Python matrix (3.10–3.14 on Windows, 3.12 on
