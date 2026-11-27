@@ -2,6 +2,7 @@
 import contextlib
 import json
 import os
+from typing import Any
 
 import dictionary
 import snippets
@@ -36,7 +37,7 @@ LOG_DIR = os.path.join(DATA_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "service.log")
 
 
-def _test_wav_path():
+def _test_wav_path() -> str:
     """The self-test WAV beside the service, or at the repository root.
 
     An installed copy keeps app/test_ru.wav; a fresh git checkout keeps the
@@ -69,7 +70,12 @@ QUALITY_PRESET_DEFAULT = "normal"
 QUALITY_PRESETS = ("normal", "accurate", "fast")
 
 # Whisper models offered in the UI (menu order) come from the catalog.
-from model_catalog import DEFAULT_MODEL, MODEL_GB, MODELS  # noqa: E402,F401 - re-exported
+# The redundant alias marks the re-export explicit: strict mypy
+# (no_implicit_reexport) hides imported names from other modules unless the
+# module re-exports them on purpose; at runtime the alias binds the same name.
+from model_catalog import DEFAULT_MODEL as DEFAULT_MODEL  # noqa: E402
+from model_catalog import MODEL_GB as MODEL_GB  # noqa: E402
+from model_catalog import MODELS as MODELS  # noqa: E402
 
 # Native names (endonyms) shown in the UI: every language is written in
 # that language itself.
@@ -156,7 +162,7 @@ DEFAULTS = {
 }
 
 
-def load():
+def load() -> dict[str, Any]:
     cfg = dict(DEFAULTS)
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
@@ -171,7 +177,7 @@ def load():
     return cfg
 
 
-def save(cfg):
+def save(cfg: dict[str, Any]) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -190,12 +196,12 @@ MAX_PROFILE_PROCESS = 120
 MAX_PROFILE_WINDOW = 200
 
 
-def _profile_text(value):
+def _profile_text(value: object) -> str:
     """A profile string field, stripped; anything else is empty."""
     return value.strip() if isinstance(value, str) else ""
 
 
-def _clean_app_profile(entry):
+def _clean_app_profile(entry: object) -> dict[str, Any] | None:
     """One profile as a dict, or None when it names no target.
 
     The dictionary and the snippets use the same normalization as the global
@@ -218,10 +224,11 @@ def _clean_app_profile(entry):
     }
 
 
-def normalize_app_profiles(profiles):
+def normalize_app_profiles(
+        profiles: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Clean the by-app profile list: targets kept, names deduped, capped."""
-    out = []
-    seen = set()
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for item in profiles or []:
         profile = _clean_app_profile(item)
         if profile is None:
@@ -236,7 +243,8 @@ def normalize_app_profiles(profiles):
     return out
 
 
-def validate_app_profiles(profiles):
+def validate_app_profiles(
+        profiles: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     """Format problems in the raw profile list: [{level, code, profile}].
 
     Codes: "format" (not an object, or neither a process nor a window
@@ -244,8 +252,8 @@ def validate_app_profiles(profiles):
     broken entries are dropped by normalization; the report exists for the
     settings tab, so a typo never disappears silently.
     """
-    issues = []
-    seen = set()
+    issues: list[dict[str, str]] = []
+    seen: set[str] = set()
     for item in profiles or []:
         profile = _clean_app_profile(item)
         if profile is None:
@@ -261,14 +269,15 @@ def validate_app_profiles(profiles):
     return issues
 
 
-def _exe_stem(value):
+def _exe_stem(value: object) -> str:
     """A process name without a folder or the ".exe" suffix, casefolded."""
     base = str(value or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     base = base.casefold()
     return base[:-4] if base.endswith(".exe") else base
 
 
-def app_profile_matches(profile, process="", title=""):
+def app_profile_matches(profile: dict[str, Any], process: str = "",
+                        title: str = "") -> bool:
     """True when every target the profile names matches this window.
 
     A profile with only a process ignores the title; one with only a window
@@ -284,7 +293,8 @@ def app_profile_matches(profile, process="", title=""):
     return not (wanted_window and wanted_window not in str(title or "").casefold())
 
 
-def match_app_profile(profiles, process="", title=""):
+def match_app_profile(profiles: list[dict[str, Any]] | None,
+                      process: str = "", title: str = "") -> dict[str, Any] | None:
     """The first profile this window matches, or None (global rules apply)."""
     for profile in normalize_app_profiles(profiles):
         if app_profile_matches(profile, process, title):
@@ -292,7 +302,7 @@ def match_app_profile(profiles, process="", title=""):
     return None
 
 
-def bootstrap_cuda_dlls():
+def bootstrap_cuda_dlls() -> None:
     """Make pip cuDNN/cuBLAS wheels visible to ctranslate2 on Windows."""
     import glob
     import sys
@@ -308,10 +318,11 @@ def bootstrap_cuda_dlls():
         os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
 
 
-def find_input_device(substring):
+def find_input_device(substring: str | None) -> int | None:
     """Device index by name substring, else the system default input."""
     import sounddevice as sd
 
+    default_in: int | None = None
     try:
         default_in = sd.default.device[0]
     except Exception:  # noqa: BLE001 - sounddevice has no stable base exception for the default device
@@ -325,11 +336,11 @@ def find_input_device(substring):
     return default_in
 
 
-def input_device_names():
+def input_device_names() -> list[str]:
     """All capture-capable device names, in sounddevice order."""
     import sounddevice as sd
 
-    out = []
+    out: list[str] = []
     for d in sd.query_devices():
         if d.get("max_input_channels", 0) > 0:
             out.append(str(d["name"]))

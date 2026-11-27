@@ -14,9 +14,9 @@ select = ["E4", "E7", "E9", "F", "B", "SIM", "UP", "I", "S", "BLE", "RUF100"]
 known-first-party = ["install", "uninstall"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 platform = "win32"
-files = ["app/vibeforma"]
+files = ["app/vibeforma", "app/insert.py", "app/config.py"]
 strict = true
 follow_imports = "skip"
 ignore_missing_imports = true
