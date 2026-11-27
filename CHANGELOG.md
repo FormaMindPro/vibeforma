@@ -3,6 +3,17 @@
 All notable changes to VibeForma are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.4 — 2026-11-27
+
+### Fixed
+- **"Open" works before the first recording.** The "Open" button next to
+  the recordings folder failed with "Could not open the recordings folder"
+  on a clean setup: the folder is created by the first system-audio take,
+  not at install, and the button handed a non-existent path to Explorer.
+  The button now creates the folder with the same rule a take uses before
+  opening it, and shows the message only when the folder genuinely cannot
+  be created (a blocked path, an access denial).
+
 ## 0.5.3 — 2026-11-27
 
 ### Added

@@ -4,7 +4,8 @@ The field shows the effective folder, so an empty key reads as
 ``system_recording.default_folder()`` and a set key as the configured path.
 The live tests build only the Recording tab on a bare Tk root: Change picks a
 folder through the dialog, Default shows the default path and Save writes an
-empty key for it, and an unusable folder is reported in ``save_status``
+empty key for it, Open creates a folder that does not exist yet before it is
+handed to the shell, and an unusable folder is reported in ``save_status``
 before anything is applied.
 """
 import json
@@ -264,6 +265,54 @@ def test_an_unavailable_folder_is_reported_before_apply(make_host, tmp_path):
     assert host.save_status.cget("text") == host.tr(
         "settings.recording_folder_failed", path=str(target))
     assert host.v_recordings_folder.get() == str(target)
+
+
+# -- Open ------------------------------------------------------------------
+def test_open_creates_the_folder_before_the_shell(make_host, monkeypatch,
+                                                  tmp_path):
+    """A folder no take has created yet is made first, then opened."""
+    calls = []
+    monkeypatch.setattr(settings_window.os, "startfile",
+                        lambda p: calls.append(p))
+    folder = tmp_path / "takes"
+    host = make_host()
+    host.v_recordings_folder.set(str(folder))
+    assert not folder.exists()
+
+    host._open_recordings_folder()
+
+    assert os.path.isdir(folder)
+    assert calls == [os.path.abspath(str(folder))]
+    assert host.save_status.cget("text") == ""
+
+
+def test_open_reports_a_folder_it_cannot_create(make_host, monkeypatch,
+                                                tmp_path):
+    """A path the writer's rule refuses keeps the localized message."""
+    calls = []
+    monkeypatch.setattr(settings_window.os, "startfile",
+                        lambda p: calls.append(p))
+    blocker = tmp_path / "blocked"
+    blocker.write_text("a file, not a folder", encoding="utf-8")
+    target = blocker / "takes"
+    host = make_host()
+    host.v_recordings_folder.set(str(target))
+
+    host._open_recordings_folder()
+
+    assert calls == []
+    assert host.save_status.cget("text") == host.tr(
+        "settings.recording_folder_open_failed", path=os.path.abspath(
+            str(target)))
+
+
+def test_open_runs_the_writer_rule_before_startfile():
+    """Order in the source: ensure_folder precedes os.startfile."""
+    block = _method(_source(), "_open_recordings_folder")
+    assert "system_recording.ensure_folder" in block
+    assert "os.startfile" in block
+    assert (block.index("system_recording.ensure_folder")
+            < block.index("os.startfile"))
 
 
 def test_ensure_folder_is_the_writer_rule_and_public(tmp_path):

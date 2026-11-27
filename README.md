@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.3** keeps a phrase alive when the clipboard is busy and rolls a failed update back to the old installation. 0.5.2 made insertion wait for the hotkey instead of racing it. See [What's new](#whats-new-in-053).
+> **VibeForma 0.5.4** makes the recordings-folder "Open" button work before the first recording. 0.5.3 added the recordings folder to Settings and keeps a phrase alive when the clipboard is busy. See [What's new](#whats-new-in-054).
 
 ## What is VibeForma
 
@@ -58,6 +58,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.4
+
+- **"Open" works before the first recording.** The "Open" button next to the recordings folder on the Recording tab failed with "Could not open the recordings folder" until the first system-audio take had run: the folder is created by the first take, not at install, and the button handed Explorer a path that did not exist yet. The button now creates the folder with the same rule a take uses before opening it, so it works on a clean install right away; the message now appears only when the folder genuinely cannot be created (a blocked path, an access denial).
+
 ## What's new in 0.5.3
 
 - **Choose where system-audio recordings land.** The Recording tab now shows the folder that system-audio takes are written to, with the actual current path, and lets you change it: "Change…" opens a folder picker, "Open" reveals the folder, "Default" returns to `Documents\VibeForma\Recordings`. An unusable folder is rejected with a clear message before a take starts, so the WAV, TXT and SRT of a take always land in a folder that works.
@@ -72,10 +76,6 @@ The same engine also transcribes audio and video files, including whole folders,
 - **The hotkey survives heavy load.** Windows silently removes low-level hooks that take too long, and the handlers used to run on the hook thread itself, so a loaded machine could kill the toggle without a trace. The heavy work now runs on a worker with a queue; the hook thread only notes the press.
 - **A broken config.json no longer stops the service.** A config.json that is not a dictionary (`null`, a list) used to crash the start with a TypeError; it is now read as the defaults, so the service starts and the settings window can write a fresh file.
 - **The installer log moved out of the target folder.** The log is written to `%LOCALAPPDATA%\VibeForma\logs` and its handle is closed before the cleanups, so a failed install no longer blocks a retry or an uninstall.
-
-## What's new in 0.5.2
-
-- **Insertion waits for the hotkey instead of racing it.** A take is stopped with the same `Ctrl+Alt+Space` that starts it, and the paste could go out while the combo was still held: the window received `Ctrl+Alt+Shift+Insert`, which no app treats as paste, so the phrase silently stayed on the clipboard while the panel reported an insert. VibeForma now waits for the combo to come up — one second at most — checks the target window again and then pastes; the selected-text read at the start of a take and the `Ctrl+Z` undo wait the same way. When the wait times out, the text is deliberately left in the clipboard for a manual paste. The previous clipboard is restored after a successful paste again: the counter used to be read before the private-format writes of the same call, so every restore looked like a foreign change and was skipped.
 
 ## Quick start
 

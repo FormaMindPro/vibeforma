@@ -726,8 +726,12 @@ class SettingsWindow:
         path = system_recording.folder_for(
             {"system_recordings_dir": self.v_recordings_folder.get()})
         try:
+            # The folder is created by the first take, not at install, so on
+            # a clean setup it does not exist yet and startfile would fail;
+            # the writer's own rule creates it here first.
+            system_recording.ensure_folder(path)
             os.startfile(path)  # noqa: S606 - opens the user's own folder
-        except OSError:
+        except (system_recording.RecordingsFolderError, OSError):
             self.save_status.configure(text=self.tr(
                 "settings.recording_folder_open_failed", path=path))
 
