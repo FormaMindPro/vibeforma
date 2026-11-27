@@ -12,8 +12,10 @@ declined revision stays declined after a restart.
 The replacement is transactional: the new revision is downloaded into a
 temporary folder inside ``MODELS_DIR`` (the same volume, so the final swap is
 a rename), validated by ``asr._model_folder_problem``, and swapped in while
-the previous folder becomes a backup. The backup is removed only after the
-caller has loaded the new model; any failure puts the previous folder back.
+the previous folder becomes a backup. After the caller has loaded the new
+model the backup is kept as ``previous-<model>-<revision>`` (the human's
+decision, card-308): a rollback is a folder swap, never a re-download; any
+failure before that puts the previous folder back in place.
 """
 from __future__ import annotations
 
@@ -283,6 +285,7 @@ class ModelUpdateTransaction:
         self.backup = ""
         self.temp = ""
         self.swapped = False
+        self.previous_revision = ""
         self._download = download
         self._validate = validate
         self.log = log
@@ -319,6 +322,8 @@ class ModelUpdateTransaction:
         if not self.temp:
             raise ModelUpdateError("nothing was downloaded")
         if os.path.exists(self.target):
+            marker = read_marker(self.target)
+            self.previous_revision = str((marker or {}).get("revision") or "")
             self.backup = os.path.join(
                 self.models_dir, f".backup-{self.model}-{uuid.uuid4().hex}")
             os.replace(self.target, self.backup)
@@ -333,7 +338,13 @@ class ModelUpdateTransaction:
         self.swapped = True
 
     def commit(self) -> None:
-        """Write the marker for the installed revision and drop the backup."""
+        """Write the marker for the installed revision and keep the backup.
+
+        The previous revision stays on disk as ``previous-<model>-<revision>``
+        (the human's decision, card-308): an update that loads fine but
+        behaves worse can be rolled back without re-downloading - swap the
+        folder names, or just delete the kept folder to reclaim the space.
+        """
         try:
             write_marker(self.target, self.repo, self.revision)
         except OSError as e:
@@ -341,11 +352,26 @@ class ModelUpdateTransaction:
                 self.log.warning("Model marker not written for %s: %s",
                                  self.target, e)
         if self.backup:
-            self._drop(self.backup)
+            self._keep_previous()
             self.backup = ""
         if self.temp:
             self._drop(self.temp)
             self.temp = ""
+
+    def _keep_previous(self) -> None:
+        """Rename the backup to its kept name; best effort, never fatal."""
+        kept = os.path.join(
+            self.models_dir,
+            f"previous-{self.model}-{self.previous_revision[:12] or 'unknown'}")
+        try:
+            if os.path.exists(kept):
+                self._drop(kept)
+            os.replace(self.backup, kept)
+        except OSError as e:
+            if self.log is not None:
+                self.log.warning("Previous model folder not kept for %s: %s",
+                                 self.model, e)
+            self._drop(self.backup)
 
     def rollback(self) -> None:
         """Remove the new folder and put the previous one back."""

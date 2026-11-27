@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.4** makes the recordings-folder "Open" button work before the first recording. 0.5.3 added the recordings folder to Settings and keeps a phrase alive when the clipboard is busy. See [What's new](#whats-new-in-054).
+> **VibeForma 0.5.5** brings the Whisper model update check by consent — a new model revision is offered in Settings with a kept previous folder for a no-download rollback. 0.5.4 made the recordings-folder "Open" button work before the first recording. See [What's new](#whats-new-in-055).
 
 ## What is VibeForma
 
@@ -58,24 +58,13 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.5
+
+- **Whisper model updates by consent.** A background check every 24 hours (configurable, can be turned off) compares your downloaded models against Hugging Face and, when a newer revision exists, offers it on the **Model & language** tab with **Update** and **Not now** buttons, one tray notification and a manual check button; a declined revision is not offered again even after a restart. The update runs only by your click, one model at a time, and only while the service is idle — mid-recording it refuses with a clear "wait for the current cycle". The new revision is downloaded into a temporary folder, validated by the same gate the app uses for any model, and swapped in; the previous revision is **kept on disk** as `previous-<model>-<revision>`, so an update that loads fine but behaves worse can be rolled back without re-downloading (delete the kept folder to reclaim the space). Any failure restores the previous folder, the config and the working model. Works fully offline otherwise — the check never breaks dictation when there is no network.
+
 ## What's new in 0.5.4
 
 - **"Open" works before the first recording.** The "Open" button next to the recordings folder on the Recording tab failed with "Could not open the recordings folder" until the first system-audio take had run: the folder is created by the first take, not at install, and the button handed Explorer a path that did not exist yet. The button now creates the folder with the same rule a take uses before opening it, so it works on a clean install right away; the message now appears only when the folder genuinely cannot be created (a blocked path, an access denial).
-
-## What's new in 0.5.3
-
-- **Choose where system-audio recordings land.** The Recording tab now shows the folder that system-audio takes are written to, with the actual current path, and lets you change it: "Change…" opens a folder picker, "Open" reveals the folder, "Default" returns to `Documents\VibeForma\Recordings`. An unusable folder is rejected with a clear message before a take starts, so the WAV, TXT and SRT of a take always land in a folder that works.
-- **A busy clipboard no longer eats the phrase.** When another program held the clipboard for a moment, the copy of the recognized text threw and the take died before any paste — the phrase was lost with nothing but a worker log line behind it. The copy now retries for a short moment and, if it still fails, ends the insert with an explicit error status; the text stays in the dictation history for a manual re-insert.
-- **Holding `Esc` cancels once.** Every autorepeat press of a held `Esc` used to spawn its own cancel thread — dozens of parallel cancels, repeated notifications, log noise. The watcher now keeps a single cancel in flight and ignores autorepeat presses until it finishes; the next press after that works as usual.
-- **Recording stops safely and the sound monitor comes back.** Stopping a take no longer races the audio writer, and the live system-audio monitor revives itself after a device failure instead of staying dead; a partial iteration failure is reported honestly instead of being swallowed.
-- **Hand-written hotkey aliases start the service.** A `config.json` value like `control+alt+space` or `win+escape` used to kill the start — the toggle-mode parser only accepted canonical `ctrl`/`cmd`/`esc` names. One shared keymap now normalizes the aliases for the hotkey and the onboarding window alike, and reserved-combo warnings (`win+l`) still fire.
-- **The installer survives Cyrillic and special-character paths.** A target folder like `C:\Users\Ivan\Soft$` (Cyrillic in the user name works too) used to break the PowerShell shortcut scripts or decode child output in the wrong codepage. Dollar, backtick, quote and wildcard-bracket characters are escaped now, child output is read as UTF-8, `~/VibeForma` expands to the home folder, a broken locale placeholder can no longer crash an error message, and a CUDA driver mismatch gives its own hints.
-- **A failed update rolls back to the old installation.** If a step fails while updating an existing install, the old version now comes back whole: the previous marker is snapshotted into the backup before anything overwrites it, the backup survives a failed restore with its path written to the log, and the virtual environment is rebuilt from the restored requirements.
-- **Uninstall finds shortcuts at odd paths.** Shortcut lookup escapes the `-like` wildcard metacharacters, so shortcuts are found and removed even when the install path contains `$`, a backtick, quotes or square brackets.
-- **A failed model switch keeps the previous model.** Loading a new model no longer tears the recognizer down mid-flight: the replacement loads before the running state is replaced, and if it fails to load, the previous model keeps dictating instead of leaving the engine silent.
-- **The hotkey survives heavy load.** Windows silently removes low-level hooks that take too long, and the handlers used to run on the hook thread itself, so a loaded machine could kill the toggle without a trace. The heavy work now runs on a worker with a queue; the hook thread only notes the press.
-- **A broken config.json no longer stops the service.** A config.json that is not a dictionary (`null`, a list) used to crash the start with a TypeError; it is now read as the defaults, so the service starts and the settings window can write a fresh file.
-- **The installer log moved out of the target folder.** The log is written to `%LOCALAPPDATA%\VibeForma\logs` and its handle is closed before the cleanups, so a failed install no longer blocks a retry or an uninstall.
 
 ## Quick start
 

@@ -93,6 +93,7 @@ APP_FILES = (
     "app/vibeforma/connect.py",
     "app/vibeforma/http_api.py",
     "app/vibeforma/mcp_server.py",
+    "app/vibeforma/model_updates.py",
     "app/vibeforma/pipe.py",
     "app/vibeforma/selftest.py",
     "app/vibeforma/service.py",

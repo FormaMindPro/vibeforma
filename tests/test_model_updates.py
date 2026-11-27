@@ -460,6 +460,31 @@ def test_a_successful_update_replaces_the_folder_and_writes_the_marker(
     assert host.state == STATE_IDLE
 
 
+def test_a_successful_update_keeps_the_previous_revision_on_disk(
+        dirs, monkeypatch, downloads):
+    """The human's decision (card-308): the previous folder is not deleted.
+
+    A kept ``previous-<model>-<revision>`` folder holds the old weights with
+    their own marker, so an update that loads fine but behaves worse can be
+    rolled back without re-downloading.
+    """
+    host, folder, cfg = _offer(dirs, monkeypatch)
+    models_dir, _data_dir = dirs
+
+    host._model_update_worker({"model": "small", "repo": SMALL_REPO,
+                               "revision": "sha-new"})
+
+    kept = list(models_dir.glob("previous-small-*"))
+    assert len(kept) == 1, kept
+    assert "sha-old" in kept[0].name
+    old_marker = model_updates.read_marker(str(kept[0]))
+    assert old_marker and old_marker["revision"] == "sha-old"
+    assert _tag(kept[0]) == 1
+    # The live model carries the new revision; the kept folder's marker is
+    # untouched - the rollback is a folder swap, not a re-download.
+    assert model_updates.read_marker(str(folder))["revision"] == "sha-new"
+
+
 def test_a_download_failure_restores_the_folder_and_the_working_model(
         dirs, monkeypatch):
     host, folder, cfg = _offer(dirs, monkeypatch)

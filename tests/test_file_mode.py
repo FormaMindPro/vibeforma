@@ -922,7 +922,7 @@ def test_pipe_client_without_a_service_reports_unavailable():
 def test_config_has_file_mode_limits_and_version():
     import config
 
-    assert config.VERSION == "0.5.4"
+    assert config.VERSION == "0.5.5"
     for key in ("file_roots", "file_max_mb", "file_max_s", "file_max_sync_s",
                 "job_keep_s", "file_word_timestamps"):
         assert key in config.DEFAULTS

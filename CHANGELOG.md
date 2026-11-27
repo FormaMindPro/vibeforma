@@ -14,8 +14,11 @@
   file queue — otherwise the localized "wait for the current cycle" refusal
   writes nothing. The new revision is downloaded into a temporary folder
   inside `MODELS_DIR`, validated by the existing model-folder gate, and
-  swapped in while the service is busy; the previous folder is kept until
-  the new model loads, and any failure of the download, validation or load
+  swapped in while the service is busy; after the new model loads, the
+  previous revision is kept on disk as `previous-<model>-<revision>` — an
+  update that loads fine but behaves worse can be rolled back without
+  re-downloading (delete the kept folder to reclaim the space). Any failure
+  of the download, validation or load
   restores the folder, `cfg["model"]` and the working model. A model that
   lives only in the shared Hugging Face cache gets a copy in `MODELS_DIR`
   and the cache is never removed; an installed model without a marker gets
