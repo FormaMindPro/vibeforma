@@ -273,3 +273,134 @@ def test_a_partial_keeps_the_raw_preview():
     text = engine.transcribe(_audio(1.0), partial=True)
 
     assert text == SUBSCRIBE.strip()
+
+
+# -- the invented tail --------------------------------------------------
+# " Subtitles made by DimaTorzok": the name after the phrase is part of the
+# invented line and goes with it.
+CREDIT = (" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+          "\u0441\u0434\u0435\u043b\u0430\u043b DimaTorzok")
+CREDIT_NORM = ("\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+               "\u0441\u0434\u0435\u043b\u0430\u043b")
+# " Hello", " subtitles made", " by DimaTorzok"
+class _Word:
+    """faster-whisper's word shape: the text rides in ``word``."""
+
+    probability = None
+
+    def __init__(self, start, end, text):
+        self.start = start
+        self.end = end
+        self.word = text
+
+
+CREDIT_WORDS = [
+    _Word(0.4, 0.7, " \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"),
+    _Word(0.7, 1.0, " \u0441\u0434\u0435\u043b\u0430\u043b"),
+    _Word(1.0, 1.4, " DimaTorzok"),
+]
+HELLO = " \u041f\u0440\u0438\u0432\u0435\u0442"
+
+
+def _vad(monkeypatch, speeches, calls=None):
+    """Replace the VAD: the real Silero model never loads in these tests."""
+
+    def fake(audio, vad_options=None, sampling_rate=None):
+        if calls is not None:
+            calls.append(sampling_rate)
+        return speeches
+
+    monkeypatch.setattr(asr, "get_speech_timestamps", fake)
+
+
+def test_a_trailing_stop_phrase_written_into_silence_is_cut(monkeypatch):
+    engine = _engine([
+        Segment(0.0, 0.4, HELLO, words=[_Word(0.0, 0.4, HELLO)]),
+        Segment(0.4, 1.4, CREDIT, words=list(CREDIT_WORDS)),
+    ])
+    _vad(monkeypatch, [{"start": 0, "end": int(0.4 * 16000)}])
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == HELLO.strip()
+    assert [s.text for s in engine.last_segments] == [HELLO]
+    warned = [line for level, line in engine.log.lines if level == "warning"]
+    assert any(CREDIT_NORM in line for line in warned)
+    assert all(HELLO.strip() not in line for line in warned)
+
+
+def test_a_trailing_stop_phrase_that_was_spoken_is_kept(monkeypatch):
+    engine = _engine([Segment(0.0, 1.4, CREDIT, words=list(CREDIT_WORDS))])
+    _vad(monkeypatch, [{"start": 0, "end": int(1.4 * 16000)}])
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == CREDIT.strip()
+    assert [s.text for s in engine.last_segments] == [CREDIT]
+
+
+def test_a_stop_phrase_inside_the_take_is_not_a_tail(monkeypatch):
+    """The tail runs to the end, so the speech after the phrase keeps it."""
+    text_line = (" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+                 "\u0441\u0434\u0435\u043b\u0430\u043b DimaTorzok "
+                 "\u0438 \u043f\u043e\u0442\u043e\u043c \u043c\u044b "
+                 "\u043f\u043e\u0448\u043b\u0438 \u0433\u0443\u043b\u044f\u0442\u044c")
+    words = [
+        _Word(0.0, 0.3, " \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"),
+        _Word(0.3, 0.6, " \u0441\u0434\u0435\u043b\u0430\u043b"),
+        _Word(0.6, 0.9, " DimaTorzok"),
+        _Word(1.5, 1.6, " \u0438"),
+        _Word(1.6, 1.8, " \u043f\u043e\u0442\u043e\u043c"),
+        _Word(1.8, 2.0, " \u043c\u044b"),
+        _Word(2.0, 2.2, " \u043f\u043e\u0448\u043b\u0438"),
+        _Word(2.2, 2.4, " \u0433\u0443\u043b\u044f\u0442\u044c"),
+    ]
+    engine = _engine([Segment(0.0, 2.4, text_line, words=words)])
+    _vad(monkeypatch, [{"start": int(1.5 * 16000),
+                        "end": int(2.4 * 16000)}])
+
+    text = engine.transcribe(_audio(3.0))
+
+    assert text == text_line.strip()
+    assert [s.text for s in engine.last_segments] == [text_line]
+
+
+def test_a_take_without_word_timestamps_is_not_touched(monkeypatch):
+    engine = _engine([Segment(0.0, 1.0, CREDIT)])
+    calls = []
+    _vad(monkeypatch, [], calls)
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == CREDIT.strip()
+    assert [s.text for s in engine.last_segments] == [CREDIT]
+    assert calls == []
+
+
+def test_cutting_the_whole_take_leaves_no_empty_segment(monkeypatch):
+    engine = _engine([Segment(0.0, 1.4, CREDIT + "!", words=[
+        _Word(0.0, 0.4, " \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"),
+        _Word(0.4, 0.9, " \u0441\u0434\u0435\u043b\u0430\u043b"),
+        _Word(0.9, 1.4, " DimaTorzok!"),
+    ])])
+    _vad(monkeypatch, [])
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == ""
+    assert engine.last_segments == []
+    assert "!" not in text
+
+
+def test_a_vad_failure_leaves_the_take_alone(monkeypatch):
+    engine = _engine([Segment(0.0, 1.4, CREDIT, words=list(CREDIT_WORDS))])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("vad is down")
+
+    monkeypatch.setattr(asr, "get_speech_timestamps", boom)
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == CREDIT.strip()
+    assert [s.text for s in engine.last_segments] == [CREDIT]

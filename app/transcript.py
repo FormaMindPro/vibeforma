@@ -98,7 +98,7 @@ def _clean(segments: list[Segment]) -> list[Segment]:
     return out
 
 
-def _words_text(words: list[Word]) -> str:
+def words_text(words: list[Word]) -> str:
     """A cue's text from its words, punctuation attached as the speech has it.
 
     The engine's word text carries its own leading space and its punctuation;
@@ -164,7 +164,7 @@ def sentence_captions(segments: list[Segment],
     def close() -> None:
         nonlocal buffer, owner, previous_end
         if buffer and owner is not None:
-            text = _words_text(buffer)
+            text = words_text(buffer)
             if text:
                 start = max(previous_end, max(0.0, float(buffer[0].start)))
                 end = max(start, max(0.0, max(float(word.end)

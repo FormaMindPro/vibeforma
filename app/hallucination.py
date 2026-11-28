@@ -121,6 +121,50 @@ def stop_phrase(text: str) -> str | None:
     return None
 
 
+def trailing_stop_phrase(words) -> tuple[int, str] | None:
+    """The stop phrase that closes a take: ``(first word index, phrase)``.
+
+    ``words`` is the take's aligned word list (``transcript.Word``). Every
+    word is normalized and split into tokens, and each token keeps the index
+    of the word it came from, so a hyphen, a mark or a leading space inside a
+    word never hides the phrase and the caller cuts whole words. The last
+    occurrence of a ``STOP_PHRASES`` entry is the trailing line: the tail runs
+    from its first word to the end of the take, the name and the punctuation
+    after the phrase included ("subtitles made by DimaTorzok" is one invented
+    line, not a phrase and a separate word). Overlapping entries ("please
+    subscribe" and "subscribe to my channel") name one line, so the tail
+    starts at the earliest of them.
+
+    Position alone does not decide whether the line was spoken; the caller
+    reads the words' timestamps against the VAD and keeps a spoken phrase.
+    ``None`` means the take carries no stop phrase at all.
+    """
+    tokens: list[str] = []
+    owners: list[int] = []
+    for index, word in enumerate(words or []):
+        for token in normalize(getattr(word, "text", "")).split():
+            tokens.append(token)
+            owners.append(index)
+    matches: list[tuple[int, int, str]] = []
+    for phrase in STOP_PHRASES:
+        needle = phrase.split()
+        if not needle or len(needle) > len(tokens):
+            continue
+        for start in range(len(tokens) - len(needle) + 1):
+            if tokens[start:start + len(needle)] == needle:
+                matches.append((start, start + len(needle), phrase))
+    if not matches:
+        return None
+    start, _end, phrase = max(matches, key=lambda match: (match[1], -match[0]))
+    while True:
+        wider = [match[0] for match in matches
+                 if match[0] < start and match[1] >= start]
+        if not wider:
+            break
+        start = min(wider)
+    return owners[start], phrase
+
+
 def is_loop(text: str) -> bool:
     """True when one word takes half the text: the shape of a repetition."""
     words = normalize(text).split()

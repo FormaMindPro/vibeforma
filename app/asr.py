@@ -26,7 +26,8 @@ from config import (
     QUALITY_PRESETS,
     bootstrap_cuda_dlls,
 )
-from transcript import Segment, Word
+from faster_whisper.vad import VadOptions, get_speech_timestamps
+from transcript import Segment, Word, words_text
 
 try:  # faster-whisper >= 1.1 ships the batched wrapper; older builds do not
     from faster_whisper import BatchedInferencePipeline
@@ -35,6 +36,11 @@ except Exception:  # noqa: BLE001, pragma: no cover - an old faster-whisper buil
 
 VAD_PARAMETERS = {"min_silence_duration_ms": 1000, "speech_pad_ms": 400}
 NO_SPEECH_THRESHOLD = 0.6
+# A trailing stop phrase whose words overlap less speech than this was
+# written into the silence after the last word: the engine had sound but no
+# speech, and its decoder filled the gap with a credits or subscribe line. A
+# phrase the person actually said overlaps its own words almost fully.
+TAIL_SPEECH_MAX_S = 0.15
 # The sequential call's other two per-segment thresholds, applied to the
 # batched path's segments too (faster-whisper 1.2.1 applies none there, B5).
 # ``log_prob`` is the library's own default. ``compression_ratio`` keeps the
@@ -662,6 +668,23 @@ def _threshold_failure(segment: Segment, language: str) -> str | None:
     return None
 
 
+def _speech_seconds(start: float, end: float,
+                    speeches: list[Any]) -> float:
+    """Seconds of ``[start, end]`` covered by the VAD's speech chunks.
+
+    ``get_speech_timestamps`` reports sample offsets; the caller divides by
+    ``TARGET_RATE`` before the chunks reach here, so one conversion lives
+    with the call. An empty or inverted span covers nothing.
+    """
+    total = 0.0
+    for chunk in speeches or []:
+        first = max(float(start), float(chunk.get("start", 0.0)))
+        last = min(float(end), float(chunk.get("end", 0.0)))
+        if last > first:
+            total += last - first
+    return total
+
+
 def quality_preset(cfg) -> tuple[str, int, tuple[float, ...] | float]:
     """The final dictation pass settings read from ``quality_preset``.
 
@@ -753,6 +776,65 @@ class ASR:
                              segment.start, segment.end, reason)
             kept.append(segment)
         return kept
+
+    def _without_invented_tail(self, audio: np.ndarray,
+                               segments: list[Segment]) -> list[Segment]:
+        """Cut a stop phrase the engine invented at the end of the take.
+
+        The engine fills the silence after the last word with a credits or
+        subscribe line. The stop-list alone cannot tell it from a spoken one:
+        only the audio can. The VAD reads the take, and a trailing phrase
+        whose words overlap less speech than ``TAIL_SPEECH_MAX_S`` is
+        invented; it goes together with every word from its first one to the
+        end, name and punctuation included. A phrase the person really said
+        keeps its place, and so does a take where the last segment has no
+        word timestamps or the VAD fails: a doubtful tail never costs a
+        dictation.
+
+        The cut happens on the segment's words, not only its text: the
+        subtitle cue is rebuilt from the words, and a word left in place
+        would return the phrase to SRT and VTT.
+        """
+        if not segments:
+            return segments
+        last = segments[-1]
+        if not last.words:
+            return segments
+        found = hallucination.trailing_stop_phrase(last.words)
+        if found is None:
+            return segments
+        index, phrase = found
+        tail = last.words[index:]
+        start = float(tail[0].start)
+        end = float(tail[-1].end)
+        try:
+            speeches = get_speech_timestamps(
+                audio,
+                vad_options=VadOptions(threshold=0.5, speech_pad_ms=0),
+                sampling_rate=TARGET_RATE,
+            )
+        except Exception as exc:  # noqa: BLE001 - never costs the take
+            self.log.debug("Tail speech check skipped: %s", exc)
+            return segments
+        rate = float(TARGET_RATE)
+        spoken = _speech_seconds(start, end, [
+            {"start": float(chunk["start"]) / rate,
+             "end": float(chunk["end"]) / rate}
+            for chunk in speeches or []
+        ])
+        if spoken >= TAIL_SPEECH_MAX_S:
+            return segments
+        self.log.warning("Cut invented tail at %.1f-%.1f s: %s",
+                         start, end, phrase)
+        kept = last.words[:index]
+        text = words_text(kept) if kept else ""
+        if not text:
+            return segments[:-1]
+        if last.text[:1].isspace():
+            text = " " + text
+        out = list(segments)
+        out[-1] = replace(last, text=text, words=kept)
+        return out
 
     def _transcribe_impl(self, audio: np.ndarray, language: str, *,
                          word_timestamps: bool = False,
@@ -959,6 +1041,7 @@ class ASR:
             collected = [_segment(seg) for seg in segments]
             if not partial:
                 collected = self._without_invented(collected)
+                collected = self._without_invented_tail(audio, collected)
             text = "".join(seg.text for seg in collected).strip()
             if not partial:
                 self.last_segments = collected
@@ -990,6 +1073,7 @@ class ASR:
                 temperature=RETRANSCRIBE_TEMPERATURE, word_timestamps=True)
             collected = self._without_invented(
                 [_segment(seg) for seg in segments])
+            collected = self._without_invented_tail(audio, collected)
             text = "".join(seg.text for seg in collected).strip()
             self.last_segments = collected
             self.log.info(
