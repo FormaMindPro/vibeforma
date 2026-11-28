@@ -1,3 +1,21 @@
+## 0.5.9 — 2026-11-28
+
+### Fixed
+- **The recording cues are audible.** The start and stop checkboxes on the
+  Recording tab were on by default but silent on laptops: the cue used
+  `winsound.Beep`, which drives the PC speaker rather than the sound card.
+  The cues are now short two-note WAVs played through the default output
+  device — rising for the start, falling for the stop — so they are heard in
+  speakers and headphones; when playback is unavailable the old beep remains
+  as a fallback. The checkboxes and their default stay as they were.
+- **Invented subtitle credits are cut.** The stop list now knows the
+  "thanks for the subtitles <name>" family and close credits in Russian and
+  English — "captions by", "subtitles provided by", the feminine forms and
+  the translation variants. The 0.5.8 tail guard cuts such a line together
+  with the name and everything after it when the VAD, the word duration and
+  the tempo do not support speech; a phrase really said aloud keeps its
+  place.
+
 ## 0.5.8 — 2026-11-28
 
 ### Fixed

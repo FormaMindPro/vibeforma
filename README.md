@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.8** keeps every word before an invented ending on a long take: the tail guard read the last 20 words but applied the phrase's position as if it were the start of the take, so the cut could begin too early. The position is now carried back into the take. See [What's new](#whats-new-in-058).
+> **VibeForma 0.5.9** makes the recording cues audible through the default output device and cuts invented subtitle credits — "thanks for the subtitles <name>" and its variants — when the sound does not support them. See [What's new](#whats-new-in-059).
 
 ## What is VibeForma
 
@@ -58,6 +58,11 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.9
+
+- **The recording cues are audible.** The start and stop checkboxes on the Recording tab were on by default but silent on laptops: the cue used `winsound.Beep`, which drives the PC speaker rather than the sound card. The cues are now short two-note WAVs played through the default output device — rising for the start, falling for the stop — so they are heard in speakers and headphones; when playback is unavailable the old beep remains as a fallback. The checkboxes and their default are unchanged.
+- **Invented subtitle credits are cut.** The stop list now knows the "thanks for the subtitles <name>" family and close credits in Russian and English — "captions by", "subtitles provided by", the feminine forms and the translation variants. The tail guard cuts such a line together with the name and everything after it when the VAD, the word duration and the tempo do not support speech; a phrase really said aloud keeps its place.
+
 ## What's new in 0.5.8
 
 - **A long take keeps the words before an invented ending.** The 0.5.7 guard read only the take's last 20 words and then used the phrase's position in that window as its position in the whole take. On a take longer than 20 words the cut started up to a window too early, so real words before the invented line disappeared with it. The position is now carried from the window back into the take; a 25-word regression take keeps every word before the phrase. Short takes and the rule that keeps a spoken phrase are unchanged.
@@ -73,10 +78,6 @@ The same engine also transcribes audio and video files, including whole folders,
 ## What's new in 0.5.5
 
 - **Whisper model updates by consent.** A background check every 24 hours (configurable, can be turned off) compares your downloaded models against Hugging Face and, when a newer revision exists, offers it on the **Model & language** tab with **Update** and **Not now** buttons, one tray notification and a manual check button; a declined revision is not offered again even after a restart. The update runs only by your click, one model at a time, and only while the service is idle — mid-recording it refuses with a clear "wait for the current cycle". The new revision is downloaded into a temporary folder, validated by the same gate the app uses for any model, and swapped in; the previous revision is **kept on disk** as `previous-<model>-<revision>`, so an update that loads fine but behaves worse can be rolled back without re-downloading (delete the kept folder to reclaim the space). Any failure restores the previous folder, the config and the working model. Works fully offline otherwise — the check never breaks dictation when there is no network.
-
-## What's new in 0.5.4
-
-- **"Open" works before the first recording.** The "Open" button next to the recordings folder on the Recording tab failed with "Could not open the recordings folder" until the first system-audio take had run: the folder is created by the first take, not at install, and the button handed Explorer a path that did not exist yet. The button now creates the folder with the same rule a take uses before opening it, so it works on a clean install right away; the message now appears only when the folder genuinely cannot be created (a blocked path, an access denial).
 
 ## Quick start
 
