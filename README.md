@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.9** makes the recording cues audible through the default output device and cuts invented subtitle credits — "thanks for the subtitles <name>" and its variants — when the sound does not support them. See [What's new](#whats-new-in-059).
+> **VibeForma 0.5.10** makes the recording cues reliable: the start cue plays after the microphone stream is open and the device has settled, both cues run on their own player thread, and a playback that fails is written to the journal. See [What's new](#whats-new-in-0510).
 
 ## What is VibeForma
 
@@ -58,6 +58,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
 
+## What's new in 0.5.10
+
+- **The recording cues are heard on every take.** The cue used to play before the capture stream opened; on many devices that opening cut the 160 ms tone to a 40 ms click, so the start and stop beeps seemed to fire at random — about one take in five to ten. The start cue now plays after the microphone stream is open and the device has settled, both cues run on a dedicated player thread so the hotkey never waits on the output device, and a playback that fails is written to the log, with the old beep kept as the fallback. The checkboxes and their defaults are unchanged.
+
 ## What's new in 0.5.9
 
 - **The recording cues are audible.** The start and stop checkboxes on the Recording tab were on by default but silent on laptops: the cue used `winsound.Beep`, which drives the PC speaker rather than the sound card. The cues are now short two-note WAVs played through the default output device — rising for the start, falling for the stop — so they are heard in speakers and headphones; when playback is unavailable the old beep remains as a fallback. The checkboxes and their default are unchanged.
@@ -74,10 +78,6 @@ The same engine also transcribes audio and video files, including whole folders,
 ## What's new in 0.5.6
 
 - **No invented ending.** Whisper sometimes appends a boilerplate line it never heard — most visibly a "to be continued" line — after the last word of a take, and the stop-list alone could not remove it without risking a phrase you actually said. The final dictation pass now reads the take's audio through the VAD: a trailing stop phrase whose words overlap less than 0.15 s of detected speech is cut together with everything after its first word, in the text, the word list and the subtitles. A phrase you really said keeps its place; a take without word timestamps or with a failing VAD is left as it is. The cut is written to the log with the phrase and its time span, never the dictated text. Partial previews and file transcription are unchanged.
-
-## What's new in 0.5.5
-
-- **Whisper model updates by consent.** A background check every 24 hours (configurable, can be turned off) compares your downloaded models against Hugging Face and, when a newer revision exists, offers it on the **Model & language** tab with **Update** and **Not now** buttons, one tray notification and a manual check button; a declined revision is not offered again even after a restart. The update runs only by your click, one model at a time, and only while the service is idle — mid-recording it refuses with a clear "wait for the current cycle". The new revision is downloaded into a temporary folder, validated by the same gate the app uses for any model, and swapped in; the previous revision is **kept on disk** as `previous-<model>-<revision>`, so an update that loads fine but behaves worse can be rolled back without re-downloading (delete the kept folder to reclaim the space). Any failure restores the previous folder, the config and the working model. Works fully offline otherwise — the check never breaks dictation when there is no network.
 
 ## Quick start
 

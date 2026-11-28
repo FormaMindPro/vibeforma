@@ -1,3 +1,15 @@
+## 0.5.10 — 2026-11-28
+
+### Fixed
+- **The recording cues are heard on every take.** The cue played before the
+  capture stream opened, and on many devices that opening cut the 160 ms
+  tone to a 40 ms click: the start and stop beeps seemed to fire at random,
+  about one take in five to ten. The start cue now plays after the
+  microphone stream is open and the device has settled, both cues run on a
+  dedicated player thread so the hotkey never waits for the output device,
+  and a playback that fails is written to the journal instead of
+  disappearing; the old beep stays as the fallback.
+
 ## 0.5.9 — 2026-11-28
 
 ### Fixed
