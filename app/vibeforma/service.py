@@ -36,7 +36,7 @@ from .model_updates import MODEL_UPDATE_IDLE, ModelUpdateActions
 from .settings_ops import SettingsOps
 from .status import write_status
 from .update_ops import UpdateActions
-from .util import beep
+from .util import beep, cue
 
 CONTINUOUS_QUEUE_CHUNKS = 8   # chunks waiting for the background final pass
 CONTEXT_TAIL_CHARS = 160      # one context source in hotwords, cut at a word
@@ -503,7 +503,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     def start_recording(self) -> None:
         self._forget_draft()
         if self.cfg.get("beep_on"):
-            beep(1200, 70)
+            cue("start")
         dev_idx = find_input_device(self.cfg["input_device"])
         try:
             import sounddevice as sd
@@ -921,7 +921,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
         seconds = max(0.0, time.time() - started) if started else 0.0
         self._record_seconds = seconds
         if self.cfg.get("beep_off"):
-            beep(900, 70)
+            cue("stop")
         if system:
             # Live subtitles were only the view: the take itself is the WAV,
             # and the full-take transcription is the file queue's. Nothing is

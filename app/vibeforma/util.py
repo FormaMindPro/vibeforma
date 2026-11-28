@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import io
 import logging
+import math
 import os
+import struct
 import subprocess
 import sys
+import tempfile
 import threading
+import wave
 
 from config import LOG_DIR, LOG_PATH, SERVICE_DIR
 
@@ -43,14 +48,81 @@ def setup_logging(console: bool) -> logging.Logger:
     return root
 
 
+_CUE_RATE = 22050
+_CUE_NOTE_MS = 80
+_CUE_FADE_MS = 6
+_CUE_VOLUME = 0.30
+_CUE_TONES: dict[str, tuple[int, ...]] = {
+    "start": (880, 1320),
+    "stop": (1320, 880),
+}
+_CUE_LOCK = threading.Lock()
+
+
+def _tone_wav(freqs: tuple[int, ...], note_ms: int) -> bytes:
+    """A mono 16-bit WAV of short sine notes with an edge fade."""
+    fade = max(1, int(_CUE_RATE * _CUE_FADE_MS / 1000))
+    frames = bytearray()
+    for freq in freqs:
+        count = max(1, int(_CUE_RATE * note_ms / 1000))
+        for i in range(count):
+            env = min(1.0, i / fade, (count - i) / fade)
+            value = int(32767 * _CUE_VOLUME * env
+                        * math.sin(2 * math.pi * freq * i / _CUE_RATE))
+            frames += struct.pack("<h", value)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(_CUE_RATE)
+        out.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def _wav_path(name: str, freqs: tuple[int, ...], note_ms: int) -> str:
+    """Write the tone once and return its path; a lost temp file is rebuilt."""
+    folder = os.path.join(tempfile.gettempdir(), "vibeforma", "cues")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{name}-{note_ms}.wav")
+    if not os.path.exists(path):
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as handle:
+            handle.write(_tone_wav(freqs, note_ms))
+        os.replace(tmp, path)
+    return path
+
+
 def beep(freq: int, dur_ms: int) -> None:
     def _run() -> None:
-        # winsound is absent off Windows; Beep itself raises RuntimeError
-        # when no device can play the tone. A missing cue must not matter.
-        with contextlib.suppress(ImportError, RuntimeError):
+        # The PC speaker is silent on most laptops: play a real WAV through
+        # the default output device, and keep Beep as the last resort.
+        try:
             import winsound
-            winsound.Beep(freq, dur_ms)
+        except ImportError:
+            return
+        try:
+            path = _wav_path(f"beep-{freq}", (freq,), dur_ms)
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                               | winsound.SND_NODEFAULT)
+        except Exception:  # noqa: BLE001 - a missing cue must not matter
+            with contextlib.suppress(RuntimeError):
+                winsound.Beep(freq, dur_ms)
     threading.Thread(target=_run, daemon=True).start()
+
+
+def cue(kind: str) -> None:
+    """Play the recording start or stop cue through the output device."""
+    tones = _CUE_TONES.get(kind)
+    if tones is None:
+        raise ValueError(f"unknown cue: {kind}")
+    try:
+        import winsound
+        path = _wav_path(f"cue-{kind}", tones, _CUE_NOTE_MS)
+        with _CUE_LOCK:
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                               | winsound.SND_NODEFAULT)
+    except Exception:  # noqa: BLE001 - a missing cue must not matter
+        beep(1200 if kind == "start" else 900, 120)
 
 
 def ensure_autostart(create: bool) -> None:
