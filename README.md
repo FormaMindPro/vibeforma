@@ -80,7 +80,7 @@ The same engine also transcribes audio and video files, including whole folders,
 
 ## Quick start
 
-Windows 10/11 x64, Python 3.10+ on `PATH`. One command in PowerShell:
+Windows 10/11 x64, Python 3.10–3.14 on `PATH`. One command in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/FormaMindPro/vibeforma/main/install.ps1 | iex
@@ -113,7 +113,7 @@ The bootstrap installs released builds only: when no release zip can be download
 | Area | What VibeForma does |
 | --- | --- |
 | Dictation | `Ctrl+Alt+Space` (remappable) starts a take; the phrase closes on a pause of silence, on the second keypress, or on release in hold-to-talk mode. Continuous mode is on by default, so a long take is cut at pauses and at 30 s with a carried tail and the 120 s limit no longer interrupts speech; the text is inserted once. `Esc` cancels. |
-| Insertion | The text goes to the window that had focus when you pressed the hotkey. If the window changed, VibeForma offers paste here / copy / cancel instead of pasting into a stranger. The paste waits for the hotkey to come up, so a held combo never turns Shift+Insert into a dead shortcut. |
+| Insertion | The text goes to the window that had focus when you pressed the hotkey. If the window changed, the text stays in the clipboard with a tray notification instead of being pasted into a stranger. The paste waits for the hotkey to come up, so a held combo never turns Shift+Insert into a dead shortcut. |
 | Clipboard care | Layout-independent Shift+Insert; the previous clipboard is restored after 1 s if you have not copied something new; dictated text is excluded from Windows clipboard history and cloud sync. |
 | Monitoring panel | Microphone level, a take clock (countdown or elapsed), VAD indicator, streaming text near-real-time, a privacy mode, a microphone button, history arrows and draft actions (Edit, Copy, Insert, Cancel). A doubtful phrase waits in the draft with uncertain words highlighted and offers **Recognize more precisely** / **Restore previous**; a language hint appears when another language leads; a system-audio take shows its last phrases as live subtitles and records the take to a WAV with TXT and SRT beside it. |
 | System audio | Records the default output through WASAPI loopback (Bluetooth, USB, HDMI). The take runs without auto-stop on silence and without the 120 s cut, shows the last phrases as live subtitles, and is written to a 16-bit / 16 kHz mono WAV with TXT and SRT queued beside it on stop (default `Documents\VibeForma\Recordings`, a date subfolder); the path is shown on the panel, in the tray and in the HUD. Nothing goes to the active window, the draft or the dictation history; the same hotkey stops it, a 30 s buffer keeps memory flat, and an unavailable loopback or folder shows a clear error. Limits: over 6 h or 4 GB the take keeps its WAV but gets no transcript; `Esc` and exit close the WAV without queueing it. |
@@ -217,7 +217,7 @@ VibeForma is listed in **Settings > Apps** (per user, no admin rights). Uninstal
 
 ## Install
 
-Windows 10/11, Python 3.10+ (3.12+ recommended). With an NVIDIA GPU the recognition is fast (CUDA float16); without one the installer falls back to CPU (int8) and preselects the `small` model.
+Windows 10/11, Python 3.10–3.14 (3.12+ recommended). With an NVIDIA GPU the recognition is fast (CUDA float16); without one the installer falls back to CPU (int8) and preselects the `small` model.
 
 **One command (PowerShell, Windows 10+):**
 
