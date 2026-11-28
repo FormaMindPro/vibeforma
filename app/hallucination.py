@@ -64,6 +64,10 @@ STOP_PHRASES = (
     "like and subscribe",
     "subtitles by",
     "subtitled by",
+    "captions by",
+    "subtitles provided by",
+    "thanks for the subtitles",
+    "thanks for subtitles",
     "amara org",
     "transcribed by",
     "transcription by",
@@ -79,6 +83,8 @@ STOP_PHRASES = (
     "\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u043b\u0430\u0439\u043a\u0438",
     # Russian: thanks for watching
     "\u0441\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440",
+    # Russian: thanks for the subtitles
+    "\u0441\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 \u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b",
     # Russian: subtitles made by (m.)
     "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u0441\u0434\u0435\u043b\u0430\u043b",
     # Russian: subtitles made by (f.)
@@ -91,6 +97,15 @@ STOP_PHRASES = (
     "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u043e\u0434\u043e\u0433\u043d\u0430\u043b",
     # Russian: subtitles prepared by
     "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u043b",
+    # Russian: subtitles prepared by (f.)
+    "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u043b\u0430",
+    # Russian: subtitles fitted by (f.)
+    "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u043e\u0434\u043e\u0433\u043d\u0430\u043b\u0430",
+    # Russian: subtitles translated by
+    "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u0435\u0440\u0435\u0432\u0435\u043b",
+    "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b \u043f\u0435\u0440\u0435\u0432\u0435\u043b\u0430",
+    # Russian: translation of the subtitles
+    "\u043f\u0435\u0440\u0435\u0432\u043e\u0434 \u0441\u0443\u0431\u0442\u0438\u0442\u0440\u043e\u0432",
     # Russian: subtitles editor
     "\u0440\u0435\u0434\u0430\u043a\u0442\u043e\u0440 \u0441\u0443\u0431\u0442\u0438\u0442\u0440\u043e\u0432",
     # Russian: proofreader

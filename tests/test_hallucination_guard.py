@@ -125,6 +125,11 @@ def test_the_same_stop_phrase_in_real_speech_is_kept():
     pytest.param(" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
                  "\u0441\u0434\u0435\u043b\u0430\u043b DimaTorzok",
                  id="ru-subtitles-made"),
+    pytest.param(" \u0421\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 "
+                 "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+                 "\u0410\u043b\u0435\u043a\u0441\u0435\u044e "
+                 "\u0414\u0443\u0431\u0440\u043e\u0432\u0441\u043a\u043e\u043c\u0443",
+                 id="ru-subtitles-thanks"),
     pytest.param(" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
                  "\u043f\u043e\u0434\u043e\u0433\u043d\u0430\u043b ...",
                  id="ru-subtitles-fitted"),
@@ -282,6 +287,13 @@ CREDIT = (" \u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
           "\u0441\u0434\u0435\u043b\u0430\u043b DimaTorzok")
 CREDIT_NORM = ("\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
                "\u0441\u0434\u0435\u043b\u0430\u043b")
+# " Thanks for the subtitles Alexey Dubrovsky": the reported invented line.
+THANKS_SUBS = (" \u0421\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 "
+               "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b "
+               "\u0410\u043b\u0435\u043a\u0441\u0435\u044e "
+               "\u0414\u0443\u0431\u0440\u043e\u0432\u0441\u043a\u043e\u043c\u0443")
+THANKS_SUBS_NORM = ("\u0441\u043f\u0430\u0441\u0438\u0431\u043e \u0437\u0430 "
+                    "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b")
 # " Hello", " subtitles made", " by DimaTorzok"
 class _Word:
     """faster-whisper's word shape: the text rides in ``word``."""
@@ -327,6 +339,29 @@ def test_a_trailing_stop_phrase_written_into_silence_is_cut(monkeypatch):
     warned = [line for level, line in engine.log.lines if level == "warning"]
     assert any(CREDIT_NORM in line for line in warned)
     assert all(HELLO.strip() not in line for line in warned)
+
+
+def test_the_reported_subtitles_thanks_line_is_cut(monkeypatch):
+    """The credits line with a name after it goes with the name."""
+    words = [
+        _Word(0.45, 0.50, " \u0421\u043f\u0430\u0441\u0438\u0431\u043e"),
+        _Word(0.50, 0.53, " \u0437\u0430"),
+        _Word(0.53, 0.60, " \u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b"),
+        _Word(0.60, 0.65, " \u0410\u043b\u0435\u043a\u0441\u0435\u044e"),
+        _Word(0.65, 0.70, " \u0414\u0443\u0431\u0440\u043e\u0432\u0441\u043a\u043e\u043c\u0443"),
+    ]
+    engine = _engine([
+        Segment(0.0, 0.4, HELLO, words=[_Word(0.0, 0.4, HELLO)]),
+        Segment(0.4, 0.7, THANKS_SUBS, words=words),
+    ])
+    _vad(monkeypatch, [{"start": 0, "end": int(0.4 * 16000)}])
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == HELLO.strip()
+    assert [s.text for s in engine.last_segments] == [HELLO]
+    warned = [line for level, line in engine.log.lines if level == "warning"]
+    assert any(THANKS_SUBS_NORM in line for line in warned)
 
 
 def test_a_trailing_stop_phrase_that_was_spoken_is_kept(monkeypatch):
