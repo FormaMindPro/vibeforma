@@ -428,6 +428,25 @@ def test_a_compressed_tail_in_a_dense_take_is_cut(monkeypatch):
     assert result.strip().startswith("word")
 
 
+def test_a_long_take_cuts_only_the_phrase_not_the_words_before_it(monkeypatch):
+    """The tail window must not shift the cut into the take's real words."""
+    filler = " word" * 25
+    text = filler + (" \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435 "
+                     "\u0441\u043b\u0435\u0434\u0443\u0435\u0442.")
+    words = [_Word(i * 0.045, (i + 1) * 0.045, " word") for i in range(25)]
+    words += [
+        _Word(1.125, 1.175, " \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435"),
+        _Word(1.175, 1.225, " \u0441\u043b\u0435\u0434\u0443\u0435\u0442."),
+    ]
+    engine = _engine([Segment(0.0, 1.225, text, words=words)])
+    _vad(monkeypatch, [{"start": 0, "end": int(1.225 * 16000)}])
+
+    result = engine.transcribe(_audio(2.0))
+
+    assert "\u0441\u043b\u0435\u0434\u0443\u0435\u0442" not in result
+    assert result.split() == ["word"] * 25
+
+
 def test_a_dense_text_only_tail_is_cut_even_with_speech(monkeypatch):
     text = (" word" * 16) + (" \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435 "
                              "\u0441\u043b\u0435\u0434\u0443\u0435\u0442.")

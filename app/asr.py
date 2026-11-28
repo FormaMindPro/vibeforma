@@ -856,7 +856,6 @@ class ASR:
         density = _take_word_count(segments) / audio_s
 
         if span is not None:
-            first, end_word, phrase = span
             segment_index, word_index, _word = indexed[first]
             tail = words[first:]
             phrase_words = words[first:end_word]
