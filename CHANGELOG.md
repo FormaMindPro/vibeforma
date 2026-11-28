@@ -1,3 +1,14 @@
+## 0.5.8 — 2026-11-28
+
+### Fixed
+- **A long take keeps the words before an invented ending.** The 0.5.7 guard
+  read the take's last 20 words but then used the phrase's position in that
+  window as if it were the position in the whole take. On a take longer than
+  20 words the cut started up to a window too early, so real words before the
+  invented line disappeared with it. The position is now carried from the
+  window back into the take, and a 25-word regression take keeps every word
+  before the phrase. Short takes and the spoken-phrase policy are unchanged.
+
 ## 0.5.7 — 2026-11-28
 
 ### Fixed

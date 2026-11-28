@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.7** cuts an invented ending even when the model packs it into speech: the guard now reads the take's words across segments and keeps a phrase only when the audio, its length and the take's pace all say it was spoken. 0.5.6 introduced the audio-grounded tail check. See [What's new](#whats-new-in-057).
+> **VibeForma 0.5.8** keeps every word before an invented ending on a long take: the tail guard read the last 20 words but applied the phrase's position as if it were the start of the take, so the cut could begin too early. The position is now carried back into the take. See [What's new](#whats-new-in-058).
 
 ## What is VibeForma
 
@@ -57,6 +57,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.5.8
+
+- **A long take keeps the words before an invented ending.** The 0.5.7 guard read only the take's last 20 words and then used the phrase's position in that window as its position in the whole take. On a take longer than 20 words the cut started up to a window too early, so real words before the invented line disappeared with it. The position is now carried from the window back into the take; a 25-word regression take keeps every word before the phrase. Short takes and the rule that keeps a spoken phrase are unchanged.
 
 ## What's new in 0.5.7
 
