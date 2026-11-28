@@ -1,3 +1,35 @@
+## 0.5.11 — 2026-11-28
+
+### Fixed
+- **A cancelled take keeps its words to itself.** Cancelling a long
+  continuous dictation left the background chunk recognizer draining its
+  queue, and its finished pieces went into the common state: the next take
+  could paste words from the cancelled phrase. Each take now owns its
+  chunks; a cancelled take's worker writes only into its own registers, the
+  panel's live text is updated only by the take being recorded, and the
+  backpressure answer goes to the recorder that produced the piece.
+- **The MCP server never sends the local token through a proxy.** With
+  `HTTP_PROXY` or a registry proxy set, the loopback request could leave
+  the host through that proxy with the API token in a header. The opener
+  now uses an empty proxy handler, so the request always goes straight to
+  `127.0.0.1`; a regression test sets an unreachable proxy and still gets a
+  200 from the local stand.
+- **Private mode hides the dictation draft.** With the eye on, the panel
+  used to show the recognized draft anyway: only the live partial was
+  replaced by the privacy hint. The draft is now drawn through the privacy
+  check both when it appears and when the eye is toggled, the text comes
+  back when private mode goes off, and the edit mode is left untouched.
+- **Settings, the setup assistant and diagnostics open with the panel
+  off.** With `hud: false`, the tray items wrote flags that only the HUD
+  could read, so the windows never opened and the panel could not be
+  brought back. The first such request now starts the panel on demand,
+  once, and any thread may make it.
+- **The journal keeps no dictated text on a repetition flag.** The
+  repetition guard's flag reason included the first 60 characters of the
+  phrase, so a repeated phrase left dictated text in the log while the
+  README promised the log holds none. The reason now carries the
+  compression ratio and the text length only.
+
 ## 0.5.10 — 2026-11-28
 
 ### Fixed

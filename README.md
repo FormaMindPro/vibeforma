@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.10** makes the recording cues reliable: the start cue plays after the microphone stream is open and the device has settled, both cues run on their own player thread, and a playback that fails is written to the journal. See [What's new](#whats-new-in-0510).
+> **VibeForma 0.5.11** closes the first audit wave: a cancelled take no longer leaks into the next one, the local API token never goes through a proxy, private mode hides the draft, settings open with the panel off, and the journal logs no dictated text on a repetition flag. See [What's new](#whats-new-in-0511).
 
 ## What is VibeForma
 
@@ -57,6 +57,14 @@ The same engine also transcribes audio and video files, including whole folders,
 | Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.5.11
+
+- **A cancelled take keeps its words to itself.** Cancelling a long continuous dictation left the background chunk recognizer draining its queue, and its finished pieces went into the common state: the next take could paste words from the cancelled phrase. Each take now owns its chunks; a cancelled take's worker writes only into its own registers, the panel's live text is updated only by the take being recorded, and the backpressure answer goes to the recorder that produced the piece.
+- **The MCP server never sends the local token through a proxy.** With `HTTP_PROXY` or a registry proxy set, the loopback request could leave the host through that proxy with the API token in a header. The opener now uses an empty proxy handler, so the request always goes straight to `127.0.0.1`; a regression test sets an unreachable proxy and still gets a 200 from the local stand.
+- **Private mode hides the dictation draft.** With the eye on, the panel used to show the recognized draft anyway: only the live partial was replaced by the privacy hint. The draft is now drawn through the privacy check both when it appears and when the eye is toggled, and the text comes back when private mode goes off.
+- **Settings, the setup assistant and diagnostics open with the panel off.** With `hud: false`, the tray items wrote flags that only the HUD could read, so the windows never opened and the panel could not be brought back. The first such request now starts the panel on demand, once.
+- **The journal keeps no dictated text on a repetition flag.** The repetition guard's flag reason included the first 60 characters of the phrase, so a repeated phrase left dictated text in the log while the README promised the log holds none. The reason now carries the compression ratio and the text length only.
 
 ## What's new in 0.5.10
 
