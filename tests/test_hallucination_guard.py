@@ -365,16 +365,79 @@ def test_a_stop_phrase_inside_the_take_is_not_a_tail(monkeypatch):
     assert [s.text for s in engine.last_segments] == [text_line]
 
 
-def test_a_take_without_word_timestamps_is_not_touched(monkeypatch):
+def test_a_take_without_word_timestamps_and_with_speech_is_not_touched(monkeypatch):
+    engine = _engine([Segment(0.0, 1.0, CREDIT)])
+    calls = []
+    _vad(monkeypatch, [{"start": 0, "end": 16000}], calls)
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == CREDIT.strip()
+    assert [s.text for s in engine.last_segments] == [CREDIT]
+    assert calls == [16000]
+
+
+def test_a_take_without_word_timestamps_in_silence_is_cut(monkeypatch):
     engine = _engine([Segment(0.0, 1.0, CREDIT)])
     calls = []
     _vad(monkeypatch, [], calls)
 
     text = engine.transcribe(_audio(2.0))
 
-    assert text == CREDIT.strip()
-    assert [s.text for s in engine.last_segments] == [CREDIT]
-    assert calls == []
+    assert text == ""
+    assert engine.last_segments == []
+    assert calls == [16000]
+
+
+def test_a_tail_phrase_split_between_segments_is_cut(monkeypatch):
+    first = (" \u041f\u0440\u0438\u0432\u0435\u0442 "
+             "\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435")
+    second = " \u0441\u043b\u0435\u0434\u0443\u0435\u0442..."
+    engine = _engine([
+        Segment(0.0, 0.5, first, words=[
+            _Word(0.0, 0.4, " \u041f\u0440\u0438\u0432\u0435\u0442"),
+            _Word(0.4, 0.5, " \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435"),
+        ]),
+        Segment(0.5, 0.6, second, words=[
+            _Word(0.5, 0.6, " \u0441\u043b\u0435\u0434\u0443\u0435\u0442..."),
+        ]),
+    ])
+    _vad(monkeypatch, [{"start": 0, "end": int(0.6 * 16000)}])
+
+    text = engine.transcribe(_audio(2.0))
+
+    assert text == "\u041f\u0440\u0438\u0432\u0435\u0442"
+    assert [s.text for s in engine.last_segments] == [" \u041f\u0440\u0438\u0432\u0435\u0442"]
+
+
+def test_a_compressed_tail_in_a_dense_take_is_cut(monkeypatch):
+    filler = " word" * 16
+    text = filler + (" \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435 "
+                     "\u0441\u043b\u0435\u0434\u0443\u0435\u0442.")
+    words = [_Word(i * 0.05, (i + 1) * 0.05, " word") for i in range(16)]
+    words += [
+        _Word(0.8, 1.1, " \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435"),
+        _Word(1.1, 1.4, " \u0441\u043b\u0435\u0434\u0443\u0435\u0442."),
+    ]
+    engine = _engine([Segment(0.0, 1.4, text, words=words)])
+    _vad(monkeypatch, [{"start": 0, "end": int(1.4 * 16000)}])
+
+    result = engine.transcribe(_audio(2.0))
+
+    assert "\u0441\u043b\u0435\u0434\u0443\u0435\u0442" not in result
+    assert result.strip().startswith("word")
+
+
+def test_a_dense_text_only_tail_is_cut_even_with_speech(monkeypatch):
+    text = (" word" * 16) + (" \u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435 "
+                             "\u0441\u043b\u0435\u0434\u0443\u0435\u0442.")
+    engine = _engine([Segment(0.0, 2.0, text)])
+    _vad(monkeypatch, [{"start": 0, "end": 32000}])
+
+    result = engine.transcribe(_audio(2.0))
+
+    assert "\u0441\u043b\u0435\u0434\u0443\u0435\u0442" not in result
+    assert result.strip().startswith("word")
 
 
 def test_cutting_the_whole_take_leaves_no_empty_segment(monkeypatch):

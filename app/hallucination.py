@@ -28,6 +28,7 @@ The repository is ASCII-only outside its localization resources (prohibition
 19), so every Russian phrase below is a ``\\u`` escape; the comment beside
 each one names it in English.
 """
+import re
 from collections import Counter
 
 # The engine's own threshold, in bytes (faster-whisper's get_compression_ratio).
@@ -98,6 +99,18 @@ STOP_PHRASES = (
     "\u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435 \u0441\u043b\u0435\u0434\u0443\u0435\u0442",
 )
 
+# The same phrases as whole-word patterns over raw text, for a segment the
+# engine returned without word timestamps. Punctuation and an ellipsis between
+# the words do not hide the line; a longer word is never a match.
+_TEXT_PATTERNS = tuple(
+    (phrase, re.compile(
+        r"(?<!\w)" + r"\W+".join(re.escape(part) for part in phrase.split())
+        + r"(?!\w)",
+        re.IGNORECASE,
+    ))
+    for phrase in STOP_PHRASES
+)
+
 # The letters the normalization folds: "yo" is written as "e" so one phrase
 # matches both spellings.
 _FOLD = str.maketrans({"\u0451": "\u0435"})
@@ -121,8 +134,8 @@ def stop_phrase(text: str) -> str | None:
     return None
 
 
-def trailing_stop_phrase(words) -> tuple[int, str] | None:
-    """The stop phrase that closes a take: ``(first word index, phrase)``.
+def trailing_stop_phrase_span(words) -> tuple[int, int, str] | None:
+    """The stop phrase that closes a take: ``(first, end, phrase)`` words.
 
     ``words`` is the take's aligned word list (``transcript.Word``). Every
     word is normalized and split into tokens, and each token keeps the index
@@ -133,7 +146,7 @@ def trailing_stop_phrase(words) -> tuple[int, str] | None:
     after the phrase included ("subtitles made by DimaTorzok" is one invented
     line, not a phrase and a separate word). Overlapping entries ("please
     subscribe" and "subscribe to my channel") name one line, so the tail
-    starts at the earliest of them.
+    starts at the earliest of them; ``end`` is exclusive.
 
     Position alone does not decide whether the line was spoken; the caller
     reads the words' timestamps against the VAD and keeps a spoken phrase.
@@ -155,14 +168,39 @@ def trailing_stop_phrase(words) -> tuple[int, str] | None:
                 matches.append((start, start + len(needle), phrase))
     if not matches:
         return None
-    start, _end, phrase = max(matches, key=lambda match: (match[1], -match[0]))
+    start, end, phrase = max(matches, key=lambda match: (match[1], -match[0]))
     while True:
         wider = [match[0] for match in matches
                  if match[0] < start and match[1] >= start]
         if not wider:
             break
         start = min(wider)
-    return owners[start], phrase
+    return owners[start], owners[end - 1] + 1, phrase
+
+
+def trailing_stop_phrase(words) -> tuple[int, str] | None:
+    """The stop phrase that closes a take: ``(first word index, phrase)``."""
+    span = trailing_stop_phrase_span(words)
+    if span is None:
+        return None
+    return span[0], span[2]
+
+
+def trailing_stop_phrase_text(text: str) -> tuple[int, str] | None:
+    """The last stop phrase in raw ``text``: ``(character index, phrase)``.
+
+    The text-level companion for a segment the engine returned without word
+    timestamps. Whole words only, joined by any run of non-word characters,
+    so punctuation, an ellipsis or a line break inside the line does not hide
+    it. The caller still decides from the audio whether the line was spoken.
+    ``None`` means no stop phrase.
+    """
+    best: tuple[int, str] | None = None
+    for phrase, pattern in _TEXT_PATTERNS:
+        for match in pattern.finditer(str(text or "")):
+            if best is None or match.start() > best[0]:
+                best = (match.start(), phrase)
+    return best
 
 
 def is_loop(text: str) -> bool:

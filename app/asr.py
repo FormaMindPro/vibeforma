@@ -41,6 +41,19 @@ NO_SPEECH_THRESHOLD = 0.6
 # speech, and its decoder filled the gap with a credits or subscribe line. A
 # phrase the person actually said overlaps its own words almost fully.
 TAIL_SPEECH_MAX_S = 0.15
+# A spoken phrase also has a plausible length: normal speech takes about
+# 0.3-0.4 s per word, and the engine's invented line is packed into a
+# fraction of a second even when the VAD hears speech under it. Below this
+# share the phrase was not said, whatever the VAD says.
+TAIL_MIN_WORD_S = 0.25
+# A take denser than this is not speech: a 1.6 s take carrying 30 words
+# (about 19 words per second) is the model continuing itself, not a person.
+# The density check also catches a long invented line whose words were given
+# normal durations by the aligner.
+TAIL_MAX_WORDS_PER_S = 8.0
+# Only the last words can be a trailing line; a stop phrase far from the end
+# is ordinary speech and stays out of the tail search.
+TAIL_WINDOW_WORDS = 20
 # The sequential call's other two per-segment thresholds, applied to the
 # batched path's segments too (faster-whisper 1.2.1 applies none there, B5).
 # ``log_prob`` is the library's own default. ``compression_ratio`` keeps the
@@ -685,6 +698,12 @@ def _speech_seconds(start: float, end: float,
     return total
 
 
+def _take_word_count(segments: list[Segment]) -> int:
+    """Words in the take's text, with or without word timestamps."""
+    return sum(len(hallucination.normalize(segment.text).split())
+               for segment in segments)
+
+
 def quality_preset(cfg) -> tuple[str, int, tuple[float, ...] | float]:
     """The final dictation pass settings read from ``quality_preset``.
 
@@ -782,31 +801,42 @@ class ASR:
         """Cut a stop phrase the engine invented at the end of the take.
 
         The engine fills the silence after the last word with a credits or
-        subscribe line. The stop-list alone cannot tell it from a spoken one:
-        only the audio can. The VAD reads the take, and a trailing phrase
-        whose words overlap less speech than ``TAIL_SPEECH_MAX_S`` is
-        invented; it goes together with every word from its first one to the
-        end, name and punctuation included. A phrase the person really said
-        keeps its place, and so does a take where the last segment has no
-        word timestamps or the VAD fails: a doubtful tail never costs a
-        dictation.
+        subscribe line, and it can also pack that line into the speech it
+        just heard. The VAD alone cannot tell the second kind from a spoken
+        phrase: the words sit inside speech. The guard therefore reads the
+        take as one stream, not just its last segment, and keeps the last
+        stop phrase only when all three signs of speech agree: the VAD hears
+        speech under the tail, the phrase's own words last a plausible time
+        each, and the take is not denser than a person can speak. An invented
+        line is compressed into a fraction of a second; a dense take is the
+        model continuing itself.
 
-        The cut happens on the segment's words, not only its text: the
-        subtitle cue is rebuilt from the words, and a word left in place
-        would return the phrase to SRT and VTT.
+        The cut starts at the phrase's first word and takes every later
+        segment with it, so a phrase split between segments or followed by a
+        punctuation-only segment is cut whole. Without word timestamps the
+        last segment's text is the fallback: it is cut only when that
+        segment has no speech under it or the take is impossibly dense. A VAD
+        failure leaves the take alone.
         """
         if not segments:
             return segments
+        indexed: list[tuple[int, int, Word]] = []
+        for segment_index, segment in enumerate(segments):
+            for word_index, word in enumerate(segment.words or []):
+                indexed.append((segment_index, word_index, word))
+        words = [word for _, _, word in indexed]
+        window_start = max(0, len(words) - TAIL_WINDOW_WORDS)
+        span = (hallucination.trailing_stop_phrase_span(words[window_start:])
+                if words else None)
+        if span is not None:
+            first, end_word, phrase = span
+            first += window_start
+            end_word += window_start
         last = segments[-1]
-        if not last.words:
+        text_found = (hallucination.trailing_stop_phrase_text(last.text)
+                      if span is None else None)
+        if span is None and text_found is None:
             return segments
-        found = hallucination.trailing_stop_phrase(last.words)
-        if found is None:
-            return segments
-        index, phrase = found
-        tail = last.words[index:]
-        start = float(tail[0].start)
-        end = float(tail[-1].end)
         try:
             speeches = get_speech_timestamps(
                 audio,
@@ -817,23 +847,75 @@ class ASR:
             self.log.debug("Tail speech check skipped: %s", exc)
             return segments
         rate = float(TARGET_RATE)
-        spoken = _speech_seconds(start, end, [
+        chunks = [
             {"start": float(chunk["start"]) / rate,
              "end": float(chunk["end"]) / rate}
             for chunk in speeches or []
-        ])
-        if spoken >= TAIL_SPEECH_MAX_S:
+        ]
+        audio_s = max(0.1, len(audio) / rate)
+        density = _take_word_count(segments) / audio_s
+
+        if span is not None:
+            first, end_word, phrase = span
+            segment_index, word_index, _word = indexed[first]
+            tail = words[first:]
+            phrase_words = words[first:end_word]
+            start = float(tail[0].start)
+            end = float(tail[-1].end)
+            spoken = _speech_seconds(start, end, chunks)
+            phrase_s = sum(max(0.0, float(word.end) - float(word.start))
+                           for word in phrase_words)
+            if (spoken >= TAIL_SPEECH_MAX_S
+                    and phrase_s >= TAIL_MIN_WORD_S * len(phrase_words)
+                    and density <= TAIL_MAX_WORDS_PER_S):
+                self.log.info(
+                    "Tail stop phrase kept at %.1f-%.1f s: %s "
+                    "(speech %.2f s, phrase %.2f s, density %.1f w/s)",
+                    start, end, phrase, spoken, phrase_s, density)
+                return segments
+            return self._cut_tail(segments, segment_index, word_index,
+                                  phrase, start, end)
+
+        if text_found is None:
             return segments
+        index, phrase = text_found
+        start = float(last.start)
+        end = float(last.end)
+        spoken = _speech_seconds(start, end, chunks)
+        if spoken >= TAIL_SPEECH_MAX_S and density <= TAIL_MAX_WORDS_PER_S:
+            self.log.info(
+                "Tail stop phrase kept at %.1f-%.1f s: %s "
+                "(speech %.2f s, density %.1f w/s)",
+                start, end, phrase, spoken, density)
+            return segments
+        text = last.text[:index].rstrip()
+        if not text.strip():
+            return segments[:-1]
+        if last.text[:1].isspace() and not text[:1].isspace():
+            text = " " + text
         self.log.warning("Cut invented tail at %.1f-%.1f s: %s",
                          start, end, phrase)
-        kept = last.words[:index]
-        text = words_text(kept) if kept else ""
-        if not text:
-            return segments[:-1]
-        if last.text[:1].isspace():
-            text = " " + text
         out = list(segments)
-        out[-1] = replace(last, text=text, words=kept)
+        out[-1] = replace(last, text=text, words=None)
+        return out
+
+    def _cut_tail(self, segments: list[Segment], segment_index: int,
+                  word_index: int, phrase: str, start: float,
+                  end: float) -> list[Segment]:
+        """Drop every word from ``word_index`` on, across segments."""
+        self.log.warning("Cut invented tail at %.1f-%.1f s: %s",
+                         start, end, phrase)
+        segment = segments[segment_index]
+        kept = (segment.words or [])[:word_index]
+        if not kept:
+            return list(segments[:segment_index])
+        text = words_text(kept)
+        if not text:
+            return list(segments[:segment_index])
+        if segment.text[:1].isspace():
+            text = " " + text
+        out = list(segments[:segment_index])
+        out.append(replace(segment, text=text, words=kept))
         return out
 
     def _transcribe_impl(self, audio: np.ndarray, language: str, *,
