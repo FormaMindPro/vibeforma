@@ -502,8 +502,6 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     # -- recording -------------------------------------------------------
     def start_recording(self) -> None:
         self._forget_draft()
-        if self.cfg.get("beep_on"):
-            cue("start")
         dev_idx = find_input_device(self.cfg["input_device"])
         try:
             import sounddevice as sd
@@ -567,6 +565,10 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
                                       else "microphone")
         self.live["record_limit_s"] = take_limit_s(self.cfg)
         self._set_state(STATE_RECORDING)
+        # The cue follows the open stream: played before it, the tone is cut
+        # to a click whenever the device opens mid-sound (card-352).
+        if self.cfg.get("beep_on"):
+            cue("start")
         if self._take_is_system():
             self._announce_recording_path(self.recorder)
         # The take is already capturing: a slow clipboard read never eats the

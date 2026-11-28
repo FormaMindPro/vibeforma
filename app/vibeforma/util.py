@@ -7,11 +7,13 @@ import io
 import logging
 import math
 import os
+import queue
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 
 from config import LOG_DIR, LOG_PATH, SERVICE_DIR
@@ -52,11 +54,18 @@ _CUE_RATE = 22050
 _CUE_NOTE_MS = 80
 _CUE_FADE_MS = 6
 _CUE_VOLUME = 0.30
+# A cue follows a stream change: the capture stream opens a few dozen
+# milliseconds before it, and an opening that lands inside the tone cuts it
+# (measured: 40 ms of a 160 ms cue). The player waits this long before the
+# first sample, so the device has settled and the tone survives.
+_CUE_GRACE_S = 0.08
 _CUE_TONES: dict[str, tuple[int, ...]] = {
     "start": (880, 1320),
     "stop": (1320, 880),
 }
-_CUE_LOCK = threading.Lock()
+_CUE_QUEUE: queue.Queue[str] = queue.Queue()
+_CUE_PLAYER: threading.Thread | None = None
+_CUE_PLAYER_LOCK = threading.Lock()
 
 
 def _tone_wav(freqs: tuple[int, ...], note_ms: int) -> bytes:
@@ -92,6 +101,61 @@ def _wav_path(name: str, freqs: tuple[int, ...], note_ms: int) -> str:
     return path
 
 
+def _cue_log() -> logging.Logger:
+    return logging.getLogger("dictation")
+
+
+def _play_cue(kind: str) -> None:
+    """Play one cue on the calling thread; a silent failure is logged."""
+    tones = _CUE_TONES.get(kind)
+    if tones is None:
+        raise ValueError(f"unknown cue: {kind}")
+    time.sleep(_CUE_GRACE_S)
+    try:
+        import winsound
+        path = _wav_path(f"cue-{kind}", tones, _CUE_NOTE_MS)
+        started = time.perf_counter()
+        # Synchronous on the player thread: the call returns only after the
+        # tone has been rendered, so a device reset in between is a failure
+        # to report, not a cue that silently never sounded.
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_NODEFAULT)
+        _cue_log().info("Cue %s played in %d ms", kind,
+                        (time.perf_counter() - started) * 1000)
+    except Exception as e:  # noqa: BLE001 - a missing cue must not matter
+        _cue_log().warning("Cue %s failed: %s", kind, e)
+        beep(1200 if kind == "start" else 900, 120)
+
+
+def _cue_player() -> None:
+    """One cue at a time, away from the hotkey thread."""
+    while True:
+        kind = _CUE_QUEUE.get()
+        try:
+            _play_cue(kind)
+        except Exception as e:  # noqa: BLE001 - the player thread must outlive a bad cue
+            _cue_log().warning("Cue player: %s", e)
+        finally:
+            _CUE_QUEUE.task_done()
+
+
+def cue(kind: str) -> None:
+    """Queue the recording start or stop cue; never blocks the caller.
+
+    The start cue is called after the capture stream is open: a cue that
+    plays while the stream opens is cut to a click by the device reset.
+    """
+    if kind not in _CUE_TONES:
+        raise ValueError(f"unknown cue: {kind}")
+    global _CUE_PLAYER
+    with _CUE_PLAYER_LOCK:
+        if _CUE_PLAYER is None or not _CUE_PLAYER.is_alive():
+            _CUE_PLAYER = threading.Thread(
+                target=_cue_player, name="cue-player", daemon=True)
+            _CUE_PLAYER.start()
+    _CUE_QUEUE.put(kind)
+
+
+
 def beep(freq: int, dur_ms: int) -> None:
     def _run() -> None:
         # The PC speaker is silent on most laptops: play a real WAV through
@@ -108,21 +172,6 @@ def beep(freq: int, dur_ms: int) -> None:
             with contextlib.suppress(RuntimeError):
                 winsound.Beep(freq, dur_ms)
     threading.Thread(target=_run, daemon=True).start()
-
-
-def cue(kind: str) -> None:
-    """Play the recording start or stop cue through the output device."""
-    tones = _CUE_TONES.get(kind)
-    if tones is None:
-        raise ValueError(f"unknown cue: {kind}")
-    try:
-        import winsound
-        path = _wav_path(f"cue-{kind}", tones, _CUE_NOTE_MS)
-        with _CUE_LOCK:
-            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
-                               | winsound.SND_NODEFAULT)
-    except Exception:  # noqa: BLE001 - a missing cue must not matter
-        beep(1200 if kind == "start" else 900, 120)
 
 
 def ensure_autostart(create: bool) -> None:

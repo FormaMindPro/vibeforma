@@ -1,5 +1,7 @@
 """Recording cues: a real WAV through the output device, Beep as the fallback."""
 import sys
+import threading
+import time
 import wave
 
 import pytest
@@ -45,14 +47,22 @@ def fake_winsound(monkeypatch, tmp_path):
     return fake
 
 
+def _drain() -> None:
+    """Wait until the player thread has played everything it was given."""
+    util._CUE_QUEUE.join()
+
+
 def test_the_start_cue_plays_a_two_note_wav(fake_winsound):
     util.cue("start")
+    _drain()
 
     assert len(fake_winsound.played) == 1
     path, flags = fake_winsound.played[0]
     assert flags & fake_winsound.SND_FILENAME
-    assert flags & fake_winsound.SND_ASYNC
     assert flags & fake_winsound.SND_NODEFAULT
+    # Synchronous on the player thread: the call returns after the tone has
+    # been rendered, so a device reset is a logged failure, not silence.
+    assert not flags & fake_winsound.SND_ASYNC
     with wave.open(path, "rb") as wav:
         assert wav.getnchannels() == 1
         assert wav.getsampwidth() == 2
@@ -64,6 +74,7 @@ def test_the_start_cue_plays_a_two_note_wav(fake_winsound):
 def test_the_stop_cue_is_a_different_file(fake_winsound):
     util.cue("start")
     util.cue("stop")
+    _drain()
 
     start_path = fake_winsound.played[0][0]
     stop_path = fake_winsound.played[1][0]
@@ -79,7 +90,7 @@ def test_a_failing_playback_falls_back_to_the_pc_speaker(monkeypatch, tmp_path):
     calls: list[tuple[int, int]] = []
     monkeypatch.setattr(util, "beep", lambda freq, dur: calls.append((freq, dur)))
 
-    util.cue("stop")
+    util._play_cue("stop")
 
     assert calls == [(900, 120)]
 
@@ -88,6 +99,25 @@ def test_an_unknown_cue_is_a_programming_error(fake_winsound):
     with pytest.raises(ValueError):
         util.cue("pause")
     assert fake_winsound.played == []
+
+
+def test_the_caller_never_waits_for_the_sound(fake_winsound, monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow(kind: str) -> None:
+        started.set()
+        release.wait(2.0)
+
+    monkeypatch.setattr(util, "_play_cue", slow)
+    question = time.perf_counter()
+    util.cue("start")
+    asked = time.perf_counter() - question
+    assert started.wait(2.0)
+    release.set()
+    _drain()
+    # The hotkey thread hands the cue over; the player waits on the device.
+    assert asked < 0.2
 
 
 def test_beep_plays_a_wav_instead_of_the_pc_speaker(fake_winsound, monkeypatch):
