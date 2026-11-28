@@ -180,6 +180,21 @@ def test_unknown_tool_is_an_error_result(service):
     assert response["result"]["isError"] is True
 
 
+def test_loopback_request_ignores_a_proxy_from_the_environment(
+        service, monkeypatch):
+    """The token must never travel to a proxy named by the environment."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    status, body = mcp_server.api_request(service, "GET", "/capabilities",
+                                          timeout=5.0)
+
+    assert status == 200
+    assert json.loads(body)["model"] == "test-model"
+
+
 def test_missing_path_is_an_error_result(service):
     response = _server(service).handle({
         "jsonrpc": "2.0", "id": 6, "method": "tools/call",

@@ -18,11 +18,13 @@ from .util import ensure_autostart
 class SettingsOps(ServiceHost):
     def open_settings(self, tab: str | None = None) -> None:
         """Tray/HUD request: the HUD (main thread) opens the dialog."""
+        self._ensure_hud()
         self.live["settings_tab"] = tab
         self.live["open_settings"] = True
 
     def open_doctor(self) -> None:
         """Tray request: the HUD opens the support report window."""
+        self._ensure_hud()
         self.live["open_doctor"] = True
 
     def apply_settings(self, new_cfg: dict[str, Any]) -> None:

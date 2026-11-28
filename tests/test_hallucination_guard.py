@@ -191,6 +191,8 @@ def test_a_loop_the_engine_reads_as_speech_is_flagged_not_cut():
 
     assert verdict is not None and verdict[0] == hallucination.FLAG
     assert "repetition loop" in verdict[1]
+    assert "music plays" not in verdict[1]
+    assert "chars" in verdict[1]
 
 
 def test_a_repeated_short_answer_is_not_a_loop():

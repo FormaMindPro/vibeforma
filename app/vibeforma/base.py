@@ -17,6 +17,7 @@ class ServiceHost:
     state: str
     tray: Any
     hotkey: Any
+    hud_launcher: Any
     http_server: Any
     asr: Any
     vad: Any
@@ -53,6 +54,8 @@ class ServiceHost:
     if TYPE_CHECKING:
         # Implemented by the core and by the update part of Service.
         def _set_state(self, state: str) -> None: ...
+
+        def _ensure_hud(self) -> None: ...
 
         def apply_pending_update(self, manual: bool = True) -> bool: ...
 

@@ -344,6 +344,9 @@ class FakeDraftSvc:
         self.copied = []
         self.cancelled = 0
 
+    def tr(self, key, **_kwargs):
+        return "privacy hint" if key == "hud.privacy_hint" else key
+
     def insert_draft(self, text, target_hwnd=None):
         self.inserted.append((text, target_hwnd))
 
@@ -365,6 +368,9 @@ def make_hud(text="hello"):
     h._draft_active = True
     h._draft_edit = False
     h._draft_text = text
+    h._draft_uncertain = ()
+    h._draft_privacy_shown = False
+    h.state = {}
     h._draft_rev = 0
     h._last_foreign_hwnd = None
     h._want = hud.BASE_TEXT_LINES
@@ -553,3 +559,27 @@ def test_insert_from_a_marked_draft_pastes_the_whole_phrase():
     hud.Hud._on_ctrl_enter(h)
 
     assert h.svc.inserted == [("hi there", None)]
+
+
+def test_privacy_hides_a_draft_that_appears_while_it_is_on():
+    h = make_hud("")
+    h.state["privacy"] = True
+
+    hud.Hud._show_draft(h, "SECRET DICTATED TEXT")
+
+    assert h.text.value == "privacy hint"
+    assert h._draft_text == "SECRET DICTATED TEXT"
+
+
+def test_privacy_off_brings_the_hidden_draft_back():
+    h = make_hud("")
+    h.state["privacy"] = True
+    hud.Hud._show_draft(h, "SECRET DICTATED TEXT")
+
+    hud.Hud._sync_draft_privacy(h, False)
+
+    assert h.text.value == "SECRET DICTATED TEXT"
+
+    hud.Hud._sync_draft_privacy(h, True)
+
+    assert h.text.value == "privacy hint"

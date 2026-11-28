@@ -32,6 +32,16 @@ BG = "#16181D"
 FG = "#D5D9E0"
 DIM = "#7A8290"
 ACCENT = "#2E86DE"
+# The live-text field is dark, and Tk draws its caret in the system colour
+# (black) unless told otherwise: a black caret on this field cannot be seen.
+# The caret takes the text colour and two pixels; the selection takes a
+# deeper accent with white text (white on ACCENT itself is below 4.5:1), so
+# both read while a draft is corrected.
+TEXT_BG = "#1D2027"
+CARET = FG
+CARET_WIDTH = 2
+SELECT_BG = "#2472B8"
+SELECT_FG = "#FFFFFF"
 # A doubt in a draft is marked, never hidden: the word keeps its place and
 # reads underlined in a warm tone.
 UNCERTAIN = "#E5C07B"
@@ -317,6 +327,20 @@ def timer_view(st, now=None) -> dict:
             "limited": True, "remaining": remaining, "limit": limit}
 
 
+def make_live_text(parent, px):
+    """The panel's live-text field: read, then corrected in place.
+
+    The caret and the selection are drawn explicitly: Tk's system colours
+    are a black caret on a light field, and this field is dark (#1D2027),
+    so the default caret disappears exactly where a draft is corrected.
+    """
+    return tk.Text(parent, height=BASE_TEXT_LINES, wrap="word",
+                   font=("Segoe UI", 10), fg=FG, bg=TEXT_BG,
+                   insertbackground=CARET, insertwidth=CARET_WIDTH,
+                   selectbackground=SELECT_BG, selectforeground=SELECT_FG,
+                   relief="flat", padx=px(8), pady=px(6))
+
+
 class Hud:
     def __init__(self, svc, log):
         self.svc = svc
@@ -336,6 +360,8 @@ class Hud:
         self._draft_active = False
         self._draft_edit = False
         self._draft_text = ""
+        self._draft_uncertain: tuple[str, ...] = ()
+        self._draft_privacy_shown = False
         self._offers_visible = False
         self._retry_visible = False
         self._rollback_visible = False
@@ -443,9 +469,7 @@ class Hud:
         self._bind_drag(self.hint)
 
         # -- live text -------------------------------------------------------
-        self.text = tk.Text(self.root, height=BASE_TEXT_LINES, wrap="word",
-                            font=("Segoe UI", 10), fg=FG, bg="#1D2027",
-                            relief="flat", padx=px(8), pady=px(6))
+        self.text = make_live_text(self.root, px)
         self.text.pack(fill="both", expand=True, padx=px(12), pady=(px(6), px(4)))
         self.text.insert("1.0", "…")
         self.text.tag_configure(DRAFT_UNCERTAIN_TAG, foreground=UNCERTAIN,
@@ -616,6 +640,8 @@ class Hud:
         self.state["privacy"] = not bool(self.state.get("privacy"))
         self.log.info("HUD privacy: %s",
                       "on" if self.state["privacy"] else "off")
+        if self._draft_active:
+            self._sync_draft_privacy(self.state["privacy"])
 
     # -- panel dictation ---------------------------------------------------
     def _on_mic(self):
@@ -687,19 +713,40 @@ class Hud:
         self._draft_active = True
         self._draft_edit = False
         self._draft_text = text
+        self._draft_uncertain = tuple(uncertain or ())
         # The target is whatever the user focuses after the draft appears;
         # a window picked before it is not "the specified place".
         self._last_foreign_hwnd = None
-        self.text.configure(state="normal")
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", text)
-        self._mark_uncertain(text, uncertain)
-        self.text.configure(state="disabled")
+        self._render_draft(bool(self.state.get("privacy")))
         self._set_edit_label(False)
         self._set_actions_enabled(True)
         self._show_actions()
         self._sync_offer_buttons(st)
-        self._autogrow(text, draft=True)
+
+    def _render_draft(self, privacy):
+        """Draw the draft, or the privacy hint in its place (F58).
+
+        The text stays in ``_draft_text``: turning privacy off puts it back
+        without another recognition pass.
+        """
+        self._draft_privacy_shown = bool(privacy)
+        shown = (self.svc.tr("hud.privacy_hint") if privacy
+                 else self._draft_text)
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", shown)
+        if privacy:
+            self.text.tag_remove(DRAFT_UNCERTAIN_TAG, "1.0", "end")
+        else:
+            self._mark_uncertain(self._draft_text, self._draft_uncertain)
+        self.text.configure(state="disabled")
+        self._autogrow(shown, draft=True)
+
+    def _sync_draft_privacy(self, privacy):
+        """Follow the eye while a draft is on screen; never touch an edit."""
+        if self._draft_edit or bool(privacy) == self._draft_privacy_shown:
+            return
+        self._render_draft(privacy)
 
     def _mark_uncertain(self, text, words):
         """Underline the doubtful words; a failure never costs the draft."""
@@ -715,6 +762,8 @@ class Hud:
         self._draft_active = False
         self._draft_edit = False
         self._draft_text = ""
+        self._draft_uncertain = ()
+        self._draft_privacy_shown = False
         self._last_foreign_hwnd = None
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
@@ -1236,7 +1285,11 @@ class Hud:
 
             privacy = bool(st.get("privacy"))
             self.eye.configure(text="🙈" if privacy else "👁")
-            if not self._draft_active:
+            if self._draft_active:
+                # The eye also covers a draft that appeared before it: the
+                # text is put back when privacy goes off (F58).
+                self._sync_draft_privacy(privacy)
+            else:
                 # System audio publishes live subtitles, never a partial: the
                 # plate carries the last phrases while the take runs. The
                 # privacy hint still hides them, and a microphone partial

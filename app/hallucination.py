@@ -252,6 +252,8 @@ def judge(segment, *, no_speech_ceiling: float = NO_SPEECH_CEILING,
                       f"{float(ratio):.2f} > {ratio_threshold:g}, "
                       f"no_speech_prob {float(no_speech):.2f})")
     if over and is_loop(text):
+        # The log entry names the sign, never the dictated text (F83): the
+        # README promises the log holds no phrase.
         return FLAG, (f"repetition loop (compression_ratio {float(ratio):.2f} "
-                      f"> {ratio_threshold:g}): {text[:60]!r}")
+                      f"> {ratio_threshold:g}, {len(text)} chars)")
     return None

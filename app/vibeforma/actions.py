@@ -126,6 +126,7 @@ class HistoryActions(ServiceHost):
     # -- onboarding ---------------------------------------------------------
     def open_onboarding(self) -> None:
         """Tray/HUD request: the HUD (main thread) opens the wizard."""
+        self._ensure_hud()
         self.live["open_onboarding"] = True
 
     def finish_onboarding(self, choices: dict[str, Any]) -> None:

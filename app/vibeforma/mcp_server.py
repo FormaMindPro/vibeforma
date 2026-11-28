@@ -238,7 +238,10 @@ def api_request(service: Service, method: str, path: str,
     request = urllib.request.Request(  # noqa: S310 - the URL passed validated_url
         validated_url(service, path), data=data,
         headers=headers, method=method)
-    opener = urllib.request.build_opener(_NoRedirect)
+    # An empty ProxyHandler keeps the loopback call out of any proxy the
+    # environment or the registry names: the token must never leave the host.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                         _NoRedirect)
     try:
         with opener.open(request, timeout=timeout) as response:
             return int(response.status), response.read()

@@ -1,6 +1,7 @@
 """Continuous dictation: long speech is chunked at pauses, one insertion."""
 import logging
 import sys
+import threading
 import time
 import types
 
@@ -284,3 +285,44 @@ def test_a_pending_chunk_keeps_the_phrase_when_the_tail_is_empty(monkeypatch):
 
     assert inserts == ["only the chunk"]
     assert svc.live["state"] == STATE_IDLE
+
+
+class _GatedAsr:
+    """Blocks inside transcribe until the test opens the gate."""
+
+    def __init__(self, text="CANCELLED PHRASE"):
+        self.text = text
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+        self.calls = 0
+        self.last_segments = []
+
+    def transcribe(self, samples, verbose=True, *, partial=False):
+        self.calls += 1
+        self.entered.set()
+        assert self.gate.wait(5.0)
+        return self.text
+
+
+def test_a_cancelled_take_never_writes_into_the_next_one():
+    svc = _service()
+    asr = _GatedAsr()
+    svc.asr = asr
+    svc.state = STATE_RECORDING
+    assert svc._on_audio_chunk(np.full(SR, 0.1, dtype=np.float32))
+    assert asr.entered.wait(5.0)
+
+    # Esc while the piece is still being recognized: the queue closes, the
+    # phrase is dropped, and the next take resets its registers at once.
+    worker = svc._finish_chunks()
+    svc.state = STATE_IDLE
+    svc._reset_chunks()
+    svc.state = STATE_RECORDING
+    asr.gate.set()
+
+    assert worker is not None
+    worker.join(5.0)
+    assert asr.calls == 1
+    assert svc.live.get("partial", "") == ""
+    assert svc._chunk_texts == []
+    assert svc._chunk_segments == []

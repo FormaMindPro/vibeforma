@@ -697,11 +697,23 @@ def main() -> None:
     start_model_update_checker(cfg, svc, log)
 
     svc.load_model_async()
-    if cfg.get("hud", True):
+    hud_lock = threading.Lock()
+    hud_started = threading.Event()
+
+    def launch_hud() -> None:
+        """Start the panel once; a tray request works with hud: false (F59)."""
+        with hud_lock:
+            if hud_started.is_set():
+                return
+            hud_started.set()
         import hud as hud_mod
         # Tk lives in its own daemon thread; every widget call stays there.
         threading.Thread(target=hud_mod.run_hud, args=(svc, log),
                          daemon=True).start()
+
+    svc.attach_hud(launch_hud)
+    if cfg.get("hud", True):
+        launch_hud()
         import onboarding as onboarding_mod
         if onboarding_mod.needed(cfg):
             svc.open_onboarding()

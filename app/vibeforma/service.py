@@ -256,6 +256,25 @@ def take_limit_s(cfg: dict[str, Any]) -> float:
         return 0.0
 
 
+class _TakeChunks:
+    """The finalized pieces of one take, written only by that take's worker.
+
+    A cancelled take's worker keeps draining its queue after the phrase is
+    dropped; because it appends to this object instead of the service's
+    registers, the words of the cancelled take never reach the next take
+    (F23).
+    """
+
+    def __init__(self) -> None:
+        self.queue: queue.Queue[Any] = queue.Queue(
+            maxsize=CONTINUOUS_QUEUE_CHUNKS)
+        self.texts: list[str] = []
+        self.segments: list[transcript.Segment] = []
+        self.offset = 0.0
+        self.worker: threading.Thread | None = None
+        self.recorder: Any = None
+
+
 class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     def __init__(self, cfg: dict[str, Any], log: Any, *,
                  status_file: str | None = None) -> None:
@@ -268,6 +287,7 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
         self.tray = None
         self.hotkey = None
         self.cancel_watcher = None
+        self.hud_launcher: Any = None
         self.asr = None
         self.vad = None
         self.recorder = None
@@ -278,13 +298,15 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
         self._running = True
         self._partial_busy = False
         self._cancel_evt = threading.Event()
-        # Continuous dictation: finalized chunk texts, their segments on the
-        # take's timeline, and the one worker that recognizes the queue.
-        self._chunk_q: queue.Queue[Any] = queue.Queue(
-            maxsize=CONTINUOUS_QUEUE_CHUNKS)
-        self._chunk_texts: list[str] = []
-        self._chunk_segments: list[transcript.Segment] = []
-        self._chunk_offset = 0.0
+        # Continuous dictation: each take owns its pieces, their segments on
+        # the take's timeline and the one worker that recognizes its queue.
+        # The names below are the current take's registers; a worker of a
+        # dropped take keeps writing its own object (F23).
+        self._take_chunks = _TakeChunks()
+        self._chunk_q: queue.Queue[Any] = self._take_chunks.queue
+        self._chunk_texts: list[str] = self._take_chunks.texts
+        self._chunk_segments: list[transcript.Segment] = (
+            self._take_chunks.segments)
         self._chunk_worker: threading.Thread | None = None
         self._chunk_lock = threading.Lock()
         self._update_busy = False
@@ -385,8 +407,28 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     def attach_cancel_watcher(self, watcher: Any) -> None:
         self.cancel_watcher = watcher
 
+    def attach_hud(self, launcher: Any) -> None:
+        """A callable that starts the panel on demand (F59).
+
+        With ``hud: false`` the tray menu still has to open settings, the
+        assistant and diagnostics: their windows live in the HUD process, so
+        the first request starts it.
+        """
+        self.hud_launcher = launcher
+
+    def _ensure_hud(self) -> None:
+        """Start the panel if it is not running and a launcher is attached."""
+        launcher = getattr(self, "hud_launcher", None)
+        if launcher is None:
+            return
+        try:
+            launcher()
+        except Exception as e:  # noqa: BLE001 - a broken launcher never blocks the request
+            self.log.debug("HUD launcher failed: %s", e)
+
     def request_panel(self) -> None:
         """Ask the HUD to show itself; safe from any thread."""
+        self._ensure_hud()
         self.panel_request.set()
 
     # -- state ---------------------------------------------------------
@@ -762,11 +804,12 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
     # -- continuous dictation (long speech, one insertion) ----------------
     def _reset_chunks(self) -> None:
         """A new phrase starts with no finalized pieces and an empty queue."""
+        take = _TakeChunks()
         with self._chunk_lock:
-            self._chunk_texts = []
-            self._chunk_segments = []
-            self._chunk_offset = 0.0
-        self._chunk_q = queue.Queue(maxsize=CONTINUOUS_QUEUE_CHUNKS)
+            self._take_chunks = take
+            self._chunk_texts = take.texts
+            self._chunk_segments = take.segments
+        self._chunk_q = take.queue
         self._chunk_worker = None
 
     def _on_audio_chunk(self, chunk: Any) -> bool:
@@ -777,24 +820,29 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
         finals with priority over the live partial. Returns False when the
         queue is full, so the recorder keeps the audio and retries later.
         """
-        if self.asr is None or self.state != STATE_RECORDING:
+        take: _TakeChunks | None = getattr(self, "_take_chunks", None)
+        if self.asr is None or self.state != STATE_RECORDING or take is None:
             return False
         try:
-            self._chunk_q.put_nowait(chunk)
+            take.queue.put_nowait(chunk)
         except queue.Full:
             self.log.info("Continuous chunk deferred: recognition is behind")
             return False
-        if self._chunk_worker is None:
-            self._chunk_worker = threading.Thread(
-                target=self._chunk_loop, args=(self._chunk_q,), daemon=True)
-            self._chunk_worker.start()
+        if take.recorder is None:
+            # The piece came from this recorder: its backpressure answer must
+            # go there, never to the recorder of a later take.
+            take.recorder = self.recorder
+        if take.worker is None:
+            take.worker = threading.Thread(
+                target=self._chunk_loop, args=(take,), daemon=True)
+            take.worker.start()
         return True
 
-    def _chunk_loop(self, chunks: queue.Queue[Any]) -> None:
+    def _chunk_loop(self, take: _TakeChunks) -> None:
         """Recognize this take's chunks in order; a failed piece is skipped."""
         while True:
-            chunk = chunks.get()
-            chunks.task_done()
+            chunk = take.queue.get()
+            take.queue.task_done()
             if chunk is None:
                 return
             engine = self.asr
@@ -806,30 +854,43 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
                 seconds = len(chunk) / 16000.0
                 with self._chunk_lock:
                     if text:
-                        self._chunk_texts.append(text)
-                        self.live["partial"] = join_chunks(
-                            list(self._chunk_texts))
+                        take.texts.append(text)
+                        if take is getattr(self, "_take_chunks", None):
+                            # Only the take being recorded owns the live view:
+                            # a cancelled take's worker keeps its own registers.
+                            self.live["partial"] = join_chunks(
+                                list(take.texts))
                     rows = list(getattr(engine, "last_segments", None) or [])
-                    self._chunk_segments.extend(
-                        _shift_segments(rows, self._chunk_offset))
-                    self._chunk_offset += seconds
+                    take.segments.extend(
+                        _shift_segments(rows, take.offset))
+                    take.offset += seconds
                 self.log.debug("Continuous chunk: %.1f s, %d chars",
                                seconds, len(text or ""))
             except Exception as e:  # noqa: BLE001 - one piece must not stop the take
                 self.log.warning("Continuous chunk recognition failed: %s", e)
                 with self._chunk_lock:
-                    self._chunk_offset += len(chunk) / 16000.0
+                    take.offset += len(chunk) / 16000.0
             finally:
-                rec = self.recorder
+                rec = take.recorder
                 if rec is not None:
                     rec.chunk_ready()
 
     def _finish_chunks(self) -> threading.Thread | None:
         """Close the chunk queue; the worker still has to drain its backlog."""
-        worker, self._chunk_worker = self._chunk_worker, None
+        take: _TakeChunks | None = getattr(self, "_take_chunks", None)
+        if take is None:
+            # An embedder or a test double without __init__: the legacy names
+            # are all it has.
+            worker, self._chunk_worker = self._chunk_worker, None
+            if worker is None:
+                return None
+            self._chunk_q.put(None)
+            return worker
+        worker, take.worker = take.worker, None
+        self._chunk_worker = None
         if worker is None:
             return None
-        self._chunk_q.put(None)
+        take.queue.put(None)
         return worker
 
     def _take_is_system(self, rec: Any = None) -> bool:
@@ -967,8 +1028,9 @@ class Service(HistoryActions, SettingsOps, UpdateActions, ModelUpdateActions):
             self.live["level"] = 0.0
             self.live["recording_path"] = ""
             self._context_hotwords = ""   # a dropped take keeps no context
-            # The chunk worker drains its backlog and exits on its own; the
-            # finalized text is dropped with the phrase.
+            # The chunk worker drains its backlog and exits on its own: the
+            # pieces belong to the dropped take, so nothing of them reaches
+            # the next one.
             self._finish_chunks()
             self._set_state(STATE_IDLE)
             self._report_cancelled()
