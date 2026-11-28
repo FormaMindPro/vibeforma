@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.5** brings the Whisper model update check by consent — a new model revision is offered in Settings with a kept previous folder for a no-download rollback. 0.5.4 made the recordings-folder "Open" button work before the first recording. See [What's new](#whats-new-in-055).
+> **VibeForma 0.5.6** stops a phantom "to be continued" line at the end of a take: the final pass checks the trailing stop phrase against the take's own audio and cuts it when it was never spoken, while a phrase you really said stays. 0.5.5 brought the Whisper model update check by consent. See [What's new](#whats-new-in-056).
 
 ## What is VibeForma
 
@@ -57,6 +57,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.5.6
+
+- **No invented ending.** Whisper sometimes appends a boilerplate line it never heard — most visibly a "to be continued" line — after the last word of a take, and the stop-list alone could not remove it without risking a phrase you actually said. The final dictation pass now reads the take's audio through the VAD: a trailing stop phrase whose words overlap less than 0.15 s of detected speech is cut together with everything after its first word, in the text, the word list and the subtitles. A phrase you really said keeps its place; a take without word timestamps or with a failing VAD is left as it is. The cut is written to the log with the phrase and its time span, never the dictated text. Partial previews and file transcription are unchanged.
 
 ## What's new in 0.5.5
 

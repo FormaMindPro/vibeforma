@@ -1,3 +1,18 @@
+## 0.5.6 — 2026-11-28
+
+### Fixed
+- **An invented ending is cut from the take.** Whisper sometimes appends a
+  boilerplate line it never heard — most visibly a "to be continued" line —
+  after the last word, and the stop-list alone kept it whenever the phrase
+  sat in a segment with real speech. The final dictation pass now checks the
+  trailing stop phrase against the take's own audio through the VAD: when the
+  phrase's words overlap less than 0.15 s of detected speech, the phrase and
+  everything after its first word are cut from the segment — text, word list
+  and subtitle cues together. A phrase the person really said keeps its
+  place; a take without word timestamps or with a failing VAD is left
+  untouched. The cut is logged with the phrase and its time span, never the
+  dictated text. Partial previews and file transcription are unchanged.
+
 ## 0.5.5 — 2026-11-27
 
 ### Added
