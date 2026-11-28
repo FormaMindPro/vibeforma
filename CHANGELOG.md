@@ -1,3 +1,19 @@
+## 0.5.7 — 2026-11-28
+
+### Fixed
+- **An invented ending hidden in speech is cut too.** The 0.5.6 guard read
+  only the last segment and kept a stop phrase whenever its word timestamps
+  overlapped the VAD's speech. A short take where the model continues itself
+  packs the invented line into the same speech, so the phrase could still
+  reach the inserted text. The guard now reads the take's words as one stream
+  across segments and cuts from the phrase's first word through the end: a
+  phrase split between segments, a phrase before a final punctuation-only
+  segment, and a take without word timestamps in silence are cut. A phrase is
+  kept only when the VAD hears speech under the tail, its own words last a
+  plausible time each, and the take is not denser than a person can speak; a
+  text-only segment in real speech is left alone. The cut is logged with the
+  phrase and its time span, never the dictated text.
+
 ## 0.5.6 — 2026-11-28
 
 ### Fixed

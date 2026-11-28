@@ -32,7 +32,7 @@
   <a href="https://github.com/FormaMindPro/vibeforma/issues">Issues</a>
 </p>
 
-> **VibeForma 0.5.6** stops a phantom "to be continued" line at the end of a take: the final pass checks the trailing stop phrase against the take's own audio and cuts it when it was never spoken, while a phrase you really said stays. 0.5.5 brought the Whisper model update check by consent. See [What's new](#whats-new-in-056).
+> **VibeForma 0.5.7** cuts an invented ending even when the model packs it into speech: the guard now reads the take's words across segments and keeps a phrase only when the audio, its length and the take's pace all say it was spoken. 0.5.6 introduced the audio-grounded tail check. See [What's new](#whats-new-in-057).
 
 ## What is VibeForma
 
@@ -57,6 +57,10 @@ The same engine also transcribes audio and video files, including whole folders,
 | Integrations | CLI, MCP server for AI agents, local HTTP API on `127.0.0.1`, OpenAI-compatible endpoint, job API, stdin hook |
 | Own archive | dictionary, snippets, application profiles, history (opt-in, its sound a separate opt-in, per-entry re-recognition), statistics — files next to `config.json` |
 | Price | free and open source, MIT |
+
+## What's new in 0.5.7
+
+- **An invented ending hidden in speech is cut too.** The first audio-grounded guard read only the last segment and kept a stop phrase whenever its words overlapped detected speech. A short take where the model continues itself packs the invented line into the same speech, so the phrase could still be pasted. The guard now reads the take's words as one stream across segments and cuts from the phrase's first word through the end: a phrase split between segments, a phrase before a final punctuation-only segment, and a text-only take in silence are cut. A phrase is kept only when the VAD hears speech under the tail, its own words last a plausible time each, and the take is not denser than a person can speak. The cut is logged with the phrase and its time span, never the dictated text.
 
 ## What's new in 0.5.6
 
